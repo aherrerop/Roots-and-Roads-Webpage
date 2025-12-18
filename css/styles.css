@@ -1135,7 +1135,7 @@ img.umbrella {
   cursor: pointer;
 }
 
-.review-dot.active{ background: var(--color-subway-blue); }
+.review-dot.active{ background: var(--color-subway-red); }
 
 
 /* ===========================
