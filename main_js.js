@@ -2,30 +2,73 @@
 // 1. CONFIG
 // ======================================
 
-// Infinite carousels (clones) — keep ONLY for the image gallery
+// Carousels (SAME engine/behavior) — gallery + reviews
 const CAROUSEL_CONFIGS = [
   {
     name: "imageGallery",
+    rootSelector: '[data-carousel="gallery"]',
     trackSelector: ".gallery-track",
     slideSelector: ".gallery-image",
     dotSelector: ".subway-dot",
     blocksEachSide: 5,
+    dotModulo: true,
   },
 ];
 
-// Simple scroll galleries (NO CLONES) — reviews go here
 const SIMPLE_SCROLL_GALLERIES = [
   {
     name: "reviewCarousel",
+    rootSelector: '[data-carousel="reviews"]',
     trackSelector: ".reviews-track",
     slideSelector: ".review-card",
-    dotSelector: ".review-dot",
-    hidePartialSlides: true, // IMPORTANT: only show fully visible cards
+    dotSelector: ".subway-dot",
   },
 ];
 
-// Hover behaviors – for future use
-const HOVER_CONFIGS = [];
+
+function initSimpleScrollGallery(config) {
+  const { rootSelector, trackSelector, slideSelector, dotSelector } = config;
+
+  const root = rootSelector ? document.querySelector(rootSelector) : document;
+  if (!root) return;
+
+  const track = root.querySelector(trackSelector);
+  if (!track) return;
+
+  const dots = Array.from(root.querySelectorAll(dotSelector));
+  const slides = Array.from(track.querySelectorAll(slideSelector)).filter(
+    (el) => !el.classList.contains("clone")
+  );
+  if (!slides.length) return;
+
+  function getClosestSlideIndex() {
+    const denom = track.scrollWidth - track.clientWidth;
+    if (denom <= 1) return 0;
+    const t = Math.min(1, Math.max(0, track.scrollLeft / denom));
+    return Math.round(t * (slides.length - 1));
+  }
+
+  function setActiveDot(idx) {
+    if (!dots.length) return;
+    dots.forEach((d, i) => d.classList.toggle("active", i === idx));
+  }
+
+  track.addEventListener(
+    "scroll",
+    () => requestAnimationFrame(() => setActiveDot(getClosestSlideIndex())),
+    { passive: true }
+  );
+
+  dots.forEach((dot, idx) => {
+    dot.addEventListener("click", () => {
+      slides[idx].scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+      setActiveDot(idx);
+    });
+  });
+
+  setActiveDot(0);
+}
+
 
 
 
@@ -40,169 +83,159 @@ const HOVER_CONFIGS = [];
  *  - centers clicked slide
  */
 function initInfiniteCarousel(config) {
-  const { trackSelector, slideSelector, dotSelector, blocksEachSide } = config;
+  const {
+    rootSelector,
+    trackSelector,
+    slideSelector,
+    dotSelector,
+    blocksEachSide = 3,
+    dotModulo = false,
+  } = config;
 
-  const track = document.querySelector(trackSelector);
+  const root = rootSelector ? document.querySelector(rootSelector) : document;
+  if (!root) return;
+
+  const track = root.querySelector(trackSelector);
   if (!track) return;
 
-  const dots = Array.from(document.querySelectorAll(dotSelector));
+  // IMPORTANT: scope dots to THIS carousel only
+  const dots = Array.from(root.querySelectorAll(dotSelector));
 
-  const originals = Array.from(track.querySelectorAll(slideSelector));
+  // Originals only (ignore any previous clones)
+  const originals = Array.from(track.querySelectorAll(slideSelector)).filter(
+    (el) => !el.classList.contains("clone")
+  );
   const N = originals.length;
   if (N === 0) return;
 
-  const BLOCKS_EACH_SIDE = blocksEachSide ?? 5;
-
+  // ---- clone blocks before/after ----
   const fragStart = document.createDocumentFragment();
   const fragEnd = document.createDocumentFragment();
 
-  // Clone full blocks BEFORE and AFTER originals
-  for (let b = 0; b < BLOCKS_EACH_SIDE; b++) {
-    originals.forEach((slide) => {
-      const cloneBefore = slide.cloneNode(true);
+  for (let b = 0; b < blocksEachSide; b++) {
+    originals.forEach((card) => {
+      const cloneBefore = card.cloneNode(true);
       cloneBefore.classList.add("clone");
       fragStart.appendChild(cloneBefore);
     });
 
-    originals.forEach((slide) => {
-      const cloneAfter = slide.cloneNode(true);
+    originals.forEach((card) => {
+      const cloneAfter = card.cloneNode(true);
       cloneAfter.classList.add("clone");
       fragEnd.appendChild(cloneAfter);
     });
   }
 
-  // [ clones-before ][ originals ][ clones-after ]
-  track.insertBefore(fragStart, originals[0]);
+  track.insertBefore(fragStart, track.firstChild);
   track.appendChild(fragEnd);
 
   const slides = Array.from(track.querySelectorAll(slideSelector));
-  const offsetStart = BLOCKS_EACH_SIDE * N; // first original index
+  const offsetStart = blocksEachSide * N;
 
-  // map physical index -> logical 0..N-1
-  function physicalToLogical(i) {
-    let idx = (i - offsetStart) % N;
-    if (idx < 0) idx += N;
-    return idx;
-  }
+  const physicalToLogical = (p) => {
+    const x = (p - offsetStart) % N;
+    return (x + N) % N;
+  };
 
-  function setActiveDotFromPhysicalIndex(physicalIndex) {
-    const logicalIndex = physicalToLogical(physicalIndex);
-    dots.forEach((dot, i) => {
-      dot.classList.toggle("active", i === logicalIndex);
-    });
-  }
+  const targetScrollForSlide = (idx) => {
+    const s = slides[idx];
+    const left = s.offsetLeft;
+    const centerOffset = (track.clientWidth - s.clientWidth) / 2;
+    return left - centerOffset;
+  };
 
-  // slide whose center is closest to track center
-  function getClosestSlideIndex() {
-    const centerX = track.scrollLeft + track.clientWidth / 2;
-    let closestIndex = 0;
-    let minDist = Infinity;
+  const getClosestSlideIndex = () => {
+    const center = track.scrollLeft + track.clientWidth / 2;
 
-    slides.forEach((slide, i) => {
-      const slideCenter = slide.offsetLeft + slide.offsetWidth / 2;
-      const dist = Math.abs(slideCenter - centerX);
-      if (dist < minDist) {
-        minDist = dist;
-        closestIndex = i;
-      }
-    });
-
-    return closestIndex;
-  }
-
-  function updateActiveDot() {
-    const idx = getClosestSlideIndex();
-    setActiveDotFromPhysicalIndex(idx);
-  }
-
-  function targetScrollForSlide(slideIndex) {
-    const slide = slides[slideIndex];
-    if (!slide) return track.scrollLeft;
-    const slideCenter = slide.offsetLeft + slide.offsetWidth / 2;
-    const half = track.clientWidth / 2;
-    return slideCenter - half;
-  }
-
-  // Scroll: user drives, we only update the dot
-  track.addEventListener("scroll", () => {
-    requestAnimationFrame(updateActiveDot);
-  });
-
-  // Dot clicks: center logical slide in the middle block
-  dots.forEach((dot, logicalIndex) => {
-    dot.addEventListener("click", () => {
-      const targetIndex = offsetStart + logicalIndex; // middle originals
-      track.scrollLeft = targetScrollForSlide(targetIndex); // instant
-      updateActiveDot();
-    });
-  });
-
-  // Initial position: center first original once on load
-  function recenterFirst() {
-    const firstIndex = offsetStart;
-    track.scrollLeft = targetScrollForSlide(firstIndex);
-    updateActiveDot();
-  }
-
-  requestAnimationFrame(recenterFirst);
-
-  // On resize: re-center that first original
-  window.addEventListener("resize", () => {
-    requestAnimationFrame(recenterFirst);
-  });
-}
-
-/**
- * Simple scroll gallery (no clones).
- * Keeps dots in sync with closest slide and scrolls to slide on dot click.
- * Currently unused; here for future galleries.
- */
-function initSimpleScrollGallery(config) {
-  const { trackSelector, slideSelector, dotSelector } = config;
-
-  const track = document.querySelector(trackSelector);
-  if (!track) return;
-
-  const dots = Array.from(document.querySelectorAll(dotSelector));
-  const slides = Array.from(track.querySelectorAll(slideSelector));
-  if (slides.length === 0) return;
-
-  function getClosestSlideIndex() {
-    const left = track.getBoundingClientRect().left;
-    let bestIdx = 0;
+    let best = 0;
     let bestDist = Infinity;
 
-    slides.forEach((slide, idx) => {
-      const r = slide.getBoundingClientRect();
-      const dist = Math.abs(r.left - left);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIdx = idx;
+    slides.forEach((s, i) => {
+      const c = s.offsetLeft + s.clientWidth / 2;
+      const d = Math.abs(c - center);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
       }
     });
-    return bestIdx;
-  }
 
-  function setActiveDot(idx) {
+    return best;
+  };
+
+  const setActiveDotFromPhysicalIndex = (physicalIndex) => {
     if (!dots.length) return;
-    dots.forEach((d, i) => d.classList.toggle("active", i === idx));
-  }
+    const logicalIndex = physicalToLogical(physicalIndex);
+    const activeIdx = dotModulo ? (logicalIndex % dots.length) : logicalIndex;
+    dots.forEach((d, i) => d.classList.toggle("active", i === activeIdx));
+  };
 
-  track.addEventListener("scroll", () => {
-    window.requestAnimationFrame(() => {
-      setActiveDot(getClosestSlideIndex());
+  let rafPending = false;
+  const updateActiveDot = () => {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      const idx = getClosestSlideIndex();
+      setActiveDotFromPhysicalIndex(idx);
     });
-  });
+  };
 
-  dots.forEach((dot, idx) => {
+  // ---- initial position: center first original ----
+  track.scrollLeft = targetScrollForSlide(offsetStart);
+  setActiveDotFromPhysicalIndex(offsetStart);
+
+  // ---- keep position inside the middle clone region ----
+  const maybeRecenter = () => {
+    const idx = getClosestSlideIndex();
+    const logical = physicalToLogical(idx);
+    const desiredPhysical = offsetStart + logical;
+
+    // If we drifted far into clones, snap back to the middle copy (same logical slide)
+    if (Math.abs(idx - desiredPhysical) > N) {
+      track.scrollLeft = targetScrollForSlide(desiredPhysical);
+      setActiveDotFromPhysicalIndex(desiredPhysical);
+    }
+  };
+
+  track.addEventListener(
+    "scroll",
+    () => {
+      updateActiveDot();
+      maybeRecenter();
+    },
+    { passive: true }
+  );
+
+  // ---- dot click -> go to nearest matching slide in the middle region ----
+  dots.forEach((dot, dotIndex) => {
     dot.addEventListener("click", () => {
-      slides[idx].scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
-      setActiveDot(idx);
+      const currentPhysical = getClosestSlideIndex();
+      const currentLogical = physicalToLogical(currentPhysical);
+
+      const D = dots.length || 1;
+      let targetLogical;
+
+      if (!dotModulo) {
+        targetLogical = dotIndex;
+      } else {
+        const curMod = currentLogical % D;
+        const forward = (dotIndex - curMod + D) % D;
+        const backward = (curMod - dotIndex + D) % D;
+        const step = backward < forward ? -backward : forward; // tie -> forward
+        targetLogical = (currentLogical + step + N) % N;
+      }
+
+      const targetPhysical = offsetStart + targetLogical;
+      track.scrollLeft = targetScrollForSlide(targetPhysical);
+      setActiveDotFromPhysicalIndex(targetPhysical);
     });
   });
-
-  setActiveDot(0);
 }
+
+
+
+// (removed) initSimpleScrollGallery — reviews now use the same infinite carousel engine
+
 
 
 
@@ -227,21 +260,7 @@ function initNavActiveTab() {
   });
 }
 
-/**
- * Generic hover handler – for future components.
- */
-function initHoverEffects(configs) {
-  configs.forEach((cfg) => {
-    const { triggerSelector, hoverClass } = cfg;
-    if (!triggerSelector || !hoverClass) return;
 
-    const elements = document.querySelectorAll(triggerSelector);
-    elements.forEach((el) => {
-      el.addEventListener("mouseenter", () => el.classList.add(hoverClass));
-      el.addEventListener("mouseleave", () => el.classList.remove(hoverClass));
-    });
-  });
-}
 
 
 // ======================================
@@ -252,23 +271,59 @@ document.addEventListener("DOMContentLoaded", () => {
   // Nav tabs active state
   initNavActiveTab();
 
+  // Header: hide on scroll down, show on scroll up
+  (function initHeaderHideOnScroll(){
+    const header = document.querySelector(".top-banner");
+    if (!header) return;
+
+    let lastY = window.scrollY || 0;
+    let lastToggleY = lastY;
+    const threshold = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--header-hide-threshold"), 10) || 10;
+
+    window.addEventListener("scroll", () => {
+      const y = window.scrollY || 0;
+      const dy = y - lastY;
+
+      // ignore tiny jitter
+      if (Math.abs(y - lastToggleY) < threshold) {
+        lastY = y;
+        return;
+      }
+
+      if (dy > 0) header.classList.add("is-hidden");    // scrolling down
+      else header.classList.remove("is-hidden");        // scrolling up
+
+      lastToggleY = y;
+      lastY = y;
+    }, { passive: true });
+  })();
+
   // Infinite carousels (the ones you already have)
+  // Carousels (same engine for gallery + reviews)
   CAROUSEL_CONFIGS.forEach((cfg) => initInfiniteCarousel(cfg));
 
-  // Simple galleries (future use)
   SIMPLE_SCROLL_GALLERIES.forEach((cfg) => initSimpleScrollGallery(cfg));
 
-  // Hover behaviors (future use)
-  initHoverEffects(HOVER_CONFIGS);
+  
 
-  const rTrack = document.querySelector(".reviews-track");
-if (rTrack) {
-  const updateFade = () => {
-    rTrack.classList.toggle("is-scrolled", rTrack.scrollLeft > 2);
-  };
-  updateFade();
-  rTrack.addEventListener("scroll", updateFade, { passive: true });
-}
+  // Itinerary: show first 6 stops, expand/collapse on button
+  (function initItineraryToggle(){
+    const list = document.querySelector(".stop-list");
+    const btn  = document.querySelector(".itinerary-toggle");
+    if (!list || !btn) return;
+
+    // Default collapsed (CSS hides items 7+)
+    list.classList.add("is-collapsed");
+    btn.setAttribute("aria-expanded", "false");
+    btn.textContent = "Show full itinerary";
+
+    btn.addEventListener("click", () => {
+      const expanded = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", String(!expanded));
+      list.classList.toggle("is-collapsed", expanded);
+      btn.textContent = expanded ? "Show full itinerary" : "Show less";
+    });
+  })();
 
 });
 
@@ -518,7 +573,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function updateButtons() {
-    track.querySelectorAll(".review-card").forEach(card => {
+    track.querySelectorAll(".review-card:not(.clone)").forEach(card => {
       const btn = card.querySelector(".review-more");
       if (!btn) return;
 
@@ -546,6 +601,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const card = btn.closest(".review-card");
     if (!card) return;
+
+    if (card.classList.contains("clone")) return;
 
     card.classList.toggle("is-expanded");
     requestAnimationFrame(updateButtons);
