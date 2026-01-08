@@ -1447,6 +1447,10 @@ section {
     transform-origin: left center;
   }
 
+  .tab{
+  display: none;
+}
+
 
 /* ======================================================
    HERO (MOBILE) — full-width image, title visible
