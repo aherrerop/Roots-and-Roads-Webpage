@@ -60,7 +60,7 @@
   --page-side-padding: calc(2 * var(--section-image-side-margin)); /* used by meeting/how/stops/reviews */
 
 
-  --gap-location-cards: 25px;
+  --gap-location-cards: 17px;
   --gap-how-text-map: 40px;
   --gap-stop-items: 20px;
   --gap-review-cards: 24px;
@@ -842,7 +842,7 @@ section {
 
 .location-card {
   text-align: center;
-  max-width: 438px;
+  max-width: 400px;
 }
 
 .location-image {
@@ -930,6 +930,7 @@ section {
   grid-row: 1;
   font-size: 0.95rem;
   line-height: 1.5;
+  text-align: justify;
 }
 
 .how-it-works .how-text h2{
@@ -1339,7 +1340,7 @@ section {
 /* COPYRIGHT */
 .about-footer {
   text-align: center;
-  margin-top: 55px;
+  margin-top: 30px;
   font-size: 0.9rem;
   opacity: 0.8;
   color: #ffffff;
@@ -1410,7 +1411,7 @@ section {
     --hero-title-top: 80%;                   /* ⬅ vertical position of title */
     --hero-title-size: clamp(20px, 6vw, 28px);
 
-    --mobile-side-margin: 15px;            /* small margin (already in your mobile section) */
+    --mobile-side-margin: 10px;            /* small margin (already in your mobile section) */
     --reviews-card-width: calc(100% - (4 * var(--mobile-side-margin))); /* Control for thinner cards */
     --reviews-dots-inset: 10px;           /* Control for line endpoints relative to dots */
     --reviews-active-red: #e53935;
@@ -1529,7 +1530,8 @@ section {
 .why-love .hero-content{
   text-align: justify;
   max-width: 34ch;                 /* controls line length */
-  margin: 0 auto;                  /* centers the text block */
+  margin: var(--mobile-side-margin) var(--mobile-side-margin);  /* centers the text block */
+  
   padding: 10px 0 14px;
 }
 
@@ -2109,6 +2111,6 @@ section.how-it-works .red-umbrella-text{
 .about-footer{
   position: absolute;
   left: 0; right: 0;
-  bottom: 10px;
+  bottom: 30px;
 }
 }
