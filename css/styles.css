@@ -1523,14 +1523,15 @@ section {
 
 
 /* WHY YOU'RE GOING TO LOVE IT — mobile text alignment */
-.why-love{ text-align: left; }              /* stop centering the whole section */
+.why-love{ text-align: center; }              /* stop centering the whole section */
 .why-love h2{ text-align: center; }         /* keep the heading centered (optional) */
 
 /* WHY LOVE IT — make it feel intentional on mobile */
 .why-love .hero-content{
   text-align: justify;
-  max-width: 34ch;                 /* controls line length */
-  margin: var(--mobile-side-margin) var(--mobile-side-margin);  /* centers the text block */
+  /* max-width: 34ch;                 controls line length */
+  margin-left: var(--mobile-side-margin);
+  margin-right: var(--mobile-side-margin); 
   
   padding: 10px 0 14px;
 }
