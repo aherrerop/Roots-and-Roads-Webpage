@@ -1687,7 +1687,7 @@ section.how-it-works .how-text::before{
   position: absolute;
   inset: 0;
 
-  background-image: url("../images/realisticRedUmbrellaIcon_v2.png");
+  background-image: url("../images/realisticRedUmbrellaIcon_v2.webp");
   background-repeat: no-repeat;
   background-position: center 100%;
   background-size: min(420px, 90vw);
@@ -2031,7 +2031,7 @@ section.how-it-works .red-umbrella-text{
     min-height: 0;
     padding: 0;
 
-    background-image: url("../images/rotatedAboutUs_background_v1.png");
+    background-image: url("../images/rotatedAboutUs_background_v1.webp");
 
     /* KEY FIX: show full image height (no crop) AND fill the whole section */
     background-size: 102% auto;     /* <-- CONTROL: smaller % = “zoom out” more */
