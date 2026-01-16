@@ -61,7 +61,7 @@ function initSimpleScrollGallery(config) {
 
   dots.forEach((dot, idx) => {
     dot.addEventListener("click", () => {
-      slides[idx].scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+      slides[idx].scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
       setActiveDot(idx);
     });
   });

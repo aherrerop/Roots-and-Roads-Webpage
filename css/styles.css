@@ -1164,13 +1164,12 @@ section {
   overflow-x: auto;
   overflow-y: hidden;
 
-  scroll-snap-type: x proximity; /* smoother than mandatory */
-  scroll-padding-left: 0;
-  scroll-padding-right: 0;
+  scroll-snap-type: x mandatory; /* smoother than mandatory */
+  /* symmetric center padding */
+scroll-padding-left: calc((100% - var(--width-review-card)) / 2);
+scroll-padding-right: calc((100% - var(--width-review-card)) / 2);
 
-  /* KEY: allow last card to reach "start" alignment so the last dot can activate */
-  scroll-padding-right: calc(var(--width-review-card) + var(--gap-review-cards));
-  padding: 0 calc(var(--width-review-card) + var(--gap-review-cards)) 32px 0;
+padding: 0 0 32px 0;
 
   margin: 0;
 
@@ -1193,7 +1192,7 @@ section {
   display: flex;
   flex-direction: column;
 
-  scroll-snap-align: start;
+  scroll-snap-align: center;
 }
 
 /* Stars evenly spaced */
@@ -1965,8 +1964,9 @@ section.how-it-works .red-umbrella-text{
   .reviews-track::before,
 .reviews-track::after{
   content: "";
-  flex: 0 0 calc((100vw - var(--reviews-card-width)) / 2);
+  flex: 0 0 calc((100% - var(--width-review-card)) / 2);
 }
+
 
 
   .reviews-track::-webkit-scrollbar{ display:none; }
