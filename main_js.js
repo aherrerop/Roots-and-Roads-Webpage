@@ -67,6 +67,10 @@ function initSimpleScrollGallery(config) {
   });
 
   setActiveDot(0);
+  // Center first review on load
+requestAnimationFrame(() => {
+  slides[0].scrollIntoView({ behavior: "auto", inline: "center", block: "nearest" });
+});
 }
 
 
