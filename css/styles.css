@@ -1953,7 +1953,8 @@ section.how-it-works .red-umbrella-text{
     overflow-y: hidden;
 
     scroll-snap-type: x mandatory;                 /* Control for one-card-per-swipe */
-    scroll-padding-left: calc(2 * var(--mobile-side-margin)); /* Control for centered first card */
+  scroll-padding-left: calc((100% - var(--reviews-card-width)) / 2);
+  scroll-padding-right: calc((100% - var(--reviews-card-width)) / 2);
 
     padding: 0 0 32px 0;
     margin: 0;
@@ -1964,7 +1965,7 @@ section.how-it-works .red-umbrella-text{
   .reviews-track::before,
 .reviews-track::after{
   content: "";
-  flex: 0 0 calc((100% - var(--width-review-card)) / 2);
+  flex: 0 0 calc((100% - var(--reviews-card-width)) / 2);
 }
 
 
