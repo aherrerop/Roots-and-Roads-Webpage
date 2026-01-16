@@ -268,6 +268,27 @@ function initNavActiveTab() {
 // ======================================
 
 document.addEventListener("DOMContentLoaded", () => {
+
+    // --- iOS/Instagram in-app browser scroll failsafe ---
+  (function ensureScrollablePage(){
+    const ua = navigator.userAgent || "";
+    const isIG = /Instagram/i.test(ua);
+    const isIOS = /iPhone|iPad|iPod/i.test(ua);
+    if (!(isIG && isIOS)) return;
+
+    const html = document.documentElement;
+    const body = document.body;
+
+    html.style.overflowY = "auto";
+    html.style.overflowX = "hidden";
+    html.style.height = "auto";
+
+    body.style.overflowY = "auto";
+    body.style.overflowX = "hidden";
+    body.style.height = "auto";
+    body.style.position = "relative";
+  })();
+
   // Nav tabs active state
   initNavActiveTab();
 

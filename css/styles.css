@@ -2027,17 +2027,17 @@ section.how-it-works .red-umbrella-text{
 
 
   .about-banner{
-    height: 100vh;
-    min-height: 0;
-    padding: 0;
+  /* Don’t hard-lock to viewport height in iOS WebViews */
+  min-height: 100dvh;   /* modern mobile viewport unit */
+  height: auto;         /* allow page to grow and scroll */
+  padding: 0;
+  position: relative;
 
-    background-image: url("../images/rotatedAboutUs_background_v1.webp");
-
-    /* KEY FIX: show full image height (no crop) AND fill the whole section */
-    background-size: 102% auto;     /* <-- CONTROL: smaller % = “zoom out” more */
-    background-repeat: repeat-y;   /* <-- fills the tall section without blank space */
-    background-position: center top;
-  }
+  background-image: url("./images/rotatedAboutUs_background_v1.webp");
+  background-size: 102% auto;
+  background-repeat: repeat-y;
+  background-position: center top;
+}
 
 
   .about-inner{
@@ -2107,11 +2107,12 @@ section.how-it-works .red-umbrella-text{
     height: auto;
   }
 
-.about-banner{ position: relative; }
-
 .about-footer{
-  position: absolute;
-  left: 0; right: 0;
-  bottom: 50px;
+  /* Make footer participate in normal layout (prevents weird scroll containers) */
+  position: static;
+  margin-top: 18px;
+  padding-bottom: 24px;
+  text-align: center;
 }
+
 }
