@@ -61,15 +61,21 @@ function initSimpleScrollGallery(config) {
 
   dots.forEach((dot, idx) => {
     dot.addEventListener("click", () => {
-      slides[idx].scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      track.scrollTo({
+  left: slides[idx].offsetLeft - (track.clientWidth - slides[idx].clientWidth) / 2,
+  behavior: "smooth",
+});
       setActiveDot(idx);
     });
   });
 
   setActiveDot(0);
-  // Center first review on load
+  // Center first review on load (NO vertical page scroll)
 requestAnimationFrame(() => {
-  slides[0].scrollIntoView({ behavior: "auto", inline: "center", block: "nearest" });
+  track.scrollTo({
+    left: slides[0].offsetLeft - (track.clientWidth - slides[0].clientWidth) / 2,
+    behavior: "auto",
+  });
 });
 }
 
