@@ -433,10 +433,22 @@ section {
 
 .hero-content{
   text-align: justify;
-  padding: 5px 0 20px 0;            /* GOOD MARGIN before booking */
+  
+  padding: 2px 0 10px 0;            /* GOOD MARGIN before booking */
 }
 
 .hero-content p{
+  margin: 0 0 0px 0;
+  color: var(--color-text);
+}
+
+.hero-content-second{
+  text-align: center;
+  
+  padding: 0px 0 20px 0;            /* GOOD MARGIN before booking */
+}
+
+.hero-content-second p{
   margin: 0 0 12px 0;
   color: var(--color-text);
 }
@@ -445,6 +457,7 @@ section {
   margin: 0 0 12px 0;
   color: var(--color-text);
   font-weight: bold;
+  text-align: center;
 }
 
 /* =========================================================
