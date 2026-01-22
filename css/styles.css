@@ -400,7 +400,7 @@ section {
   padding: 30px 0 0px 0;            /* GOOD MARGIN before booking */
 }
 
-.hero-content-3hrs p{
+.hero-content-3hrs-text{
   margin: 0px 0 0px 0;
   color: var(--font-size-hero-content-3hrs);
   font-weight: bold;
@@ -424,8 +424,7 @@ section {
   font-weight: 700;
 }
 
-.why-love p{
-  margin: 0;
+.why-love-text{  margin: 0;
   font-size: var(--why-love-text-size);
   line-height: 1.55;
   color: var(--color-text-muted);
@@ -437,7 +436,7 @@ section {
   padding: 2px 0 10px 0;            /* GOOD MARGIN before booking */
 }
 
-.hero-content p{
+.hero-content-text{
   margin: 0 0 0px 0;
   color: var(--color-text);
 }
@@ -448,7 +447,7 @@ section {
   padding: 0px 0 20px 0;            /* GOOD MARGIN before booking */
 }
 
-.hero-content-second p{
+.hero-content-second-text{
   margin: 0 0 12px 0;
   color: var(--color-text);
 }
@@ -834,6 +833,9 @@ section {
   }
 }
 
+#rr-cal-grid.is-loading { pointer-events: none; }
+
+
 
 
 /* =========================================
@@ -914,7 +916,7 @@ section {
   font-weight: 600;
 }
 
-.meeting-point .meeting-text p{
+.meeting-point .meeting-text-text{
   margin: 4px 0 0 0;
   font-size: 1rem;
 }
@@ -951,7 +953,7 @@ section {
   font-size: var(--font-size-section-h2);
 }
 
-.how-it-works .how-text p{
+.how-it-works .how-text-text{
   margin-bottom: 12px;
 }
 
@@ -962,7 +964,7 @@ section {
   margin-top: 6px;
 }
 
-.how-it-works .red-umbrella-text p{
+.how-it-works .red-umbrella-text-text{
   margin: 0;
   font-weight: 800;
 }
@@ -1140,7 +1142,7 @@ section {
   margin: 0 0 5px 0;
 }
 
-.stop-body p {
+.stop-body-text {
   font-size: 0.95rem;
   line-height: 1.4;
 }
@@ -1300,7 +1302,7 @@ padding: 0 0 32px 0;
   margin-bottom: 16px;
 }
 
-.about-text-block p {
+.about-text-block-text{
   color: #ffffff;
   line-height: 1.55;
   max-width: var(--about-text-width);
@@ -1365,7 +1367,7 @@ padding: 0 0 32px 0;
     text-align: center;
   }
 
-  .about-text-block p {
+  .about-text-block-text {
     margin-left: auto;
     margin-right: auto;
   }
@@ -1379,6 +1381,27 @@ padding: 0 0 32px 0;
     text-align: center;
   }
 }
+
+
+/* ==================================================================================================================================
+   PERFORMANCE SECTION
+   ================================================================================================================================= */
+
+/* Perf: avoid rendering below-the-fold until needed */
+/* (Do NOT include .booking-section if you want calendar visible ASAP.) */
+.locations,
+.meeting-point,
+.how-it-works,
+.gallery,
+.tour-stops,
+.reviews-section,
+.about-banner,
+.footer {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 900px;
+}
+
+
 
 
 /* Find me mobile */
@@ -1523,7 +1546,7 @@ padding: 0 0 32px 0;
     padding: 12px 0 16px;
   }
 
-  .hero-content p{
+  .hero-content-text{
     margin: 0 var(--mobile-side-margin) 12px;
     font-size: 16px;
     line-height: 1.45;
@@ -1548,7 +1571,7 @@ padding: 0 0 32px 0;
   padding: 10px 0 14px;
 }
 
-.why-love .hero-content p{
+.why-love .hero-content-text{
   margin: 0 0 12px;
   line-height: 1.55;
 }
@@ -1666,7 +1689,7 @@ padding: 0 0 32px 0;
   }
 
   /* Paragraphs: justified, full width inside the text box */
-  section.how-it-works .how-text p{
+  section.how-it-works .how-text-text{
     margin: 0 0 12px 0;
     max-width: 100%;
     font-size: 15px;
@@ -1910,7 +1933,7 @@ section.how-it-works .red-umbrella-text{
     margin: 0 0 var(--stops-h3-bottom) 0;
   }
 
-  .stop-body p{
+  .stop-body-text{
     font-size: var(--stops-p-size);
     line-height: var(--stops-p-lineh);
     margin: 0;
@@ -2074,13 +2097,13 @@ section.how-it-works .red-umbrella-text{
   }
 
   .about-text-block,
-  .about-text-block p{
+  .about-text-block-text{
     width: 100%;
     max-width: none;
     text-align: left;
   }
 
-  .about-text-block p{
+  .about-text-block-text{
     margin-top: 12px;
     margin-bottom: 12px;
     line-height: 1.55;

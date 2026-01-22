@@ -388,6 +388,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const tourDateHidden = document.getElementById("tour_date");
 
   if (!form || !submitBtn) return;
+  if (!calGrid || !calTitle || !calPrev || !calNext || !calSelected || !tourDateHidden) return;
+
 
   // --------- calendar state ----------
   const today = new Date();
