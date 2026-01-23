@@ -7,7 +7,14 @@
   <link rel="preconnect" href="https://script.google.com">
 <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 
-  <link rel="stylesheet" href="css/styles.css" />
+  <!-- Preload critical above-the-fold images (helps a lot in Instagram in-app browser) -->
+<link rel="preload" as="image" href="images/hero_test_v3-1280.webp" fetchpriority="high">
+<link rel="preload" as="image" href="images/chamfered_sectionImage_SF_v2.webp" fetchpriority="high">
+<link rel="preload" as="image" href="images/chamfered_sectionImage_Mod_v2.webp" fetchpriority="high">
+<link rel="preload" as="image" href="images/chamfered_sectionImage_GQ_v2.webp" fetchpriority="high">
+
+<link rel="stylesheet" href="css/styles.css" />
+
   <link rel="icon" type="image/png" sizes="64x64" href="images/blackWhite_Logo_v2.png">
 
 </head>
@@ -135,19 +142,19 @@ Three hours, three Barcelonas, with local guides who truly know them all</p>
         <article class="location-card">
 			<h3>Sagrada Família</h3>
           <img src="images/chamfered_sectionImage_SF_v2.webp"
-               alt="Sagrada Família" class="location-image" />
+               alt="Sagrada Família" class="location-image" decoding="async" fetchpriority="high" />
         </article>
 
         <article class="location-card">
 			<h3>Modernism</h3>
           <img src="images/chamfered_sectionImage_Mod_v2.webp"
-               alt="Modernist Barcelona" class="location-image" />
+               alt="Modernist Barcelona" class="location-image" decoding="async" fetchpriority="high" />
         </article>
 
         <article class="location-card">
 			<h3>Gothic Quarter</h3>
           <img src="images/chamfered_sectionImage_GQ_v2.webp"
-               alt="Gothic Quarter" class="location-image" />
+               alt="Gothic Quarter" class="location-image" decoding="async" fetchpriority="high" />
         </article>
       </div>
 </section>

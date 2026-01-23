@@ -329,11 +329,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }, { passive: true });
   })();
 
-  // Infinite carousels (the ones you already have)
-  // Carousels (same engine for gallery + reviews)
-  CAROUSEL_CONFIGS.forEach((cfg) => initInfiniteCarousel(cfg));
+  // Defer non-critical UI work (improves first paint in IG in-app browser)
+  const defer = (fn) => {
+    if ("requestIdleCallback" in window) requestIdleCallback(fn, { timeout: 1200 });
+    else setTimeout(fn, 200);
+  };
 
-  SIMPLE_SCROLL_GALLERIES.forEach((cfg) => initSimpleScrollGallery(cfg));
+  // Infinite carousels (gallery)
+  defer(() => {
+    CAROUSEL_CONFIGS.forEach((cfg) => initInfiniteCarousel(cfg));
+  });
+
+  // Simple scroll galleries (reviews)
+  defer(() => {
+    SIMPLE_SCROLL_GALLERIES.forEach((cfg) => initSimpleScrollGallery(cfg));
+  });
 
   
 
