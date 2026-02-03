@@ -382,7 +382,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "https://script.google.com/macros/s/AKfycbynjG8HWWc7i9g7ZmL_jPBvUof4ZfGEZqxIRKUWQd0MUO5ImWw1jJAxW_e6t6Mydc7n/exec";
 
   // Availability endpoint (expects ?ym=YYYY-MM and returns { ym, days: { "YYYY-MM-DD": "AVAILABLE"/"CLOSED"/... } })
-  const AVAILABILITY_URL =
+  const AVAILABILITY_URL = 
     "https://script.google.com/macros/s/AKfycbwiMTeUI77O0rqRKTLaCZowBNpRzQCbA3GXLNS-KCNGRj440HrSInMxwCEA7eh0BDqW/exec";
 
   const form = document.getElementById("booking-form");
@@ -536,6 +536,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (messageEl) messageEl.textContent = "";
 
     const data = new FormData(form);
+
+    // --- sanitize phone BEFORE sending to Apps Script ---
+  const phoneClean = (data.get("phone") || "")
+    .toString()
+    .replace(/\s+/g, "")   // remove any spaces
+    .replace(/^\+/, "");   // remove leading + (prevents Sheets formula parse)
+  data.set("phone", phoneClean);
 
     const name = (data.get("name") || "").toString().trim();
     const email = (data.get("email") || "").toString().trim();
