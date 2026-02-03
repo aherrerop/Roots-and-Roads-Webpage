@@ -537,12 +537,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const data = new FormData(form);
 
-    // --- sanitize phone BEFORE sending to Apps Script ---
-  const phoneClean = (data.get("phone") || "")
-    .toString()
-    .replace(/\s+/g, "")   // remove any spaces
-    .replace(/^\+/, "");   // remove leading + (prevents Sheets formula parse)
-  data.set("phone", phoneClean);
+    const phoneRaw = (data.get("phone") || "").toString();
+    const phoneClean = phoneRaw.replace(/\s+/g, ""); // remove spaces ONLY
+    data.set("phone", encodeURIComponent(phoneClean));
 
     const name = (data.get("name") || "").toString().trim();
     const email = (data.get("email") || "").toString().trim();
