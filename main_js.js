@@ -539,7 +539,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const phoneRaw = (data.get("phone") || "").toString();
     const phoneClean = phoneRaw.replace(/\s+/g, ""); // remove spaces ONLY
-    data.set("phone", encodeURIComponent(phoneClean));
+    data.set("phone", phoneClean);
+
 
     const name = (data.get("name") || "").toString().trim();
     const email = (data.get("email") || "").toString().trim();
