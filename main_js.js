@@ -562,18 +562,30 @@ document.addEventListener("DOMContentLoaded", () => {
     submitBtn.textContent = "Sending...";
 
     try {
-      await fetch(SCRIPT_URL, { method: "POST", body: data, mode: "no-cors" });
-      form.reset();
-      if (messageEl) {
-        messageEl.textContent = "Thank you! We’ve received your request. We’ll email you shortly to confirm.";
-      }
-      gtag('event', 'booking_submit', {
-        event_category: 'booking',
-        event_label: 'free_walking_tour'
-      });
+  await fetch(SCRIPT_URL, { method: "POST", body: data, mode: "no-cors" });
+
+  form.reset();
+
+  if (messageEl) {
+    messageEl.textContent =
+      "Thank you! We’ve received your request. We’ll email you shortly to confirm.";
+  }
+
+  if (typeof window.gtag === "function") {
+    window.gtag("event", "booking_submit", {
+      event_category: "booking",
+      event_label: "free_walking_tour",
+    });
+  }
+
+
 
       // re-render (optional, keeps calendar view consistent)
-      await renderCalendar();
+      try { 
+        await renderCalendar(); 
+      } catch (e) { 
+        console.warn("Calendar rerender failed:", e); 
+      };
     } catch (err) {
       console.error(err);
       if (messageEl) {
