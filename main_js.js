@@ -567,6 +567,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (messageEl) {
         messageEl.textContent = "Thank you! We’ve received your request. We’ll email you shortly to confirm.";
       }
+      gtag('event', 'booking_submit', {
+        event_category: 'booking',
+        event_label: 'free_walking_tour'
+      });
+
       // re-render (optional, keeps calendar view consistent)
       await renderCalendar();
     } catch (err) {
