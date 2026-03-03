@@ -1782,7 +1782,6 @@ section.how-it-works .red-umbrella-text{
   background: var(--color-bg);  /* <-- no margins added, just fills empty space */
 }
 
-
 @media (max-width: 768px){
   .subway-indicator{
     position: relative;
