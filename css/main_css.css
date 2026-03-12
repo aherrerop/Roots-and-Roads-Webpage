@@ -1639,6 +1639,11 @@ justify-self:center;
     scroll-snap-align:center;
   }
 
+  .review-text{
+  font-size:18px;
+  line-height:1.5;
+}
+
   .review-card.is-expanded{
     flex:0 0 var(--mobile-review-card-width);
     max-width:var(--mobile-review-card-width);
@@ -1674,6 +1679,7 @@ justify-self:center;
   }
 
   .about-text-block-text{
+    font-size: 16px;
     text-align:justify;
     text-justify:inter-word;
     max-width:none;
