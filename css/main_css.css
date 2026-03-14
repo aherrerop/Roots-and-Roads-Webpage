@@ -522,6 +522,19 @@ color:white;
 cursor:pointer;
 }
 
+.gallery img,
+.stops-box,
+.review-card {
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.gallery img,
+.stops-box,
+.review-card {
+  transform: translateZ(0);
+  will-change: transform;
+}
 
 /* ================================= */
 /* TOUR STOPS */
@@ -1752,7 +1765,13 @@ justify-self:center;
   }
 }
 
-
+.stops,
+.booking,
+.reviews,
+.about {
+  content-visibility: auto;
+  contain-intrinsic-size: 1000px;
+}
 
 
 
