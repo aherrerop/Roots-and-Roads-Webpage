@@ -1310,8 +1310,8 @@ grid-template-columns:1fr;
     --mobile-tagline-to-description-gap: 34px;
 
     /* Stops */
-    --mobile-box-padding-x: 16px;
-    --mobile-stop-gap: 2px;
+    --mobile-box-padding-x: 12px;
+    --mobile-stop-gap: 5px;
     --mobile-stop-number-size: 20px;
     --mobile-stop-number-min-width: 30px;
     --mobile-stop-title-size: 16px;
