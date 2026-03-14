@@ -1314,7 +1314,7 @@ grid-template-columns:1fr;
     --mobile-stop-gap: 5px;
     --mobile-stop-number-size: 20px;
     --mobile-stop-number-min-width: 30px;
-    --mobile-stop-title-size: 18px;
+    --mobile-stop-title-size: 16px;
     --mobile-stop-text-size: 14px;
 
     /* Booking */
