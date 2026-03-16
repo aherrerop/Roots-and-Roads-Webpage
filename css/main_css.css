@@ -1018,18 +1018,17 @@ line-height:1.6;
   overflow-x:auto;
   overflow-y:hidden;
 
-  touch-action:pan-x;
-
   scroll-snap-type:x mandatory;
 
   scroll-padding-left:calc((100% - var(--width-review-card)) / 2);
   scroll-padding-right:calc((100% - var(--width-review-card)) / 2);
 
   padding:0 0 32px 0;
-
   margin:0;
 
   scrollbar-width:none;
+
+  -webkit-overflow-scrolling:touch;
 }
 
 

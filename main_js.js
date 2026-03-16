@@ -237,136 +237,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-document.addEventListener("DOMContentLoaded", () => {
-  const track = document.querySelector(".reviews-track");
-  if (!track) return;
-
-  function needsReadMore(card) {
-    const text = card.querySelector(".review-text");
-    if (!text) return false;
-
-    // Clone the text node and measure natural height (no clamp)
-    const clone = text.cloneNode(true);
-    clone.style.position = "absolute";
-    clone.style.visibility = "hidden";
-    clone.style.pointerEvents = "none";
-    clone.style.height = "auto";
-    clone.style.maxHeight = "none";
-    clone.style.overflow = "visible";
-    clone.style.display = "block";
-    clone.style.webkitLineClamp = "unset";
-    clone.style.width = `${text.clientWidth}px`;
-
-    document.body.appendChild(clone);
-    const natural = clone.scrollHeight;
-    document.body.removeChild(clone);
-
-    const available = text.clientHeight;
-    return natural > available + 6; // tolerance to avoid false positives
-  }
-
-  function updateButtons() {
-    track.querySelectorAll(".review-card:not(.clone)").forEach(card => {
-      const btn = card.querySelector(".review-more");
-      if (!btn) return;
-
-      if (card.classList.contains("is-expanded")) {
-        btn.hidden = false;
-        btn.textContent = "Read less";
-        btn.setAttribute("aria-expanded", "true");
-        return;
-      }
-
-      btn.hidden = !needsReadMore(card);
-      btn.textContent = "Read more";
-      btn.setAttribute("aria-expanded", "false");
-    });
-  }
-
-  // IMPORTANT: run after your cloning code has executed + layout settled
-  requestAnimationFrame(() => requestAnimationFrame(updateButtons));
-  window.addEventListener("resize", () => requestAnimationFrame(updateButtons));
-
-  // Toggle only clicked card, then re-check buttons
-  track.addEventListener("click", (e) => {
-    const btn = e.target.closest(".review-more");
-    if (!btn) return;
-
-    const card = btn.closest(".review-card");
-    if (!card) return;
-
-    if (card.classList.contains("clone")) return;
-
-    card.classList.toggle("is-expanded");
-    requestAnimationFrame(updateButtons);
-  });
-});
 
 
-document.addEventListener("DOMContentLoaded", () => {
-  const track = document.querySelector(".reviews-track");
-  if (!track) return;
-
-  function needsReadMore(card) {
-    const text = card.querySelector(".review-text");
-    if (!text) return false;
-
-    // Clone the text node and measure natural height (no clamp)
-    const clone = text.cloneNode(true);
-    clone.style.position = "absolute";
-    clone.style.visibility = "hidden";
-    clone.style.pointerEvents = "none";
-    clone.style.height = "auto";
-    clone.style.maxHeight = "none";
-    clone.style.overflow = "visible";
-    clone.style.display = "block";
-    clone.style.webkitLineClamp = "unset";
-    clone.style.width = `${text.clientWidth}px`;
-
-    document.body.appendChild(clone);
-    const natural = clone.scrollHeight;
-    document.body.removeChild(clone);
-
-    const available = text.clientHeight;
-    return natural > available + 6; // tolerance to avoid false positives
-  }
-
-  function updateButtons() {
-    track.querySelectorAll(".review-card:not(.clone)").forEach(card => {
-      const btn = card.querySelector(".review-more");
-      if (!btn) return;
-
-      if (card.classList.contains("is-expanded")) {
-        btn.hidden = false;
-        btn.textContent = "Read less";
-        btn.setAttribute("aria-expanded", "true");
-        return;
-      }
-
-      btn.hidden = !needsReadMore(card);
-      btn.textContent = "Read more";
-      btn.setAttribute("aria-expanded", "false");
-    });
-  }
-
-  // IMPORTANT: run after your cloning code has executed + layout settled
-  requestAnimationFrame(() => requestAnimationFrame(updateButtons));
-  window.addEventListener("resize", () => requestAnimationFrame(updateButtons));
-
-  // Toggle only clicked card, then re-check buttons
-  track.addEventListener("click", (e) => {
-    const btn = e.target.closest(".review-more");
-    if (!btn) return;
-
-    const card = btn.closest(".review-card");
-    if (!card) return;
-
-    if (card.classList.contains("clone")) return;
-
-    card.classList.toggle("is-expanded");
-    requestAnimationFrame(updateButtons);
-  });
-});
 
 
 const galleryImages = document.querySelectorAll(".see-gallery img");
@@ -394,6 +266,8 @@ galleryImages.forEach((img, index) => {
 closeBtn.addEventListener("click", () => {
   modal.style.display = "none";
 });
+
+document.addEventListener("DOMContentLoaded", () => {
 
 const reviewsTrack = document.querySelector(".reviews-track");
 const leftArrow = document.querySelector(".reviews-arrow-left");
@@ -432,3 +306,5 @@ reviewsTrack.addEventListener("scroll", updateArrows);
 updateArrows();
 
 }
+
+});
