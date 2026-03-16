@@ -535,13 +535,6 @@ cursor:pointer;
   will-change: transform;
 }
 
-.gallery img,
-.stops-box,
-.review-card {
-  transform: translateZ(0);
-  will-change: transform;
-}
-
 /* ================================= */
 /* TOUR STOPS */
 /* ================================= */
@@ -1016,9 +1009,9 @@ line-height:1.6;
   gap:var(--gap-review-cards);
 
   overflow-x:auto;
-  overflow-y:fhidden;
+  overflow-y:hidden;
 
-  scroll-snap-type:x mandatory;
+  scroll-snap-type:x proximity;
 
   scroll-padding-left:calc((100% - var(--width-review-card)) / 2);
   scroll-padding-right:calc((100% - var(--width-review-card)) / 2);
@@ -1427,7 +1420,7 @@ grid-template-columns:1fr;
      ================================= */
  .banner{
 grid-template-columns:1fr;
-height: 80 px;
+height: 80px;
 justify-items:center;
 }
 
@@ -1689,9 +1682,7 @@ justify-self:center;
   overflow-x:auto;
   overflow-y:hidden;
 
-  touch-action:pan-x;
-
-  scroll-snap-type:x mandatory;
+  scroll-snap-type:x proximity;
 
   scroll-padding-left:calc((100vw - var(--mobile-review-card-width)) / 2);
   scroll-padding-right:calc((100vw - var(--mobile-review-card-width)) / 2);
