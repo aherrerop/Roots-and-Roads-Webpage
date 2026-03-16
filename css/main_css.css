@@ -1011,24 +1011,28 @@ line-height:1.6;
 
 /* Track: scrollable row */
 .reviews-track{
-  display: flex;
-  flex-wrap: nowrap;
-  gap: var(--gap-review-cards);
+  display:flex;
+  flex-wrap:nowrap;
+  gap:var(--gap-review-cards);
 
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow-x:auto;
+  overflow-y:hidden;
 
-  scroll-snap-type: x mandatory; /* smoother than mandatory */
-  /* symmetric center padding */
-scroll-padding-left: calc((100% - var(--width-review-card)) / 2);
-scroll-padding-right: calc((100% - var(--width-review-card)) / 2);
+  touch-action:pan-x;
 
-padding: 0 0 32px 0;
+  scroll-snap-type:x mandatory;
 
-  margin: 0;
+  scroll-padding-left:calc((100% - var(--width-review-card)) / 2);
+  scroll-padding-right:calc((100% - var(--width-review-card)) / 2);
 
-  scrollbar-width: none;
+  padding:0 0 32px 0;
+
+  margin:0;
+
+  scrollbar-width:none;
 }
+
+
 .reviews-track::-webkit-scrollbar{ display:none; }
 
 
@@ -1677,18 +1681,26 @@ justify-self:center;
     width:100vw;
     margin-left:calc(50% - 50vw);
     overflow:visible;
+    min-height: var(--height-review-card-min);
   }
 
-  .reviews-track{
-    gap:18px;
-    overflow-x:auto;
-    overflow-y:hidden;
-    scroll-snap-type:x mandatory;
-    scroll-padding-left:calc((100vw - var(--mobile-review-card-width)) / 2);
-    scroll-padding-right:calc((100vw - var(--mobile-review-card-width)) / 2);
-    padding:0 0 24px 0;
-    scrollbar-width:none;
-  }
+.reviews-track{
+  gap:18px;
+
+  overflow-x:auto;
+  overflow-y:hidden;
+
+  touch-action:pan-x;
+
+  scroll-snap-type:x mandatory;
+
+  scroll-padding-left:calc((100vw - var(--mobile-review-card-width)) / 2);
+  scroll-padding-right:calc((100vw - var(--mobile-review-card-width)) / 2);
+
+  padding:0 0 24px 0;
+
+  scrollbar-width:none;
+}
 
   .reviews-track::-webkit-scrollbar{
     display:none;
@@ -1702,6 +1714,7 @@ justify-self:center;
 
   .review-card{
     flex:0 0 var(--mobile-review-card-width);
+    flex-shrink: 0;
     max-width:var(--mobile-review-card-width);
     min-height:var(--mobile-review-card-min-height);
     height:auto;
