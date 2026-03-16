@@ -492,11 +492,17 @@ z-index:1000;
 .gallery-modal-content{
 display:flex;
 gap:40px;
+
 overflow-x:auto;
+overflow-y:auto;
+
 padding:40px;
 max-width:100vw;
+height:100vh;
+
 scrollbar-width:none;
-align-items:center;
+
+-webkit-overflow-scrolling:touch;
 }
 
 .gallery-modal-content::-webkit-scrollbar{
