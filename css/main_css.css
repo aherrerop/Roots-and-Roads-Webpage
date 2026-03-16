@@ -3,7 +3,7 @@
 /* ================================= */
 
 html{
-scroll-behavior:smooth;
+scroll-behavior:auto;
 }
 
 *:focus{
@@ -1685,8 +1685,6 @@ justify-self:center;
   overflow-y:hidden;
 
   scroll-snap-type:x proximity;
-  -webkit-overflow-scrolling: touch;
-  scroll-behavior: smooth;
 
   scroll-padding-left:calc((100vw - var(--mobile-review-card-width)) / 2);
   scroll-padding-right:calc((100vw - var(--mobile-review-card-width)) / 2);
