@@ -452,8 +452,8 @@ gap:20px;
 .gallery-center img,
 .gallery-right img{
 display:block;
-height:100%;
 width:100%;
+height:auto;
 object-fit:cover;
 border-radius:var(--image-radius);
 transition:transform 0.25s ease;
@@ -462,7 +462,7 @@ transition:transform 0.25s ease;
 .gallery-left img{
 display:block;
 width:100%;
-height:100%;
+height:auto;
 object-fit:cover;
 border-radius:var(--image-radius);
 transition:transform 0.25s ease;
@@ -1016,7 +1016,7 @@ line-height:1.6;
   gap:var(--gap-review-cards);
 
   overflow-x:auto;
-  overflow-y:hidden;
+  overflow-y:fhidden;
 
   scroll-snap-type:x mandatory;
 
@@ -1841,13 +1841,6 @@ top: 48.5%;
   }
 }
 
-.stops,
-.booking,
-.reviews,
-.about {
-  content-visibility: auto;
-  contain-intrinsic-size: 1000px;
-}
 
 
 
