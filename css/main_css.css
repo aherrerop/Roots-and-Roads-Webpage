@@ -379,7 +379,7 @@ margin-top: 60px;
 
 font-family:var(--font-primary);
 font-size:var(--tagline-size);
-
+text-align: justify;
 line-height:1.15;
 
 }
@@ -404,7 +404,7 @@ align-items:center;
 
 font-size:var(--font-paragraph);
 line-height:1.6;
-
+text-align: justify;
 }
 
 .description-image img{
@@ -1105,6 +1105,53 @@ padding: 0 0 32px 0;
   text-align: right;
 }
 
+.reviews-fullwidth{
+position:relative;
+}
+
+.reviews-arrow{
+position:absolute;
+top:50%;
+transform:translateY(-50%);
+width:44px;
+height:44px;
+
+border:none;
+border-radius:50%;
+
+background:rgba(0,0,0,0.35);
+color:white;
+font-size:28px;
+
+display:flex;
+align-items:center;
+justify-content:center;
+
+cursor:pointer;
+z-index:5;
+
+opacity:0.6;
+transition:opacity 0.2s;
+}
+
+.reviews-arrow:hover{
+opacity:1;
+}
+
+.reviews-arrow-left{
+left:calc(50% - 600px);
+top: 40%;
+}
+
+.reviews-arrow-right{
+right:calc(50% - 600px);
+top: 58%;
+}
+
+.reviews-arrow.hidden{
+display:none;
+}
+
 
 
 
@@ -1319,7 +1366,7 @@ grid-template-columns:1fr;
     --mobile-hero-gap: 22px;
     --mobile-hero-title-size: 60px;
     --mobile-hero-image-height: 250px;
-    --mobile-tagline-size: 42px;
+    --mobile-tagline-size: 43px;
     --mobile-tagline-to-description-gap: 34px;
 
     /* Stops */
@@ -1327,7 +1374,7 @@ grid-template-columns:1fr;
     --mobile-stop-gap: 5px;
     --mobile-stop-number-size: 20px;
     --mobile-stop-number-min-width: 25px;
-    --mobile-stop-title-size: 16px;
+    --mobile-stop-title-size: 18px;
     --mobile-stop-text-size: 14px;
 
     /* Booking */
@@ -1604,6 +1651,7 @@ justify-self:center;
     padding:var(--mobile-box-padding-y) var(--mobile-box-padding-x);
     text-align:justify;
     text-justify:inter-word;
+    font-size: var(--mobile-stop-title-size);
   }
 
   .how-box p + p{
@@ -1666,6 +1714,16 @@ justify-self:center;
     min-height:var(--mobile-review-card-min-height);
     height:auto;
   }
+
+  .reviews-arrow-left{
+left:10px;
+top:40%;
+}
+
+.reviews-arrow-right{
+right:10px;
+top: 48.5%;
+}
 
   /* =================================
      ABOUT US

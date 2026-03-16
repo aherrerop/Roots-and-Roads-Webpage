@@ -380,7 +380,9 @@ galleryImages.forEach((img, index) => {
 
     modal.style.display = "flex";
 
-    modalImages[index].scrollIntoView({
+    const src = img.getAttribute("src");
+    const target = document.querySelector(`.gallery-modal img[src="${src}"]`);
+    target.scrollIntoView({
       block: "nearest",
       inline: "center"
     });
@@ -392,3 +394,41 @@ galleryImages.forEach((img, index) => {
 closeBtn.addEventListener("click", () => {
   modal.style.display = "none";
 });
+
+const reviewsTrack = document.querySelector(".reviews-track");
+const leftArrow = document.querySelector(".reviews-arrow-left");
+const rightArrow = document.querySelector(".reviews-arrow-right");
+
+if(reviewsTrack && leftArrow && rightArrow){
+
+const cardWidth = document.querySelector(".review-card").offsetWidth;
+const gap = parseInt(getComputedStyle(reviewsTrack).gap) || 0;
+const step = cardWidth + gap;
+
+function updateArrows(){
+
+leftArrow.classList.toggle(
+"hidden",
+reviewsTrack.scrollLeft <= 5
+);
+
+rightArrow.classList.toggle(
+"hidden",
+reviewsTrack.scrollLeft + reviewsTrack.clientWidth >= reviewsTrack.scrollWidth - 5
+);
+
+}
+
+leftArrow.addEventListener("click", ()=>{
+reviewsTrack.scrollBy({left:-step, behavior:"smooth"});
+});
+
+rightArrow.addEventListener("click", ()=>{
+reviewsTrack.scrollBy({left:step, behavior:"smooth"});
+});
+
+reviewsTrack.addEventListener("scroll", updateArrows);
+
+updateArrows();
+
+}
