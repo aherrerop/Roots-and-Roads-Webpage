@@ -1492,12 +1492,18 @@ justify-self:center;
   }
 
   .see-gallery{
-    gap:14px;
-  }
+grid-template-columns:1fr;
+}
 
-  .gallery-left{
-    gap:14px;
-  }
+.gallery-left,
+.gallery-center,
+.gallery-right{
+flex-direction:row;
+}
+
+.see-gallery img{
+height:180px;
+}
 
   /* No hover enlargement on touch devices */
   .see-gallery img:hover{
