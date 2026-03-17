@@ -113,7 +113,7 @@ var e=ttq._i[t]||[],n=0;n<ttq.methods.length;n++)ttq.setAndDefer(e,ttq.methods[n
             Barcelona's<br>
             Highlights<br>
             Walking<br>
-            Tour 9
+            Tour 10
         </h1>
 
     </div>
@@ -125,45 +125,6 @@ var e=ttq._i[t]||[],n=0;n<ttq.methods.length;n++)ttq.setAndDefer(e,ttq.methods[n
 </section>
 
 
-
-<!-- ================================= -->
-<!-- TAGLINE -->
-<!-- ================================= -->
-
-<section class="tagline">
-
-<h2>
-Three hours, three Barcelonas,<br>
-with local guides who truly know them all
-</h2>
-
-</section>
-
-
-
-<!-- ================================= -->
-<!-- DESCRIPTION -->
-<!-- ================================= -->
-
-<section class="description">
-
-<div class="description-text">
-
-<p>
-Our free-reserve tour begins at <strong>10:30</strong> beneath
-<strong>Sagrada Familia</strong>, continues along
-<strong>Passeig de Gràcia</strong> to explore
-<strong>Catalan Modernism</strong>, and ends in the historical
-maze of the city, the <strong>Gothic Quarter</strong>.
-</p>
-
-</div>
-
-<div class="description-image">
-<img src="images/batllo_v1.webp" alt="Passeig de Gracia" fetchpriority="high" decoding="async">
-</div>
-
-</section>
 
 
 <!-- ================================= -->
@@ -302,108 +263,6 @@ maze of the city, the <strong>Gothic Quarter</strong>.
 
 </div>
 
-</section>
-
-
-
-<!-- Booking Section -->
-<section id="booking" class="booking-section">
-  <div class="booking-wrap">
-
-    <form id="booking-form" class="booking-form" novalidate>
-
-      <!-- Title / helper text (RESTORED) -->
-      <header class="booking-head">
-        <h2 class="booking-title">Book your Roots &amp; Roads tour</h2>
-        <p class="booking-subtitle">Reserve your spot in 30 seconds. We’ll confirm by email.</p>
-      </header>
-
-      <div class="booking-grid">
-
-        <!-- LEFT -->
-        <div class="booking-left">
-
-          <div class="form-field guests-field">
-            <label for="guests">Number of guests</label>
-            <input type="number" id="guests" name="guests" min="1" max="20" required value="1" />
-            <p class="field-error" data-error-for="guests"></p>
-          </div>
-
-          <input type="hidden" id="tour_date" name="tour_date" required />
-          <p class="field-error" data-error-for="tour_date"></p>
-
-          <div class="rr-calendar is-loading" id="rr-calendar" aria-label="Tour availability calendar">
-            <div class="rr-cal-header">
-              <button type="button" class="rr-cal-nav" id="rr-cal-prev" aria-label="Previous month">‹</button>
-              <div class="rr-cal-title" id="rr-cal-title">December 2025</div>
-              <button type="button" class="rr-cal-nav" id="rr-cal-next" aria-label="Next month">›</button>
-            </div>
-
-            <div class="rr-cal-weekdays">
-              <div>mon</div><div>tue</div><div>wed</div><div>thu</div><div>fri</div><div>sat</div><div>sun</div>
-            </div>
-
-            <div class="rr-cal-grid" id="rr-cal-grid" aria-busy="true"></div>
-
-            <div class="date-legend rr-cal-legend">
-              <span class="legend-item"><span class="legend-dot available"></span> Available</span>
-              <span class="legend-item"><span class="legend-dot unavailable"></span> Fully booked</span>
-            </div>
-
-            <p class="rr-cal-selected" id="rr-cal-selected" aria-live="polite"></p>
-          </div>
-        </div>
-
-        <!-- RIGHT -->
-        <div class="booking-right">
-          <div class="form-row form-row-2">
-            <div class="form-field">
-              <label for="name">Name</label>
-              <input type="text" id="name" name="name" required autocomplete="name" placeholder="Your name" />
-              <p class="field-error" data-error-for="name"></p>
-            </div>
-
-            <div class="form-field">
-              <label for="email">Email</label>
-              <input type="email" id="email" name="email" required autocomplete="email" placeholder="you@example.com" />
-              <p class="field-error" data-error-for="email"></p>
-            </div>
-          </div>
-
-          <div class="form-field">
-            <label for="phone">Phone number</label>
-            <input type="tel" id="phone" name="phone" autocomplete="tel" placeholder="+34 600 000 000" />
-            <p class="field-error" data-error-for="phone"></p>
-          </div>
-
-          <div class="form-field">
-            <label for="message">Anything we should know? (optional)</label>
-            <textarea id="message" name="message" rows="2" placeholder="Special accommodations, requests, questions..."></textarea>
-            <p class="field-error" data-error-for="message"></p>
-          </div>
-        </div>
-
-        <!-- Full width -->
-        <p class="tour-time-note rr-full">
-          Tours start at <strong>10:30 AM</strong> on weekdays and <strong>4:30 PM</strong> on weekends.
-        </p>
-
-        <div class="form-consent rr-full">
-          <label class="checkbox-label">
-            <input type="checkbox" id="consent" name="consent" required />
-            <span>I agree that Roots &amp; Roads uses my details to manage this booking and send tour-related messages.</span>
-          </label>
-          <p class="field-error" data-error-for="consent"></p>
-        </div>
-
-        <button type="submit" class="booking-submit rr-full">Reserve your spot</button>
-
-
-        <p id="booking-message" class="booking-message rr-full" aria-live="polite"></p>
-      </div>
-    </form>
-
-  </div>
 </section>
 
 
