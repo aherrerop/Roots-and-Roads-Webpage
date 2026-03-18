@@ -1091,6 +1091,7 @@ position:relative;
 position:absolute;
 top:50%;
 transform:translateY(-50%);
+
 width:44px;
 height:44px;
 
@@ -1106,7 +1107,7 @@ align-items:center;
 justify-content:center;
 
 cursor:pointer;
-z-index:5;
+z-index:10;
 
 opacity:0.6;
 transition:opacity 0.2s;
@@ -1117,19 +1118,16 @@ opacity:1;
 }
 
 .reviews-arrow-left{
-left:calc(50% - 600px);
-top: 40%;
+left:-50px;
 }
 
 .reviews-arrow-right{
-right:calc(50% - 600px);
-top: 58%;
+right:-50px;
 }
 
 .reviews-arrow.hidden{
 display:none;
 }
-
 
 
 
@@ -1697,14 +1695,6 @@ height:180px;
     height:auto;
   }
 
-  .reviews-arrow-left{
-left:10px;
-top:40%;
-}
-
-.reviews-arrow-right{
-right:10px;
-top: 48.5%;
 }
 
   /* =================================
