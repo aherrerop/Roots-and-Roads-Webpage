@@ -239,28 +239,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-
-
 const galleryImages = document.querySelectorAll(".see-gallery img");
 const modal = document.getElementById("gallery-modal");
-const modalImages = document.querySelectorAll(".gallery-modal img");
+const modalContent = document.querySelector(".gallery-modal-content");
 const closeBtn = document.querySelector(".gallery-close");
 
-galleryImages.forEach((img, index) => {
-
+galleryImages.forEach((img) => {
   img.addEventListener("click", () => {
-
     modal.style.display = "flex";
 
     const src = img.getAttribute("src");
-    const target = document.querySelector(`.gallery-modal img[src="${src}"]`);
-    target.scrollIntoView({
-      block: "nearest",
-      inline: "center"
-    });
+    const target = modalContent.querySelector(`img[src="${src}"]`);
 
+    if (target) {
+      modalContent.scrollTo({
+        left: target.offsetLeft - (modalContent.clientWidth - target.clientWidth) / 2,
+        behavior: "smooth"
+      });
+    }
   });
-
 });
 
 closeBtn.addEventListener("click", () => {
