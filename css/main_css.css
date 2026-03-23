@@ -1356,7 +1356,7 @@ grid-template-columns:1fr;
     --mobile-booking-card-pad-left: 1rem;
 
     /* Reviews */
-    --mobile-review-card-width: calc(100vw - (2 * var(--mobile-side-margin)));
+    --mobile-review-card-width: calc(100vw - (4 * var(--mobile-side-margin)));
     --mobile-review-card-min-height: 450px;
 
     /* About */
