@@ -1862,7 +1862,117 @@ height:180px;
     right:18px;
   }
 
+  /* =================================
+     BOOKING — MOBILE OVERFLOW FIX
+     Keeps every booking element inside the black card
+     ================================= */
 
+  .booking-section{
+    width: 100%;
+    max-width: 100vw;
+    padding-left: var(--mobile-side-margin);
+    padding-right: var(--mobile-side-margin);
+    overflow: hidden;
+  }
+
+  .booking-wrap{
+    width: 100%;
+    max-width: 100%;
+    display: flex;
+    justify-content: center;
+  }
+
+  #booking-form.booking-form{
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  #booking-form .booking-grid,
+  #booking-form .booking-left,
+  #booking-form .booking-right,
+  #booking-form .form-field,
+  #booking-form .rr-full{
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  #booking-form .booking-grid{
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: stretch;
+  }
+
+  #booking-form .form-field input,
+  #booking-form .form-field textarea,
+  #booking-form .form-field select,
+  #booking-form #tour_language,
+  #booking-form .rr-calendar,
+  #booking-form .tour-time-options{
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  #booking-form .rr-cal-weekdays,
+  #booking-form .rr-cal-grid{
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  #booking-form .rr-cal-day{
+    width: 100%;
+    min-width: 0;
+  }
+
+  #booking-form .rr-cal-legend{
+    flex-wrap: wrap;
+    justify-content: center;
+    text-align: center;
+  }
+
+  #booking-form .rr-cal-selected{
+    text-align: center;
+    line-height: 1.3;
+  }
+
+  #booking-form .tour-time-options{
+    justify-content: center;
+  }
+
+  #booking-form .form-consent{
+    width: 100%;
+    max-width: 100%;
+    text-align: left;
+  }
+
+  #booking-form .checkbox-label{
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    align-items: flex-start;
+    line-height: 1.35;
+  }
+
+  #booking-form .checkbox-label input{
+    flex: 0 0 auto;
+    width: auto;
+    margin-top: 0.25rem;
+  }
+
+  #booking-form .checkbox-label span{
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  #booking-form .booking-submit{
+    max-width: 100%;
+    width: min(260px, 100%);
+  }
 }
 
 
