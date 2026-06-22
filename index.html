@@ -178,7 +178,7 @@ with local guides who truly know them all
 <div class="description-text">
 
 <p>
-Our free-reserve tour begins at <strong>10:30</strong> beneath
+Our free-reserve tour begins beneath
 <strong>Sagrada Familia</strong>, continues along
 <strong>Passeig de Gràcia</strong> to explore
 <strong>Catalan Modernism</strong>, and ends in the historical
@@ -237,9 +237,9 @@ maze of the city, the <strong>Gothic Quarter</strong>.
 
 <div class="stop-text">
 
-<h3>Meeting point: Hard Rock Cafe Sagrada Familia</h3>
+<h3>Meeting point: KFC Sagrada Família</h3>
 
-<p>Look for us under a red umbrella at Av. Gaudí 1</p>
+<p>Look for us under a blue umbrella at Av. Gaudí 2</p>
 
 </div>
 
@@ -370,7 +370,6 @@ maze of the city, the <strong>Gothic Quarter</strong>.
 
     <form id="booking-form" class="booking-form" novalidate>
 
-      <!-- Title / helper text (RESTORED) -->
       <header class="booking-head">
         <h2 class="booking-title">Book your Roots &amp; Roads tour</h2>
         <p class="booking-subtitle">Reserve your spot in 30 seconds. We’ll confirm by email.</p>
@@ -381,10 +380,15 @@ maze of the city, the <strong>Gothic Quarter</strong>.
         <!-- LEFT -->
         <div class="booking-left">
 
-          <div class="form-field guests-field">
-            <label for="guests">Number of guests</label>
-            <input type="number" id="guests" name="guests" min="1" max="20" required value="1" />
-            <p class="field-error" data-error-for="guests"></p>
+          <div class="form-field">
+            <label for="tour_language">Language</label>
+            <select id="tour_language" name="language" required>
+              <option value="">Choose a language</option>
+              <option value="English">English</option>
+              <option value="Spanish">Spanish</option>
+              <option value="German">German</option>
+            </select>
+            <p class="field-error" data-error-for="language"></p>
           </div>
 
           <input type="hidden" id="tour_date" name="tour_date" required />
@@ -410,22 +414,31 @@ maze of the city, the <strong>Gothic Quarter</strong>.
 
             <p class="rr-cal-selected" id="rr-cal-selected" aria-live="polite"></p>
           </div>
+
+          <div class="form-field">
+            <label>Available times</label>
+            <input type="hidden" id="tour_time" name="tour_time" required />
+            <div id="tour-time-options" class="tour-time-options">
+              <p class="tour-time-placeholder">Choose a language and date first.</p>
+            </div>
+            <p class="field-error" data-error-for="tour_time"></p>
+          </div>
+
         </div>
 
         <!-- RIGHT -->
         <div class="booking-right">
-          <div class="form-row form-row-2">
-            <div class="form-field">
-              <label for="name">Name</label>
-              <input type="text" id="name" name="name" required autocomplete="name" placeholder="Your name" />
-              <p class="field-error" data-error-for="name"></p>
-            </div>
 
-            <div class="form-field">
-              <label for="email">Email</label>
-              <input type="email" id="email" name="email" required autocomplete="email" placeholder="you@example.com" />
-              <p class="field-error" data-error-for="email"></p>
-            </div>
+          <div class="form-field">
+            <label for="name">Name</label>
+            <input type="text" id="name" name="name" required autocomplete="name" placeholder="Your name" />
+            <p class="field-error" data-error-for="name"></p>
+          </div>
+
+          <div class="form-field">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" required autocomplete="email" placeholder="you@example.com" />
+            <p class="field-error" data-error-for="email"></p>
           </div>
 
           <div class="form-field">
@@ -434,17 +447,19 @@ maze of the city, the <strong>Gothic Quarter</strong>.
             <p class="field-error" data-error-for="phone"></p>
           </div>
 
+          <div class="form-field guests-field">
+            <label for="guests">Number of guests</label>
+            <input type="number" id="guests" name="guests" min="1" max="20" required value="1" />
+            <p class="field-error" data-error-for="guests"></p>
+          </div>
+
           <div class="form-field">
             <label for="message">Anything we should know? (optional)</label>
             <textarea id="message" name="message" rows="2" placeholder="Special accommodations, requests, questions..."></textarea>
             <p class="field-error" data-error-for="message"></p>
           </div>
-        </div>
 
-        <!-- Full width -->
-        <p class="tour-time-note rr-full">
-          Tours start at <strong>10:30 AM</strong> on weekdays and <strong>4:30 PM</strong> on weekends.
-        </p>
+        </div>
 
         <div class="form-consent rr-full">
           <label class="checkbox-label">
@@ -456,8 +471,8 @@ maze of the city, the <strong>Gothic Quarter</strong>.
 
         <button type="submit" class="booking-submit rr-full">Reserve your spot</button>
 
-
         <p id="booking-message" class="booking-message rr-full" aria-live="polite"></p>
+
       </div>
     </form>
 

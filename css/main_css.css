@@ -689,7 +689,8 @@ line-height:1.4;
    Inputs (dark boxes) — force override
    ========================= */
 #booking-form .form-field input,
-#booking-form .form-field textarea{
+#booking-form .form-field textarea,
+#booking-form .form-field select{
   width: 100%;
   background: var(--rr-input-bg, rgba(255,255,255,0.04)) !important;
   border: 1px solid var(--rr-border, rgba(255,255,255,0.12)) !important;
@@ -703,7 +704,8 @@ line-height:1.4;
 
 /* Fix: “Name becomes white after typing” (usually browser autofill / global :valid styles) */
 #booking-form input:valid,
-#booking-form textarea:valid{
+#booking-form textarea:valid,
+#booking-form select:valid{
   background: var(--rr-input-bg, rgba(255,255,255,0.04)) !important;
   color: var(--rr-input-text, #f3f3f3) !important;
 }
@@ -728,7 +730,8 @@ line-height:1.4;
 }
 
 #booking-form .form-field input:focus,
-#booking-form .form-field textarea:focus{
+#booking-form .form-field textarea:focus,
+#booking-form .form-field select:focus{
   border-color: var(--booking-focus-border, rgba(246,209,105,0.9));
   box-shadow: 0 0 0 4px var(--booking-focus-glow, rgba(246,209,105,0.18));
 }
@@ -742,14 +745,59 @@ line-height:1.4;
 #booking-form input[type="number"]{ -moz-appearance: textfield; }
 
 /* =========================
-   Guests width = calendar width
+   Left column controls
    ========================= */
-#booking-form .rr-calendar{
-  width: calc((7 * var(--cal-day)) + (6 * var(--cal-gap)) + (2 * var(--cal-pad)) + 2px);
-}
-#booking-form input#guests{
+#booking-form .rr-calendar,
+#booking-form #tour_language,
+#booking-form .tour-time-options{
   width: calc((7 * var(--cal-day)) + (6 * var(--cal-gap)) + (2 * var(--cal-pad)) + 2px);
   max-width: calc((7 * var(--cal-day)) + (6 * var(--cal-gap)) + (2 * var(--cal-pad)) + 2px);
+}
+
+#booking-form input#guests{
+  width: 100%;
+  max-width: 100%;
+}
+
+#booking-form .form-field select option{
+  background: var(--rr-input-bg, #1a1a1a);
+  color: var(--rr-input-text, #f3f3f3);
+}
+
+#booking-form .tour-time-options{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  min-height: 42px;
+  align-items: center;
+}
+
+#booking-form .tour-time-placeholder{
+  margin: 0;
+  opacity: 0.85;
+  font-size: 0.95rem;
+}
+
+#booking-form .tour-time-btn{
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  color: var(--rr-text, #f1f1f1);
+  padding: 0.65rem 1rem;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+#booking-form .tour-time-btn.is-selected{
+  background: var(--rr-accent, #f6d169);
+  color: #111;
+  border-color: var(--rr-accent, #f6d169);
+}
+
+#booking-form .tour-time-btn:disabled{
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Force vertical stacking on right */
