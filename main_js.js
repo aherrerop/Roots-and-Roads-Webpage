@@ -17,8 +17,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "https://script.google.com/macros/s/AKfycbyOMncfcKPdw2fPCvy81QqISJYD74swLxScRdnpwL_6MQX5Iml-zjk2EWZghFJLHngh/exec";
 
   const AVAILABILITY_URL =
-    "https://script.google.com/macros/s/AKfycbyOMncfcKPdw2fPCvy81QqISJYD74swLxScRdnpwL_6MQX5Iml-zjk2EWZghFJLHngh/exec";
-
+    "https://script.googleusercontent.com/macros/echo?user_content_key=AUkAhnTjx34AjWlb4YIwNF1rjBIyj_Mz_6NeCuYVJj46NNbV6Oanhcg0bRPHd9otCKNXMz_3lCjIhYvHGLmjcPIiUeWT1T2TgIICESO7pl6zj2U_AsPDUVFGDll-NT2sdO_wX_1Tr-TI9srk6WgknkAiZo-CmG95eARJTAu0Ct4Gm1JrPKKwBPmg-_USsQt2E1deJm6qmaeL1b949G6WTBL_KSsmjELhLhdK6ysqPNo-ICyLAHr-UBHImcXNca9CeHqJAt1SN7K6OVBriN7UB-lacmyc9Z9SJGmB41Z9nJ6E&lib=MmD_m6il7QxYE-_48ogft87VqypGyotvW";
   // --------------------------------------
   // Form elements
   // --------------------------------------
@@ -158,7 +157,10 @@ async function fetchAvailabilityForMonth(ym) {
 
     console.log("[R&R] Fetching availability URL:", url);
 
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, {
+      cache: "no-store",
+      redirect: "follow",
+    });
     const json = await res.json();
 
     console.log("[R&R] Raw June 24 from backend:", json.days?.["2026-06-24"]);
