@@ -153,37 +153,39 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function fetchAvailabilityForMonth(ym) {
   return new Promise((resolve) => {
-    const callbackName = `rrAvailability_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    const callbackName =
+      "rrAvailability_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
 
-    window[callbackName] = (json) => {
+    const script = document.createElement("script");
+
+    window[callbackName] = function (json) {
+      const out = {};
+
       try {
-        const out = {};
-
         if (json && json.days && typeof json.days === "object") {
           Object.keys(json.days).forEach((iso) => {
             const slots = json.days[iso];
             out[iso] = Array.isArray(slots) ? slots.map(normalizeSlot) : [];
           });
         }
-
-        resolve(out);
       } catch (err) {
         console.warn("[R&R] Availability JSONP parse failed:", err);
-        resolve({});
-      } finally {
-        delete window[callbackName];
-        script.remove();
       }
+
+      delete window[callbackName];
+      script.remove();
+      resolve(out);
     };
 
     const separator = AVAILABILITY_URL.includes("?") ? "&" : "?";
-    const script = document.createElement("script");
 
     script.src =
-      `${AVAILABILITY_URL}${separator}ym=${encodeURIComponent(ym)}&callback=${callbackName}&t=${Date.now()}`;
+      `${AVAILABILITY_URL}${separator}ym=${encodeURIComponent(ym)}` +
+      `&callback=${encodeURIComponent(callbackName)}` +
+      `&t=${Date.now()}`;
 
-    script.onerror = () => {
-      console.warn("[R&R] Availability JSONP failed");
+    script.onerror = function () {
+      console.warn("[R&R] Availability JSONP failed:", script.src);
       delete window[callbackName];
       script.remove();
       resolve({});
@@ -222,10 +224,6 @@ function openSlotsForDate(iso) {
         spots > 0,
     };
   });
-
-  if (iso === "2026-06-24") {
-    console.log("[R&R] Slot filter check June 24:", JSON.stringify(checked, null, 2));
-  }
 
   return checked
     .filter((x) => x.finalPasses)
