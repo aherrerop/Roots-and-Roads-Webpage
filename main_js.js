@@ -14,10 +14,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // SCRIPT_URL receives website bookings through doPost(e).
   // AVAILABILITY_URL returns month availability through doGet(e).
   const SCRIPT_URL =
-    "https://script.google.com/macros/s/AKfycbyOMncfcKPdw2fPCvy81QqISJYD74swLxScRdnpwL_6MQX5Iml-zjk2EWZghFJLHngh/exec";
+    "https://script.google.com/macros/s/AKfycbyvNjHS_vcU9Z_RrSSRYkduSTWAcTgxtxwRdEHv-Q6ncaW_Z1kh_vgbue5i_KlO9RwV/exec";
 
   const AVAILABILITY_URL =
-    "https://script.googleusercontent.com/macros/echo?user_content_key=AUkAhnTjx34AjWlb4YIwNF1rjBIyj_Mz_6NeCuYVJj46NNbV6Oanhcg0bRPHd9otCKNXMz_3lCjIhYvHGLmjcPIiUeWT1T2TgIICESO7pl6zj2U_AsPDUVFGDll-NT2sdO_wX_1Tr-TI9srk6WgknkAiZo-CmG95eARJTAu0Ct4Gm1JrPKKwBPmg-_USsQt2E1deJm6qmaeL1b949G6WTBL_KSsmjELhLhdK6ysqPNo-ICyLAHr-UBHImcXNca9CeHqJAt1SN7K6OVBriN7UB-lacmyc9Z9SJGmB41Z9nJ6E&lib=MmD_m6il7QxYE-_48ogft87VqypGyotvW";
+    "https://script.google.com/macros/s/AKfycbyvNjHS_vcU9Z_RrSSRYkduSTWAcTgxtxwRdEHv-Q6ncaW_Z1kh_vgbue5i_KlO9RwV/exec";
   // --------------------------------------
   // Form elements
   // --------------------------------------
@@ -151,37 +151,46 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-async function fetchAvailabilityForMonth(ym) {
-  try {
+function fetchAvailabilityForMonth(ym) {
+  return new Promise((resolve) => {
+    const callbackName = `rrAvailability_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+    window[callbackName] = (json) => {
+      try {
+        const out = {};
+
+        if (json && json.days && typeof json.days === "object") {
+          Object.keys(json.days).forEach((iso) => {
+            const slots = json.days[iso];
+            out[iso] = Array.isArray(slots) ? slots.map(normalizeSlot) : [];
+          });
+        }
+
+        resolve(out);
+      } catch (err) {
+        console.warn("[R&R] Availability JSONP parse failed:", err);
+        resolve({});
+      } finally {
+        delete window[callbackName];
+        script.remove();
+      }
+    };
+
     const separator = AVAILABILITY_URL.includes("?") ? "&" : "?";
-    const url = `${AVAILABILITY_URL}${separator}ym=${encodeURIComponent(ym)}&t=${Date.now()}`;
+    const script = document.createElement("script");
 
-    console.log("[R&R] Fetching availability URL:", url);
+    script.src =
+      `${AVAILABILITY_URL}${separator}ym=${encodeURIComponent(ym)}&callback=${callbackName}&t=${Date.now()}`;
 
-    const res = await fetch(url, {
-      cache: "no-store",
-      redirect: "follow",
-    });
-    const json = await res.json();
+    script.onerror = () => {
+      console.warn("[R&R] Availability JSONP failed");
+      delete window[callbackName];
+      script.remove();
+      resolve({});
+    };
 
-    console.log("[R&R] Raw June 24 from backend:", json.days?.["2026-06-24"]);
-
-    const out = {};
-
-    if (json && json.days && typeof json.days === "object") {
-      Object.keys(json.days).forEach((iso) => {
-        const slots = json.days[iso];
-        out[iso] = Array.isArray(slots) ? slots.map(normalizeSlot) : [];
-      });
-    }
-
-    console.log("[R&R] Normalized June 24 in frontend:", out["2026-06-24"]);
-
-    return out;
-  } catch (err) {
-    console.warn("[R&R] Availability fetch failed:", err);
-    return {};
-  }
+    document.body.appendChild(script);
+  });
 }
 
   // IMPORTANT:
