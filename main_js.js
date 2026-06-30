@@ -153,7 +153,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function fetchAvailabilityForMonth(ym) {
   try {
-    const url = `${AVAILABILITY_URL}?ym=${encodeURIComponent(ym)}&t=${Date.now()}`;
+    const separator = AVAILABILITY_URL.includes("?") ? "&" : "?";
+    const url = `${AVAILABILITY_URL}${separator}ym=${encodeURIComponent(ym)}&t=${Date.now()}`;
 
     console.log("[R&R] Fetching availability URL:", url);
 
