@@ -14,10 +14,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // SCRIPT_URL receives website bookings through doPost(e).
   // AVAILABILITY_URL returns month availability through doGet(e).
   const SCRIPT_URL =
-    "https://script.google.com/macros/s/AKfycbzGjk_fmnHOqlAmiOi8U2cTMBbkv6l7awGTEGicgwk5On88XeivaD4SlJzYWAl-aw7Z/exec";
+    "https://script.google.com/macros/s/AKfycby8qYjPhWntY9iW2_eh168Um_XrFTNB9veuH9gJSu3p8FYpSwhSU14p81ZiVTrs8kZ6/exec";
 
   const AVAILABILITY_URL =
-    "https://script.google.com/macros/s/AKfycbzGjk_fmnHOqlAmiOi8U2cTMBbkv6l7awGTEGicgwk5On88XeivaD4SlJzYWAl-aw7Z/exec";
+    "https://script.google.com/macros/s/AKfycby8qYjPhWntY9iW2_eh168Um_XrFTNB9veuH9gJSu3p8FYpSwhSU14p81ZiVTrs8kZ6/exec";
 
   // --------------------------------------
   // Form elements
