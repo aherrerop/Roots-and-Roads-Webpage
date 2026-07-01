@@ -67,6 +67,24 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://rootsandroadsbcn.com/en/english-walking-tour-barcelona/</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/en/gaudi-walking-tour-barcelona/</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/en/gothic-quarter-walking-tour-barcelona/</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
     <loc>https://rootsandroadsbcn.com/en/sagrada-familia-gaudi-gothic-quarter-walking-tour/</loc>
     <lastmod>2026-07-01</lastmod>
     <changefreq>monthly</changefreq>
@@ -79,6 +97,30 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://rootsandroadsbcn.com/ai-travel-assistant-guide/</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/reviews-and-external-profiles.html</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/de/stadtfuehrung-barcelona-deutsch/</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/es/free-tour-barcelona-sagrada-familia-barrio-gotico/</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://rootsandroadsbcn.com/llms.txt</loc>
     <lastmod>2026-07-01</lastmod>
     <changefreq>monthly</changefreq>
@@ -89,5 +131,35 @@
     <lastmod>2026-07-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/ai-travel-assistant-guide.md</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/de/ki-zusammenfassung.md</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/es/resumen-ia.md</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/data/roots-roads-tour.json</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/data/prompt-map.json</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
   </url>
 </urlset>
