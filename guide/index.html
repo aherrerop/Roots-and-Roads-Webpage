@@ -159,7 +159,7 @@ const store = {
   get name(){ return sessionStorage.getItem("rr_name")||""; },
   set name(v){ sessionStorage.setItem("rr_name",v||""); }
 };
-let RATES={paid:10,free:6}, DIRTY={}, TOURS_CACHE=[];
+let RATES={paid:10,free:6}, DIRTY={}, TOURS_CACHE=[], MANAGER=false;
 
 /* Language badge (EN, ES, DE, FR, IT...). To add a language, add one line here.
    Any unmapped language auto-gets a 2-letter code + a colour, so new languages
@@ -232,8 +232,13 @@ async function loadTours(){
   if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; location.reload(); return; }
     $("toursPane").innerHTML='<div class="empty">'+esc(r.error||"Error")+'</div>'; return; }
   RATES=r.rates||RATES;
-  renderTours(r.tours||[]);
-  renderSchedule(r.schedule||[]);
+  MANAGER=!!r.manager;
+  const all=r.allTours||[];
+  renderTours(r.tours||[], "toursPane");
+  if(MANAGER){ renderTours(all, "schedPane"); $("tabSched").textContent="All tours"; }
+  else { renderSchedule(r.schedule||[]); $("tabSched").textContent="All guides"; }
+  TOURS_CACHE = MANAGER ? (r.tours||[]).concat(all) : (r.tours||[]);
+  bindTours(TOURS_CACHE);
 }
 
 /* ================== MY TOURS ================== */
@@ -241,21 +246,20 @@ function groupByDay(items){
   const g={}; items.forEach(t=>{ (g[t.dateKey]=g[t.dateKey]||[]).push(t); });
   return Object.keys(g).sort().map(dk=>({dateKey:dk, items:g[dk]}));
 }
-function renderTours(tours){
-  const pane=$("toursPane");
-  if(!tours.length){ pane.innerHTML='<div class="empty">No upcoming tours assigned to you.</div>'; return; }
+function renderTours(tours, paneId){
+  const pane=$(paneId||"toursPane");
+  if(!tours.length){ pane.innerHTML='<div class="empty">'+(paneId==="schedPane"?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; return; }
   let html="";
   groupByDay(tours).forEach(day=>{
     html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
     day.items.forEach(t=> html+=tourCard(t));
   });
   pane.innerHTML=html;
-  bindTours(tours);
 }
 function tourCard(t){
   const missN = Math.max(0, t.bookedGuests - t.checkedGuests);
   const sub = missN>0 ? '<div class="sub">'+missN+' to check in</div>' : '<div class="sub done">all checked</div>';
-  const assigned=[store.name].concat(t.coGuides||[]);
+  const assigned = (t.assigned && t.assigned.length) ? t.assigned : [store.name].concat(t.coGuides||[]);
   const chips = assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join("");
   let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i)).join("");
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
@@ -310,7 +314,7 @@ async function saveTour(tourId,btn){
   const bookings=t.bookings.map((b,i)=>{ const st=card.querySelector('.stepper[data-ref="bk|'+i+'"] .val');
     return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,checkedIn:+(st?st.textContent:b.checkedIn)}; });
   const walkins=[]; card.querySelectorAll('.stepper[data-ref^="walk|"]').forEach(st=>{ const source=st.dataset.ref.split("|")[1]; const count=+st.querySelector(".val").textContent; if(count>0) walkins.push({source,count}); });
-  const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins};
+  const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins,guide:t.guide||""};
   const msg=card.querySelector('[data-msg]'); btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
   try{ const r=await api("save",{token:store.token,data:JSON.stringify(data)});
     if(r.ok){ msg.style.color="var(--ok)"; msg.textContent="Saved ✓"; DIRTY[tourId]=false; }
