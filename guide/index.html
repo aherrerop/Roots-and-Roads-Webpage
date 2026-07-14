@@ -68,7 +68,7 @@
   .count .sub{font-size:11px;color:var(--amber);font-weight:700}
   .count .sub.done{color:var(--muted)}
   .guides{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;max-width:210px;font-size:13px;font-weight:700;color:#475569}
-  .guides.miss{color:var(--danger)}
+  .guides.miss{color:#94a3b8;font-style:italic;font-weight:600}
 
   .chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px 66px;margin-top:-6px}
   .chip{display:inline-flex;align-items:center;background:#eef2f7;color:#475569;font-size:11px;font-weight:700;padding:3px 9px 3px 3px;border-radius:14px}
@@ -334,7 +334,7 @@ function renderSchedule(rows){
       const miss = !s.assigned.length || (s.status && s.status!=="OK");
       const who = s.assigned.length
         ? s.assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join(" ")
-        : "MISSING GUIDE";
+        : "Not assigned";
       html+='<div class="tour static"><div class="head">'+
         '<span class="time">'+esc(to12(s.time))+'</span>'+flagImg(s.language)+
         '<span class="pill">'+esc(s.language)+'</span><span class="spacer"></span>'+
