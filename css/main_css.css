@@ -318,7 +318,8 @@ font-weight:400;
 }
 
 .banner-nav a:hover{
-font-weight:700;
+/* Fake the bold with a text-shadow so the layout does not shift on hover. */
+text-shadow:0 0 .45px currentColor, 0 0 .45px currentColor;
 }
 
 
