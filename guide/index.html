@@ -22,7 +22,6 @@
   .lbadge{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;color:#fff;font-size:10px;font-weight:800;letter-spacing:.3px;vertical-align:middle;flex:none}
   .avatar{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;font-weight:800;text-transform:uppercase;margin-right:5px;flex:none}
 
-  /* header */
   .topbar{display:flex;align-items:center;justify-content:space-between;margin:8px 4px 16px}
   .topbar h1{font-size:30px;font-weight:800;margin:0;letter-spacing:-.6px}
   .topbar .who{font-size:13px;color:var(--muted);margin-top:2px}
@@ -30,13 +29,10 @@
   .iconbtn:hover{background:#e4e7ec}
 
   .tabs{display:flex;gap:8px;margin:0 2px 18px}
-  .tab{flex:1;text-align:center;padding:11px;border-radius:12px;background:#e2e5ea;color:var(--muted);
-    font-weight:700;cursor:pointer;border:none;font-size:14px}
+  .tab{flex:1;text-align:center;padding:11px;border-radius:12px;background:#e2e5ea;color:var(--muted);font-weight:700;cursor:pointer;border:none;font-size:14px}
   .tab.active{background:var(--ink);color:#fff}
 
-  /* login */
-  .login{max-width:380px;margin:9vh auto 0;background:var(--card);border-radius:var(--radius);
-    box-shadow:var(--shadow);padding:28px 24px}
+  .login{max-width:380px;margin:9vh auto 0;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:28px 24px}
   .login h2{margin:0 0 4px;font-size:23px}
   .login p{margin:0 0 20px;color:var(--muted);font-size:14px}
   .field{margin-bottom:13px}
@@ -47,20 +43,18 @@
   .btn.green{background:var(--green)}
   .err{color:var(--danger);font-size:13px;margin-top:12px;min-height:16px}
 
-  /* day header (Tourdash style) */
   .dayhdr{display:flex;align-items:flex-start;justify-content:space-between;margin:26px 6px 10px}
   .dayhdr .d{font-size:20px;font-weight:800;letter-spacing:-.3px}
   .dayhdr .m{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:1.2px;margin-top:2px}
   .dayhdr .badge{font-size:11px;font-weight:800;letter-spacing:.6px}
   .badge.today{color:var(--ok)} .badge.tom{color:var(--blue)}
 
-  /* tour card */
   .tour{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
   .head{display:flex;align-items:center;gap:10px;padding:15px 16px;cursor:pointer}
   .tour.static .head{cursor:default}
   .head .time{font-weight:800;font-size:16px;min-width:50px}
-  .pill{display:inline-flex;align-items:center;gap:6px;background:#eef2f7;color:#334155;
-    font-weight:700;font-size:12px;padding:5px 10px;border-radius:20px}
+  .pill{display:inline-flex;align-items:center;gap:6px;background:#eef2f7;color:#334155;font-weight:700;font-size:12px;padding:5px 10px;border-radius:20px}
+  .pill.priv{background:#fff7ed;color:#b45309}
   .spacer{flex:1}
   .count{text-align:right;line-height:1.1}
   .count .big{font-weight:800;font-size:16px}
@@ -73,7 +67,6 @@
   .chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px 66px;margin-top:-6px}
   .chip{display:inline-flex;align-items:center;background:#eef2f7;color:#475569;font-size:11px;font-weight:700;padding:3px 9px 3px 3px;border-radius:14px}
 
-  /* bookings */
   .bookings{border-top:1px solid var(--line);padding:6px 14px 8px;background:#fcfcfd}
   .bk{display:flex;align-items:center;gap:10px;padding:11px 2px;border-bottom:1px solid #f1f2f4}
   .bk:last-child{border-bottom:none}
@@ -81,8 +74,7 @@
   .bk .nm b{display:block;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .src{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;color:#fff;margin-top:3px;text-transform:uppercase;letter-spacing:.3px}
   .src.paid{background:var(--paid)} .src.free{background:var(--free)} .src.priv{background:#b45309}
-  .pill.priv{background:#fff7ed;color:#b45309}
-  .wa{color:var(--green);font-size:22px;text-decoration:none;line-height:1}
+  .wa{line-height:0;text-decoration:none}
   .ph{color:var(--muted);font-size:12px;text-decoration:none;margin-left:6px}
 
   .stepper{display:flex;align-items:center;gap:7px}
@@ -105,7 +97,6 @@
 <body>
 <div class="wrap">
 
-  <!-- LOGIN -->
   <div id="loginView" class="login">
     <h2>Guide Portal</h2>
     <p>Roots &amp; Roads — sign in to see your tours.</p>
@@ -115,7 +106,6 @@
     <div id="loginErr" class="err"></div>
   </div>
 
-  <!-- DASHBOARD -->
   <div id="dashView" class="hidden">
     <div class="topbar">
       <div><h1>Tours</h1><div id="who" class="who"></div></div>
@@ -140,8 +130,7 @@ function api(action, params){
   return new Promise((resolve,reject)=>{
     const cb = "cb_"+Math.random().toString(36).slice(2);
     const q = Object.assign({action, callback:cb}, params||{});
-    const url = PORTAL_URL + "?" + Object.keys(q)
-      .map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
+    const url = PORTAL_URL + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
     const s = document.createElement("script");
     let done=false;
     window[cb]=(data)=>{ done=true; cleanup(); resolve(data); };
@@ -161,9 +150,6 @@ const store = {
 };
 let RATES={paid:10,free:6}, DIRTY={}, TOURS_CACHE=[], MANAGER=false;
 
-/* Language badge (EN, ES, DE, FR, IT...). To add a language, add one line here.
-   Any unmapped language auto-gets a 2-letter code + a colour, so new languages
-   (French, Italian, ...) work with zero extra code. */
 const LANG={
   English:{c:"EN",col:"#2563eb"}, Spanish:{c:"ES",col:"#e11d48"},
   German:{c:"DE",col:"#111827"},  French:{c:"FR",col:"#1d4ed8"},
@@ -241,7 +227,7 @@ async function loadTours(){
   bindTours(TOURS_CACHE);
 }
 
-/* ================== MY TOURS ================== */
+/* ================== TOUR CARDS ================== */
 function groupByDay(items){
   const g={}; items.forEach(t=>{ (g[t.dateKey]=g[t.dateKey]||[]).push(t); });
   return Object.keys(g).sort().map(dk=>({dateKey:dk, items:g[dk]}));
@@ -323,7 +309,7 @@ async function saveTour(tourId,btn){
   btn.disabled=false; setTimeout(()=>{ if(!DIRTY[tourId]) msg.textContent=""; },4000);
 }
 
-/* ================== ALL GUIDES (read-only cards) ================== */
+/* ================== ALL GUIDES (read-only, non-managers) ================== */
 function renderSchedule(rows){
   const pane=$("schedPane");
   if(!rows.length){ pane.innerHTML='<div class="empty">No upcoming schedule.</div>'; return; }
@@ -337,7 +323,7 @@ function renderSchedule(rows){
         : "Not assigned";
       html+='<div class="tour static"><div class="head">'+
         '<span class="time">'+esc(to12(s.time))+'</span>'+flagImg(s.language)+
-        '<span class="pill">'+esc(s.language)+'</span><span class="spacer"></span>'+
+        '<span class="pill">'+esc(s.language)+'</span>'+(s.private?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
         '<span class="guides'+(miss?' miss':'')+'">'+who+'</span></div></div>';
     });
   });
