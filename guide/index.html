@@ -298,7 +298,7 @@ async function saveTour(tourId,btn){
   const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return;
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
   const bookings=t.bookings.map((b,i)=>{ const st=card.querySelector('.stepper[data-ref="bk|'+i+'"] .val');
-    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,checkedIn:+(st?st.textContent:b.checkedIn)}; });
+    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,income:b.income,isPrivate:b.isPrivate,checkedIn:+(st?st.textContent:b.checkedIn)}; });
   const walkins=[]; card.querySelectorAll('.stepper[data-ref^="walk|"]').forEach(st=>{ const source=st.dataset.ref.split("|")[1]; const count=+st.querySelector(".val").textContent; if(count>0) walkins.push({source,count}); });
   const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins,guide:t.guide||""};
   const msg=card.querySelector('[data-msg]'); btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
