@@ -260,8 +260,7 @@ function tourCard(t){
     '<div class="chips">'+chips+'</div>'+
     '<div class="bookings">'+bk+
       '<div class="walkins">'+walk+'</div>'+
-      '<div class="savebar"><span class="msg" data-msg="'+esc(t.id)+'"></span>'+
-        '<button class="btn green js-save" data-tour="'+esc(t.id)+'">Save</button></div>'+
+      '<div class="savebar"><span class="msg" data-msg="'+esc(t.id)+'"></span></div>'+
     '</div></div>';
 }
 function bookingRow(tourId,b,i){
@@ -282,11 +281,12 @@ function bindTours(tours){
   document.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{ const b=h.parentElement.querySelector(".bookings"); b.style.display = b.style.display==="none"?"":"none"; }; });
   document.querySelectorAll(".stepper").forEach(st=>{
     const val=st.querySelector(".val"), max=Number(st.dataset.max);
-    st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); DIRTY[st.dataset.tour]=true; recount(st.dataset.tour); };
-    st.querySelector(".js-inc").onclick=()=>{ val.textContent=Math.min(max,+val.textContent+1); DIRTY[st.dataset.tour]=true; recount(st.dataset.tour); };
+    st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); DIRTY[st.dataset.tour]=true; recount(st.dataset.tour); scheduleSave(st.dataset.tour); };
+    st.querySelector(".js-inc").onclick=()=>{ val.textContent=Math.min(max,+val.textContent+1); DIRTY[st.dataset.tour]=true; recount(st.dataset.tour); scheduleSave(st.dataset.tour); };
   });
-  document.querySelectorAll(".js-save").forEach(btn=>{ btn.onclick=()=>saveTour(btn.dataset.tour,btn); });
 }
+const SAVE_TIMERS={};
+function scheduleSave(tourId){ clearTimeout(SAVE_TIMERS[tourId]); SAVE_TIMERS[tourId]=setTimeout(()=>saveTour(tourId), 800); } // auto-save, no button
 function recount(tourId){
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]'); let sum=0;
   card.querySelectorAll('.stepper[data-ref^="bk|"] .val').forEach(v=>sum+=+v.textContent);
@@ -302,12 +302,12 @@ async function saveTour(tourId,btn){
     return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,income:b.income,isPrivate:b.isPrivate,checkedIn:+(st?st.textContent:b.checkedIn)}; });
   const walkins=[]; card.querySelectorAll('.stepper[data-ref^="walk|"]').forEach(st=>{ const source=st.dataset.ref.split("|")[1]; const count=+st.querySelector(".val").textContent; if(count>0) walkins.push({source,count}); });
   const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins,guide:t.guide||""};
-  const msg=card.querySelector('[data-msg]'); btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
+  const msg=card.querySelector('[data-msg]'); if(btn) btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
   try{ const r=await api("save",{token:store.token,data:JSON.stringify(data)});
     if(r.ok){ msg.style.color="var(--ok)"; msg.textContent="Saved ✓"; DIRTY[tourId]=false; }
     else{ msg.style.color="var(--danger)"; msg.textContent=r.error||"Error"; } }
   catch(err){ msg.style.color="var(--danger)"; msg.textContent=err.message; }
-  btn.disabled=false; setTimeout(()=>{ if(!DIRTY[tourId]) msg.textContent=""; },4000);
+  if(btn) btn.disabled=false; setTimeout(()=>{ if(!DIRTY[tourId]) msg.textContent=""; },4000);
 }
 
 /* ================== ALL GUIDES (read-only, non-managers) ================== */
