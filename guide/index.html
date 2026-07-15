@@ -7,102 +7,96 @@
 <title>Guide Portal — Roots &amp; Roads</title>
 <link rel="icon" type="image/png" href="/images/blackWhite_Logo_v2.png?v=1">
 <style>
-  /* ============ CONFIG: paste your deployed Web App URL below ============ */
-  /* (Set in JS: PORTAL_URL) */
-
   :root{
-    --bg:#f3f4f6; --card:#ffffff; --ink:#1a2b49; --muted:#63687a;
-    --line:#e5e7eb; --brand:#ff5533; --blue:#0071eb; --green:#25d366;
+    --bg:#eef0f3; --card:#ffffff; --ink:#1a2b49; --muted:#8b90a0;
+    --line:#eceef1; --blue:#0071eb; --green:#25d366; --amber:#f59e0b;
     --paid:#0071eb; --free:#f59e0b; --danger:#dc2626; --ok:#16a34a;
-    --radius:14px; --shadow:0 1px 3px rgba(16,24,40,.08),0 1px 2px rgba(16,24,40,.06);
+    --radius:16px; --shadow:0 1px 2px rgba(16,24,40,.06),0 4px 14px rgba(16,24,40,.06);
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;font-size:15px;line-height:1.4}
-  .wrap{max-width:560px;margin:0 auto;padding:16px 14px 64px}
+  .wrap{max-width:600px;margin:0 auto;padding:14px 16px 72px}
   .hidden{display:none!important}
+  .lbadge{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;color:#fff;font-size:10px;font-weight:800;letter-spacing:.3px;vertical-align:middle;flex:none}
+  .avatar{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;font-weight:800;text-transform:uppercase;margin-right:5px;flex:none}
 
-  /* header */
-  .topbar{display:flex;align-items:center;justify-content:space-between;margin:6px 2px 14px}
-  .topbar h1{font-size:26px;font-weight:800;margin:0;letter-spacing:-.5px}
-  .topbar .who{font-size:13px;color:var(--muted)}
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin:8px 4px 16px}
+  .topbar h1{font-size:30px;font-weight:800;margin:0;letter-spacing:-.6px}
+  .topbar .who{font-size:13px;color:var(--muted);margin-top:2px}
   .iconbtn{background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:6px 8px;border-radius:8px}
-  .iconbtn:hover{background:#eef0f3}
+  .iconbtn:hover{background:#e4e7ec}
 
-  .tabs{display:flex;gap:8px;margin:0 2px 14px}
-  .tab{flex:1;text-align:center;padding:9px;border-radius:10px;background:#e9ebef;color:var(--muted);
-    font-weight:600;cursor:pointer;border:none;font-size:14px}
+  .tabs{display:flex;gap:8px;margin:0 2px 18px}
+  .tab{flex:1;text-align:center;padding:11px;border-radius:12px;background:#e2e5ea;color:var(--muted);font-weight:700;cursor:pointer;border:none;font-size:14px}
   .tab.active{background:var(--ink);color:#fff}
 
-  /* login */
-  .login{max-width:380px;margin:8vh auto 0;background:var(--card);border-radius:var(--radius);
-    box-shadow:var(--shadow);padding:26px 22px}
-  .login h2{margin:0 0 4px;font-size:22px}
-  .login p{margin:0 0 18px;color:var(--muted);font-size:14px}
-  .field{margin-bottom:12px}
-  .field label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:5px}
-  .field input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px}
-  .btn{width:100%;padding:13px;border:none;border-radius:10px;background:var(--ink);color:#fff;
-    font-weight:700;font-size:15px;cursor:pointer}
+  .login{max-width:380px;margin:9vh auto 0;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:28px 24px}
+  .login h2{margin:0 0 4px;font-size:23px}
+  .login p{margin:0 0 20px;color:var(--muted);font-size:14px}
+  .field{margin-bottom:13px}
+  .field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px}
+  .field input{width:100%;padding:13px;border:1px solid #dfe3e8;border-radius:11px;font-size:16px}
+  .btn{width:100%;padding:14px;border:none;border-radius:11px;background:var(--ink);color:#fff;font-weight:800;font-size:15px;cursor:pointer}
   .btn:disabled{opacity:.6;cursor:default}
   .btn.green{background:var(--green)}
-  .err{color:var(--danger);font-size:13px;margin-top:10px;min-height:16px}
+  .err{color:var(--danger);font-size:13px;margin-top:12px;min-height:16px}
 
-  /* day + tour cards */
-  .dayhdr{margin:20px 4px 8px;display:flex;align-items:baseline;justify-content:space-between}
-  .dayhdr .d{font-size:17px;font-weight:800}
-  .dayhdr .m{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:1px}
-  .dayhdr .badge{font-size:11px;font-weight:800;color:var(--blue)}
+  .dayhdr{display:flex;align-items:flex-start;justify-content:space-between;margin:26px 6px 10px}
+  .dayhdr .d{font-size:20px;font-weight:800;letter-spacing:-.3px}
+  .dayhdr .m{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:1.2px;margin-top:2px}
+  .dayhdr .badge{font-size:11px;font-weight:800;letter-spacing:.6px}
+  .badge.today{color:var(--ok)} .badge.tom{color:var(--blue)}
 
-  .tour{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden}
-  .tour .head{display:flex;align-items:center;gap:8px;padding:12px 14px;cursor:pointer;border-left:4px solid var(--blue)}
-  .tour .time{font-weight:800;font-size:15px;min-width:52px}
-  .tour .flag{font-size:16px}
-  .tour .lang{font-size:13px;font-weight:600;color:var(--muted)}
-  .tour .spacer{flex:1}
-  .tour .count{font-weight:800;font-size:15px}
-  .tour .count small{font-weight:600;color:var(--muted)}
-  .tour .miss{color:var(--danger);font-size:11px;font-weight:700;text-align:right}
-  .tour .co{font-size:11px;color:var(--muted);padding:0 14px 8px 66px;margin-top:-4px}
+  .tour{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
+  .head{display:flex;align-items:center;gap:10px;padding:15px 16px;cursor:pointer}
+  .tour.static .head{cursor:default}
+  .head .time{font-weight:800;font-size:16px;min-width:50px}
+  .pill{display:inline-flex;align-items:center;gap:6px;background:#eef2f7;color:#334155;font-weight:700;font-size:12px;padding:5px 10px;border-radius:20px}
+  .pill.priv{background:#fff7ed;color:#b45309}
+  .spacer{flex:1}
+  .count{text-align:right;line-height:1.1}
+  .count .big{font-weight:800;font-size:16px}
+  .count .big .ck{color:var(--ok)}
+  .count .sub{font-size:11px;color:var(--amber);font-weight:700}
+  .count .sub.done{color:var(--muted)}
+  .guides{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;max-width:210px;font-size:13px;font-weight:700;color:#475569}
+  .guides.miss{color:#94a3b8;font-style:italic;font-weight:600}
 
-  .bookings{border-top:1px solid var(--line);padding:6px 12px 12px}
-  .bk{display:flex;align-items:center;gap:8px;padding:9px 4px;border-bottom:1px solid #f1f2f4}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px 66px;margin-top:-6px}
+  .chip{display:inline-flex;align-items:center;background:#eef2f7;color:#475569;font-size:11px;font-weight:700;padding:3px 9px 3px 3px;border-radius:14px}
+
+  .bookings{border-top:1px solid var(--line);padding:6px 14px 8px;background:#fcfcfd}
+  .bk{display:flex;align-items:center;gap:10px;padding:11px 2px;border-bottom:1px solid #f1f2f4}
   .bk:last-child{border-bottom:none}
   .bk .nm{flex:1;min-width:0}
-  .bk .nm b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .src{display:inline-block;font-size:10px;font-weight:800;padding:2px 6px;border-radius:6px;color:#fff;margin-top:2px;text-transform:uppercase;letter-spacing:.3px}
-  .src.paid{background:var(--paid)} .src.free{background:var(--free)}
-  .wa{color:var(--green);font-size:20px;text-decoration:none}
-  .ph{color:var(--muted);font-size:12px;text-decoration:none}
+  .bk .nm b{display:block;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .src{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;color:#fff;margin-top:3px;text-transform:uppercase;letter-spacing:.3px}
+  .src.paid{background:var(--paid)} .src.free{background:var(--free)} .src.priv{background:#b45309}
+  .wa{line-height:0;text-decoration:none}
+  .ph{color:var(--muted);font-size:12px;text-decoration:none;margin-left:6px}
 
-  .stepper{display:flex;align-items:center;gap:6px}
-  .stepper button{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:#fff;font-size:18px;line-height:1;cursor:pointer;color:var(--ink)}
-  .stepper .val{min-width:34px;text-align:center;font-weight:800}
-  .stepper .of{color:var(--muted);font-weight:600;font-size:12px}
+  .stepper{display:flex;align-items:center;gap:7px}
+  .stepper button{width:32px;height:32px;border-radius:9px;border:1px solid #e2e6ea;background:#fff;font-size:19px;line-height:1;cursor:pointer;color:var(--ink)}
+  .stepper .val{min-width:20px;text-align:center;font-weight:800}
+  .stepper .of{color:var(--muted);font-weight:700;font-size:12px}
 
-  .walkins{padding:8px 6px 2px;border-top:1px dashed var(--line);margin-top:4px}
-  .walkins .wl{display:flex;align-items:center;gap:8px;padding:6px 4px}
-  .walkins .wl .lbl{flex:1;font-size:13px;color:var(--muted)}
+  .walkins{padding:8px 2px 2px;border-top:1px dashed var(--line);margin-top:2px}
+  .walkins .wl{display:flex;align-items:center;gap:8px;padding:7px 2px}
+  .walkins .wl .lbl{flex:1;font-size:13px;color:var(--muted);font-weight:600}
 
-  .savebar{display:flex;gap:8px;align-items:center;padding:10px 12px 12px}
-  .savebar .msg{flex:1;font-size:12px;color:var(--ok)}
-  .savebar .btn{width:auto;padding:10px 20px}
+  .savebar{display:flex;gap:10px;align-items:center;padding:12px 2px 8px}
+  .savebar .msg{flex:1;font-size:12px;font-weight:700}
+  .savebar .btn{width:auto;padding:11px 22px;border-radius:11px}
 
-  /* schedule table */
-  .sched{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
-  .sched table{width:100%;border-collapse:collapse;font-size:13px}
-  .sched th,.sched td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line)}
-  .sched th{background:#f8fafc;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
-  .sched td.miss{color:var(--danger);font-weight:700}
-  .empty{text-align:center;color:var(--muted);padding:40px 10px}
-  .spin{text-align:center;color:var(--muted);padding:40px}
+  .empty{text-align:center;color:var(--muted);padding:50px 10px}
+  .spin{text-align:center;color:var(--muted);padding:50px}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <!-- LOGIN -->
   <div id="loginView" class="login">
     <h2>Guide Portal</h2>
     <p>Roots &amp; Roads — sign in to see your tours.</p>
@@ -112,7 +106,6 @@
     <div id="loginErr" class="err"></div>
   </div>
 
-  <!-- DASHBOARD -->
   <div id="dashView" class="hidden">
     <div class="topbar">
       <div><h1>Tours</h1><div id="who" class="who"></div></div>
@@ -130,7 +123,6 @@
 
 <script>
 /* ================== CONFIG ================== */
-/* After deploying guidePortal.gs as a Web App, paste its /exec URL here: */
 const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hcjuNZ_Z7J8zu7iI5ZPq9P4Ag6rZ19-XYgx_qWjFLohAa7iEf/exec";
 
 /* ================== JSONP ================== */
@@ -138,8 +130,7 @@ function api(action, params){
   return new Promise((resolve,reject)=>{
     const cb = "cb_"+Math.random().toString(36).slice(2);
     const q = Object.assign({action, callback:cb}, params||{});
-    const url = PORTAL_URL + "?" + Object.keys(q)
-      .map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
+    const url = PORTAL_URL + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
     const s = document.createElement("script");
     let done=false;
     window[cb]=(data)=>{ done=true; cleanup(); resolve(data); };
@@ -150,40 +141,63 @@ function api(action, params){
   });
 }
 
-/* ================== STATE ================== */
+/* ================== STATE / HELPERS ================== */
 const store = {
   get token(){ return sessionStorage.getItem("rr_token"); },
   set token(v){ v?sessionStorage.setItem("rr_token",v):sessionStorage.removeItem("rr_token"); },
   get name(){ return sessionStorage.getItem("rr_name")||""; },
   set name(v){ sessionStorage.setItem("rr_name",v||""); }
 };
-let RATES = {paid:10, free:6};
-let DIRTY = {}; // tourId -> true when edited
+let RATES={paid:10,free:6}, DIRTY={}, TOURS_CACHE=[], MANAGER=false;
 
-const FLAGS = {English:"🇬🇧",Spanish:"🇪🇸",German:"🇩🇪",French:"🇫🇷",Italian:"🇮🇹",Portuguese:"🇵🇹",Catalan:"🏴"};
-const flag = l => FLAGS[l] || "🌐";
+const LANG={
+  English:{c:"EN",col:"#2563eb"}, Spanish:{c:"ES",col:"#e11d48"},
+  German:{c:"DE",col:"#111827"},  French:{c:"FR",col:"#1d4ed8"},
+  Italian:{c:"IT",col:"#16a34a"}, Portuguese:{c:"PT",col:"#15803d"},
+  Dutch:{c:"NL",col:"#ea580c"},   Catalan:{c:"CA",col:"#d97706"}
+};
+function langMeta(l){
+  if(LANG[l]) return LANG[l];
+  const c=String(l||"?").replace(/[^A-Za-z]/g,"").slice(0,2).toUpperCase()||"?";
+  const cols=["#2563eb","#e11d48","#16a34a","#d97706","#7c3aed","#0891b2"];
+  let h=0; for(const ch of String(l)) h=(h*31+ch.charCodeAt(0))>>>0;
+  return {c, col:cols[h%cols.length]};
+}
+function flagImg(lang){ const m=langMeta(lang); return '<span class="lbadge" style="background:'+m.col+'">'+m.c+'</span>'; }
+function initials(n){ const p=String(n||"").trim().split(/\s+/); return (((p[0]||"")[0]||"")+((p[1]||"")[0]||"")).toUpperCase()||"?"; }
+const WA_ICON='<svg viewBox="0 0 24 24" width="22" height="22" fill="#25d366" aria-label="WhatsApp"><path d="M.057 24l1.687-6.163a11.867 11.867 0 01-1.587-5.945C.16 5.335 5.495 0 12.05 0a11.82 11.82 0 018.413 3.488 11.82 11.82 0 013.48 8.413c-.003 6.557-5.338 11.892-11.893 11.892a11.9 11.9 0 01-5.688-1.448L.057 24zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884a9.86 9.86 0 001.51 5.26l-.999 3.648 3.678-.985zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/></svg>';
+const $ = id => document.getElementById(id);
 const digits = p => String(p||"").replace(/[^\d]/g,"");
 const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const cssq = s => String(s).replace(/"/g,'\\"');
+const MONTHS=["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+const DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+function parseKey(dk){ return new Date(dk+"T12:00:00"); }
+function dayTitle(dk){ const d=parseKey(dk); return DAYS[d.getDay()]+" "+d.getDate(); }
+function monthTitle(dk){ const d=parseKey(dk); return MONTHS[d.getMonth()]+" "+d.getFullYear(); }
+function relBadge(dk){
+  const t=new Date(); const today=t.toISOString().slice(0,10);
+  const tom=new Date(t.getTime()+864e5).toISOString().slice(0,10);
+  if(dk===today) return '<span class="badge today">TODAY</span>';
+  if(dk===tom)   return '<span class="badge tom">TOMORROW</span>';
+  return '';
+}
+function to12(t){ const m=String(t).match(/^(\d{1,2}):(\d{2})$/); if(!m) return t; let h=+m[1]; const s=h>=12?'PM':'AM'; h=((h+11)%12)+1; return h+':'+m[2]+' '+s; }
 
 /* ================== LOGIN ================== */
-const $ = id => document.getElementById(id);
-
 $("loginBtn").onclick = doLogin;
 $("password").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
-
 async function doLogin(){
   const email=$("email").value.trim(), password=$("password").value;
   if(!email||!password){ $("loginErr").textContent="Enter email and password."; return; }
   $("loginBtn").disabled=true; $("loginErr").textContent="";
   try{
-    const r = await api("login",{email,password});
+    const r=await api("login",{email,password});
     if(!r.ok){ $("loginErr").textContent=r.error||"Login failed"; $("loginBtn").disabled=false; return; }
-    store.token=r.token; store.name=r.guide.name;
-    showDash();
+    store.token=r.token; store.name=r.guide.name; showDash();
   }catch(err){ $("loginErr").textContent=err.message; $("loginBtn").disabled=false; }
 }
-
-$("logoutBtn").onclick = ()=>{ store.token=""; location.reload(); };
+$("logoutBtn").onclick=()=>{ store.token=""; location.reload(); };
 
 /* ================== TABS ================== */
 $("tabTours").onclick=()=>switchTab("tours");
@@ -195,166 +209,129 @@ function switchTab(t){
   $("schedPane").classList.toggle("hidden",t!=="sched");
 }
 
-/* ================== DASHBOARD ================== */
-function showDash(){
-  $("loginView").classList.add("hidden");
-  $("dashView").classList.remove("hidden");
-  $("who").textContent = store.name;
-  loadTours();
-}
-
+/* ================== LOAD ================== */
+function showDash(){ $("loginView").classList.add("hidden"); $("dashView").classList.remove("hidden"); $("who").textContent=store.name; loadTours(); }
 async function loadTours(){
   $("toursPane").innerHTML='<div class="spin">Loading…</div>';
-  let r;
-  try{ r = await api("tours",{token:store.token}); }
+  let r; try{ r=await api("tours",{token:store.token}); }
   catch(err){ $("toursPane").innerHTML='<div class="empty">'+esc(err.message)+'</div>'; return; }
-  if(!r.ok){
-    if(/expired/i.test(r.error||"")){ store.token=""; location.reload(); return; }
-    $("toursPane").innerHTML='<div class="empty">'+esc(r.error||"Error")+'</div>'; return;
-  }
-  RATES = r.rates || RATES;
-  renderTours(r.tours||[]);
-  renderSchedule(r.schedule||[]);
+  if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; location.reload(); return; }
+    $("toursPane").innerHTML='<div class="empty">'+esc(r.error||"Error")+'</div>'; return; }
+  RATES=r.rates||RATES;
+  MANAGER=!!r.manager;
+  const all=r.allTours||[];
+  renderTours(r.tours||[], "toursPane");
+  if(MANAGER){ renderTours(all, "schedPane"); $("tabSched").textContent="All tours"; }
+  else { renderSchedule(r.schedule||[]); $("tabSched").textContent="All guides"; }
+  TOURS_CACHE = MANAGER ? (r.tours||[]).concat(all) : (r.tours||[]);
+  bindTours(TOURS_CACHE);
 }
 
-function renderTours(tours){
-  const pane=$("toursPane");
-  if(!tours.length){ pane.innerHTML='<div class="empty">No upcoming tours assigned to you.</div>'; return; }
-  // group by day
-  const groups={};
-  tours.forEach(t=>{ (groups[t.dateKey]=groups[t.dateKey]||{dateText:t.dateText,day:t.day,items:[]}).items.push(t); });
-  const todayKey = new Date().toISOString().slice(0,10);
-  const tomKey = new Date(Date.now()+864e5).toISOString().slice(0,10);
+/* ================== TOUR CARDS ================== */
+function groupByDay(items){
+  const g={}; items.forEach(t=>{ (g[t.dateKey]=g[t.dateKey]||[]).push(t); });
+  return Object.keys(g).sort().map(dk=>({dateKey:dk, items:g[dk]}));
+}
+function renderTours(tours, paneId){
+  const pane=$(paneId||"toursPane");
+  if(!tours.length){ pane.innerHTML='<div class="empty">'+(paneId==="schedPane"?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; return; }
   let html="";
-  Object.keys(groups).sort().forEach(dk=>{
-    const g=groups[dk];
-    const rel = dk===todayKey?'<span class="badge">TODAY</span>' : dk===tomKey?'<span class="badge">TOMORROW</span>' : '';
-    const [dow,mon]=[g.day, g.dateText];
-    html += '<div class="dayhdr"><div><span class="d">'+esc(g.day)+' '+esc(g.dateText.replace(/^[A-Za-z]+,\s*/,''))+'</span></div>'+rel+'</div>';
-    g.items.forEach(t=> html += tourCard(t));
+  groupByDay(tours).forEach(day=>{
+    html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
+    day.items.forEach(t=> html+=tourCard(t));
   });
   pane.innerHTML=html;
-  bindTourCards(tours);
 }
-
 function tourCard(t){
-  const miss = t.status && t.status!=="OK";
-  const co = t.coGuides && t.coGuides.length ? '<div class="co">With: '+esc(t.coGuides.join(", "))+'</div>' : '';
+  const missN = Math.max(0, t.bookedGuests - t.checkedGuests);
+  const sub = missN>0 ? '<div class="sub">'+missN+' to check in</div>' : '<div class="sub done">all checked</div>';
+  const assigned = (t.assigned && t.assigned.length) ? t.assigned : [store.name].concat(t.coGuides||[]);
+  const chips = assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join("");
   let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i)).join("");
-  if(!t.bookings.length) bk='<div class="empty" style="padding:16px">No bookings yet.</div>';
-  // walk-in rows: one per distinct source present (or a generic one)
-  const srcSet = Array.from(new Set(t.bookings.map(b=>b.source))).filter(Boolean);
-  if(!srcSet.length) srcSet.push("Website");
-  const walk = srcSet.map(s=>{
-    const paid = t.bookings.find(b=>b.source===s)?.paid ?? false;
-    return '<div class="wl"><span class="lbl">Walk-in ('+esc(s)+')</span>'+stepper(t.id,"walk|"+s,0,99,0)+'</div>';
-  }).join("");
-  return ''+
-  '<div class="tour" data-tour="'+esc(t.id)+'">'+
-    '<div class="head js-toggle" style="border-left-color:'+(miss?'#dc2626':'#0071eb')+'">'+
-      '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+
-      '<span class="flag">'+flag(t.language)+'</span>'+
-      '<span class="lang">'+esc(t.language)+'</span>'+
-      '<span class="spacer"></span>'+
-      '<span class="count" data-count="'+esc(t.id)+'"><span class="ck">'+t.checkedGuests+'</span> <small>/ '+t.bookedGuests+'</small></span>'+
-    '</div>'+ co +
-    '<div class="bookings">'+ bk +
-      '<div class="walkins">'+ walk +'</div>'+
-      '<div class="savebar"><span class="msg" data-msg="'+esc(t.id)+'"></span>'+
-        '<button class="btn green js-save" data-tour="'+esc(t.id)+'">Save check-ins</button></div>'+
+  if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
+  const srcSet=Array.from(new Set(t.bookings.map(b=>b.source))).filter(Boolean); if(!srcSet.length) srcSet.push("Website");
+  const walk = srcSet.map(s=>'<div class="wl"><span class="lbl">Walk-in ('+esc(s)+')</span>'+stepper(t.id,"walk|"+s,0,99,0)+'</div>').join("");
+  return '<div class="tour" data-tour="'+esc(t.id)+'">'+
+    '<div class="head js-toggle">'+
+      '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+ flagImg(t.language)+
+      '<span class="pill">'+esc(t.language)+'</span>'+(t.isPrivate?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
+      '<div class="count"><div class="big"><span class="ck">'+t.checkedGuests+'</span> / '+t.bookedGuests+'</div>'+sub+'</div>'+
     '</div>'+
-  '</div>';
+    '<div class="chips">'+chips+'</div>'+
+    '<div class="bookings">'+bk+
+      '<div class="walkins">'+walk+'</div>'+
+      '<div class="savebar"><span class="msg" data-msg="'+esc(t.id)+'"></span>'+
+        '<button class="btn green js-save" data-tour="'+esc(t.id)+'">Save</button></div>'+
+    '</div></div>';
 }
-
 function bookingRow(tourId,b,i){
-  const wa = digits(b.phone) ? '<a class="wa" target="_blank" href="https://wa.me/'+digits(b.phone)+'">🟢</a>' : '';
+  const wa = digits(b.phone) ? '<a class="wa" target="_blank" href="https://wa.me/'+digits(b.phone)+'">'+WA_ICON+'</a>' : '';
   const ph = b.phone ? '<a class="ph" href="tel:'+esc(b.phone)+'">'+esc(b.phone)+'</a>' : '';
-  return '<div class="bk">'+
-    '<div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-      '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span> '+ph+'</div>'+
-    wa+
-    stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests)+
-  '</div>';
+  return '<div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+'</div>'+
+    wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests)+'</div>';
 }
-
 function stepper(tourId,ref,val,max,total){
   return '<div class="stepper" data-ref="'+esc(ref)+'" data-tour="'+esc(tourId)+'" data-max="'+max+'">'+
-    '<button class="js-dec">−</button>'+
-    '<span class="val">'+val+'</span>'+
-    (total?'<span class="of">/'+total+'</span>':'')+
-    '<button class="js-inc">+</button></div>';
+    '<button class="js-dec">−</button><span class="val">'+val+'</span>'+
+    (total?'<span class="of">/'+total+'</span>':'')+'<button class="js-inc">+</button></div>';
 }
-
-let TOURS_CACHE=[];
-function bindTourCards(tours){
+function bindTours(tours){
   TOURS_CACHE=tours;
-  document.querySelectorAll(".js-toggle").forEach(h=>{
-    h.onclick=()=>{ const b=h.parentElement.querySelector(".bookings"); b.style.display = b.style.display==="none"?"":"none"; };
-  });
-  // collapse all but today by default
-  document.querySelectorAll(".tour .bookings").forEach(b=>b.style.display="none");
+  document.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{ const b=h.parentElement.querySelector(".bookings"); b.style.display = b.style.display==="none"?"":"none"; }; });
   document.querySelectorAll(".stepper").forEach(st=>{
-    const dec=st.querySelector(".js-dec"), inc=st.querySelector(".js-inc"), val=st.querySelector(".val");
-    const max=Number(st.dataset.max);
-    dec.onclick=()=>{ let v=Math.max(0,Number(val.textContent)-1); val.textContent=v; onEdit(st.dataset.tour); recount(st.dataset.tour); };
-    inc.onclick=()=>{ let v=Math.min(max,Number(val.textContent)+1); val.textContent=v; onEdit(st.dataset.tour); recount(st.dataset.tour); };
+    const val=st.querySelector(".val"), max=Number(st.dataset.max);
+    st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); DIRTY[st.dataset.tour]=true; recount(st.dataset.tour); };
+    st.querySelector(".js-inc").onclick=()=>{ val.textContent=Math.min(max,+val.textContent+1); DIRTY[st.dataset.tour]=true; recount(st.dataset.tour); };
   });
   document.querySelectorAll(".js-save").forEach(btn=>{ btn.onclick=()=>saveTour(btn.dataset.tour,btn); });
 }
-
 function recount(tourId){
-  const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
-  let sum=0;
-  card.querySelectorAll('.stepper[data-ref^="bk|"] .val').forEach(v=>sum+=Number(v.textContent));
-  card.querySelector('[data-count] .ck').textContent=sum;
+  const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]'); let sum=0;
+  card.querySelectorAll('.stepper[data-ref^="bk|"] .val').forEach(v=>sum+=+v.textContent);
+  card.querySelector('.count .ck').textContent=sum;
+  const total=Number((TOURS_CACHE.find(x=>x.id===tourId)||{}).bookedGuests||0);
+  const sub=card.querySelector('.count .sub'); const miss=Math.max(0,total-sum);
+  sub.className='sub'+(miss?'':' done'); sub.textContent=miss?miss+' to check in':'all checked';
 }
-function onEdit(tourId){ DIRTY[tourId]=true; }
-function cssq(s){ return String(s).replace(/"/g,'\\"'); }
-
 async function saveTour(tourId,btn){
   const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return;
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
-  const bookings=t.bookings.map((b,i)=>{
-    const st=card.querySelector('.stepper[data-ref="bk|'+i+'"] .val');
-    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,checkedIn:Number(st?st.textContent:b.checkedIn)};
-  });
-  const walkins=[];
-  card.querySelectorAll('.stepper[data-ref^="walk|"]').forEach(st=>{
-    const source=st.dataset.ref.split("|")[1]; const count=Number(st.querySelector(".val").textContent);
-    if(count>0) walkins.push({source,count});
-  });
-  const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins};
-  const msg=card.querySelector('[data-msg]');
-  btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
-  try{
-    const r=await api("save",{token:store.token,data:JSON.stringify(data)});
+  const bookings=t.bookings.map((b,i)=>{ const st=card.querySelector('.stepper[data-ref="bk|'+i+'"] .val');
+    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,income:b.income,isPrivate:b.isPrivate,checkedIn:+(st?st.textContent:b.checkedIn)}; });
+  const walkins=[]; card.querySelectorAll('.stepper[data-ref^="walk|"]').forEach(st=>{ const source=st.dataset.ref.split("|")[1]; const count=+st.querySelector(".val").textContent; if(count>0) walkins.push({source,count}); });
+  const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins,guide:t.guide||""};
+  const msg=card.querySelector('[data-msg]'); btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
+  try{ const r=await api("save",{token:store.token,data:JSON.stringify(data)});
     if(r.ok){ msg.style.color="var(--ok)"; msg.textContent="Saved ✓"; DIRTY[tourId]=false; }
-    else{ msg.style.color="var(--danger)"; msg.textContent=r.error||"Error"; }
-  }catch(err){ msg.style.color="var(--danger)"; msg.textContent=err.message; }
-  btn.disabled=false;
-  setTimeout(()=>{ if(!DIRTY[tourId]) msg.textContent=""; },4000);
+    else{ msg.style.color="var(--danger)"; msg.textContent=r.error||"Error"; } }
+  catch(err){ msg.style.color="var(--danger)"; msg.textContent=err.message; }
+  btn.disabled=false; setTimeout(()=>{ if(!DIRTY[tourId]) msg.textContent=""; },4000);
 }
 
-/* ================== ALL-GUIDES SCHEDULE ================== */
+/* ================== ALL GUIDES (read-only, non-managers) ================== */
 function renderSchedule(rows){
   const pane=$("schedPane");
   if(!rows.length){ pane.innerHTML='<div class="empty">No upcoming schedule.</div>'; return; }
-  let html='<div class="sched"><table><thead><tr><th>Date</th><th>Time</th><th>Lang</th><th>Guides</th></tr></thead><tbody>';
-  rows.forEach(s=>{
-    const miss = s.status && s.status!=="OK";
-    html+='<tr><td>'+esc(s.day.slice(0,3))+' '+esc(s.dateText.replace(/^[A-Za-z]+,\s*/,''))+'</td>'+
-      '<td>'+esc(to12(s.time))+'</td><td>'+flag(s.language)+'</td>'+
-      '<td class="'+(miss?'miss':'')+'">'+(esc(s.assigned.join(", "))|| (miss?'MISSING':''))+'</td></tr>';
+  let html="";
+  groupByDay(rows).forEach(day=>{
+    html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
+    day.items.sort((a,b)=>String(a.time).localeCompare(String(b.time))).forEach(s=>{
+      const miss = !s.assigned.length || (s.status && s.status!=="OK");
+      const who = s.assigned.length
+        ? s.assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join(" ")
+        : "Not assigned";
+      html+='<div class="tour static"><div class="head">'+
+        '<span class="time">'+esc(to12(s.time))+'</span>'+flagImg(s.language)+
+        '<span class="pill">'+esc(s.language)+'</span>'+(s.private?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
+        '<span class="guides'+(miss?' miss':'')+'">'+who+'</span></div></div>';
+    });
   });
-  html+='</tbody></table></div>';
   pane.innerHTML=html;
 }
-function to12(t){ const m=String(t).match(/^(\d{1,2}):(\d{2})$/); if(!m) return t; let h=+m[1]; const s=h>=12?'PM':'AM'; h=((h+11)%12)+1; return h+':'+m[2]+' '+s; }
 
 /* ================== BOOT ================== */
-if(PORTAL_URL.indexOf("PASTE_")===0){
-  $("loginErr").textContent="Portal not configured yet (PORTAL_URL).";
-}
+if(PORTAL_URL.indexOf("PASTE_")===0){ $("loginErr").textContent="Portal not configured yet (PORTAL_URL)."; }
 if(store.token){ showDash(); }
 </script>
 </body>
