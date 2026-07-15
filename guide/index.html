@@ -81,6 +81,9 @@
   .stepper button{width:32px;height:32px;border-radius:9px;border:1px solid #e2e6ea;background:#fff;font-size:19px;line-height:1;cursor:pointer;color:var(--ink)}
   .stepper .val{min-width:20px;text-align:center;font-weight:800}
   .stepper .of{color:var(--muted);font-weight:700;font-size:12px}
+  .stepper button:disabled{opacity:.4;cursor:default}
+  .ckin{border:1px solid var(--ink);background:var(--ink);color:#fff;font-weight:800;font-size:12px;padding:8px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;margin-left:2px}
+  .ckin.done{background:#e2e6ea;border-color:#e2e6ea;color:#9aa1ac;cursor:default}
 
   .walkins{padding:8px 2px 2px;border-top:1px dashed var(--line);margin-top:2px}
   .walkins .wl{display:flex;align-items:center;gap:8px;padding:7px 2px}
@@ -268,7 +271,9 @@ function bookingRow(tourId,b,i){
   const ph = b.phone ? '<a class="ph" href="tel:'+esc(b.phone)+'">'+esc(b.phone)+'</a>' : '';
   return '<div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
     '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+'</div>'+
-    wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests)+'</div>';
+    wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests)+
+    '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+(b.checked?' disabled':'')+'>'+(b.checked?'✓ In':'Check in')+'</button>'+
+    '</div>';
 }
 function stepper(tourId,ref,val,max,total){
   return '<div class="stepper" data-ref="'+esc(ref)+'" data-tour="'+esc(tourId)+'" data-max="'+max+'">'+
@@ -281,15 +286,27 @@ function bindTours(tours){
   document.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{ const b=h.parentElement.querySelector(".bookings"); b.style.display = b.style.display==="none"?"":"none"; }; });
   document.querySelectorAll(".stepper").forEach(st=>{
     const val=st.querySelector(".val"), max=Number(st.dataset.max);
-    st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); DIRTY[st.dataset.tour]=true; recount(st.dataset.tour); scheduleSave(st.dataset.tour); };
-    st.querySelector(".js-inc").onclick=()=>{ val.textContent=Math.min(max,+val.textContent+1); DIRTY[st.dataset.tour]=true; recount(st.dataset.tour); scheduleSave(st.dataset.tour); };
+    st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); recount(st.dataset.tour); };
+    st.querySelector(".js-inc").onclick=()=>{ val.textContent=Math.min(max,+val.textContent+1); recount(st.dataset.tour); };
+  });
+  // Check-in button per reservation: set the count, lock the row, save.
+  document.querySelectorAll(".ckin:not(.done)").forEach(btn=>{
+    btn.onclick=()=>{
+      const parts=btn.dataset.ck.split("~"); const tid=parts[0], idx=+parts[1];
+      const t=TOURS_CACHE.find(x=>x.id===tid); if(!t) return;
+      const card=btn.closest('.tour');
+      const sval=card.querySelector('.stepper[data-ref="bk|'+idx+'"] .val');
+      const b=t.bookings[idx]; b.checked=true; b.checkedIn=+(sval?sval.textContent:b.checkedIn);
+      btn.classList.add("done"); btn.disabled=true; btn.textContent="✓ In";
+      card.querySelectorAll('.stepper[data-ref="bk|'+idx+'"] button').forEach(x=>x.disabled=true);
+      recount(tid); saveTour(tid);
+    };
   });
 }
-const SAVE_TIMERS={};
-function scheduleSave(tourId){ clearTimeout(SAVE_TIMERS[tourId]); SAVE_TIMERS[tourId]=setTimeout(()=>saveTour(tourId), 800); } // auto-save, no button
 function recount(tourId){
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]'); let sum=0;
-  card.querySelectorAll('.stepper[data-ref^="bk|"] .val').forEach(v=>sum+=+v.textContent);
+  const t=TOURS_CACHE.find(x=>x.id===tourId);
+  card.querySelectorAll('.stepper[data-ref^="bk|"]').forEach(st=>{ const idx=+st.dataset.ref.split("|")[1]; const b=t&&t.bookings[idx]; if(b&&b.checked) sum+=+st.querySelector('.val').textContent; });
   card.querySelector('.count .ck').textContent=sum;
   const total=Number((TOURS_CACHE.find(x=>x.id===tourId)||{}).bookedGuests||0);
   const sub=card.querySelector('.count .sub'); const miss=Math.max(0,total-sum);
@@ -299,7 +316,7 @@ async function saveTour(tourId,btn){
   const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return;
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
   const bookings=t.bookings.map((b,i)=>{ const st=card.querySelector('.stepper[data-ref="bk|'+i+'"] .val');
-    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,income:b.income,isPrivate:b.isPrivate,checkedIn:+(st?st.textContent:b.checkedIn)}; });
+    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,income:b.income,isPrivate:b.isPrivate,checked:!!b.checked,checkedIn:+(st?st.textContent:b.checkedIn)}; });
   const walkins=[]; card.querySelectorAll('.stepper[data-ref^="walk|"]').forEach(st=>{ const source=st.dataset.ref.split("|")[1]; const count=+st.querySelector(".val").textContent; if(count>0) walkins.push({source,count}); });
   const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins,guide:t.guide||""};
   const msg=card.querySelector('[data-msg]'); if(btn) btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
