@@ -254,7 +254,7 @@ function tourCard(t){
   return '<div class="tour" data-tour="'+esc(t.id)+'">'+
     '<div class="head js-toggle">'+
       '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+ flagImg(t.language)+
-      '<span class="pill">'+esc(t.language)+'</span>'+(t.isPrivate?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
+      (t.isPrivate?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
       '<div class="count"><div class="big"><span class="ck">'+t.checkedGuests+'</span> / '+t.bookedGuests+'</div>'+sub+'</div>'+
     '</div>'+
     '<div class="chips">'+chips+'</div>'+
@@ -278,6 +278,7 @@ function stepper(tourId,ref,val,max,total){
 }
 function bindTours(tours){
   TOURS_CACHE=tours;
+  document.querySelectorAll(".tour:not(.static) .bookings").forEach(b=>{ b.style.display="none"; }); // start collapsed
   document.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{ const b=h.parentElement.querySelector(".bookings"); b.style.display = b.style.display==="none"?"":"none"; }; });
   document.querySelectorAll(".stepper").forEach(st=>{
     const val=st.querySelector(".val"), max=Number(st.dataset.max);
@@ -323,7 +324,7 @@ function renderSchedule(rows){
         : "Not assigned";
       html+='<div class="tour static"><div class="head">'+
         '<span class="time">'+esc(to12(s.time))+'</span>'+flagImg(s.language)+
-        '<span class="pill">'+esc(s.language)+'</span>'+(s.private?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
+        (s.private?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
         '<span class="guides'+(miss?' miss':'')+'">'+who+'</span></div></div>';
     });
   });
