@@ -315,7 +315,7 @@ function apiHealth_() {
     ok: true,
     time: Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'),
     tz: 'Europe/Madrid',
-    deployment: 'portal-v2'
+    deployment: 'portal-v3'
   };
   try {
     const control = control_();
@@ -328,7 +328,8 @@ function apiHealth_() {
   try {
     const b = bookingSS_();
     out.bookingSheetOk = true;
-    out.bookingTabs = b.getSheets().filter(s => s.getName().indexOf(PORTAL.BOOKING_TAB_SUFFIX) !== -1).length;
+    out.bookingTabs = b.getSheets().filter(s =>
+      s.getName().indexOf(PORTAL.BOOKING_TAB_SUFFIX) !== -1 && !/^done\b/i.test(s.getName())).length;
   } catch (e) { out.ok = false; out.bookingSheetOk = false; out.error = 'BookingSheet unreachable'; }
   try {
     out.ledgerOk = !!ledgerSS_();
@@ -539,7 +540,10 @@ function readBookingsIndex_() {
 
   ss.getSheets().forEach(sh => {
     const tab = sh.getName();
-    if (tab.indexOf(PORTAL.BOOKING_TAB_SUFFIX) === -1) return; // only "* Tours" tabs
+    // Only the ACTIVE language tabs. "Done Tours" also ends in " Tours" but is
+    // an aggregate (no booking ids) and must never be parsed as bookings.
+    if (tab.indexOf(PORTAL.BOOKING_TAB_SUFFIX) === -1) return;
+    if (/^done\b/i.test(tab)) return;
     const language = tab.replace(PORTAL.BOOKING_TAB_SUFFIX, '').trim();
     if (sh.getLastRow() < 2) return;
 
@@ -1023,6 +1027,35 @@ const GURUWALK_HEADERS = [
   'Guide', 'Checked-in at', '48h deadline', 'Reported in GuruWalk', 'Reported at', 'Notes'
 ];
 
+/** Last row that actually holds data (column A), ignoring stray checkboxes. */
+function lastDataRow_(sh) {
+  const vals = sh.getRange(1, 1, sh.getMaxRows(), 1).getValues();
+  for (let i = vals.length - 1; i >= 0; i--) {
+    if (String(vals[i][0]).trim() !== '') return i + 1;
+  }
+  return 0;
+}
+
+/**
+ * RUN ONCE if the queue tabs were created before 2026-07-17: removes the
+ * stray full-column checkboxes (they inflated getLastRow() to 1000 and made
+ * appends land at row 1001). Safe to re-run.
+ */
+function repairQueueTabs() {
+  const ss = ledgerSS_();
+  [QUEUE_TABS.VIATOR_NOSHOW, QUEUE_TABS.GYG_NOSHOW, QUEUE_TABS.GURUWALK].forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const last = Math.max(1, lastDataRow_(sh));
+    const max = sh.getMaxRows();
+    if (max > last) {
+      sh.getRange(last + 1, 1, max - last, sh.getMaxColumns())
+        .clearContent().clearDataValidations();
+    }
+  });
+  Logger.log('Queue tabs repaired.');
+}
+
 function ensureQueueTabs_(ss) {
   ss = ss || ledgerSS_();
   const mk = (name, headers) => {
@@ -1031,9 +1064,9 @@ function ensureQueueTabs_(ss) {
       sh = ss.insertSheet(name);
       sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
       sh.setFrozenRows(1);
-      // checkbox column
-      const ckCol = headers.indexOf('OTA action done') + 1 || headers.indexOf('Reported in GuruWalk') + 1;
-      if (ckCol) sh.getRange(2, ckCol, sh.getMaxRows() - 1, 1).insertCheckboxes();
+      // NOTE: checkboxes are inserted per appended row, never for the whole
+      // column — a full-column checkbox makes getLastRow() = max rows and
+      // breaks appends.
     }
     return sh;
   };
@@ -1137,9 +1170,13 @@ function updateNoShowQueues_() {
   Object.keys(targets).forEach(k => {
     const sh = targets[k];
     existing[k] = new Set();
-    if (!sh || sh.getLastRow() < 2) return;
-    const v = sh.getRange(2, 1, sh.getLastRow() - 1, NOSHOW_HEADERS.length).getValues();
-    v.forEach(r => existing[k].add(String(r[4] || '') + '|' + toDateKey_(r[0])));
+    if (!sh) return;
+    const last = lastDataRow_(sh);
+    if (last < 2) return;
+    const v = sh.getRange(2, 1, last - 1, NOSHOW_HEADERS.length).getValues();
+    v.forEach(r => {
+      if (String(r[4] || '').trim()) existing[k].add(String(r[4] || '') + '|' + toDateKey_(r[0]));
+    });
   });
 
   const newRows = { 'viator': [], 'getyourguide': [] };
@@ -1162,7 +1199,7 @@ function updateNoShowQueues_() {
   Object.keys(newRows).forEach(k => {
     const rows = newRows[k], sh = targets[k];
     if (!sh || !rows.length) return;
-    const start = sh.getLastRow() + 1;
+    const start = Math.max(2, lastDataRow_(sh) + 1);
     sh.getRange(start, 1, rows.length, NOSHOW_HEADERS.length).setValues(rows);
     sh.getRange(start, 12, rows.length, 1).insertCheckboxes();
   });
@@ -1175,9 +1212,12 @@ function updateGuruwalkCheckinQueue_() {
   const checkins = readAllCheckins_();
 
   const existing = new Set();
-  if (sh.getLastRow() >= 2) {
-    const v = sh.getRange(2, 1, sh.getLastRow() - 1, GURUWALK_HEADERS.length).getValues();
-    v.forEach(r => existing.add(String(r[3] || '') + '|' + toDateKey_(r[0])));
+  const lastG = lastDataRow_(sh);
+  if (lastG >= 2) {
+    const v = sh.getRange(2, 1, lastG - 1, GURUWALK_HEADERS.length).getValues();
+    v.forEach(r => {
+      if (String(r[3] || '').trim()) existing.add(String(r[3] || '') + '|' + toDateKey_(r[0]));
+    });
   }
 
   const rows = [];
@@ -1196,7 +1236,7 @@ function updateGuruwalkCheckinQueue_() {
   });
 
   if (rows.length) {
-    const start = sh.getLastRow() + 1;
+    const start = Math.max(2, lastDataRow_(sh) + 1);
     sh.getRange(start, 1, rows.length, GURUWALK_HEADERS.length).setValues(rows);
     sh.getRange(start, 11, rows.length, 1).insertCheckboxes();
   }
@@ -1222,16 +1262,19 @@ function sendGuruwalkCheckinReminder() {
   ensureQueueTabs_(ss);
   const pendingGuru = [];
   const sh = ss.getSheetByName(QUEUE_TABS.GURUWALK);
-  if (sh && sh.getLastRow() >= 2) {
-    const v = sh.getRange(2, 1, sh.getLastRow() - 1, GURUWALK_HEADERS.length).getValues();
-    v.forEach(r => { if (r[10] !== true) pendingGuru.push(r); });
+  const lastR = sh ? lastDataRow_(sh) : 0;
+  if (sh && lastR >= 2) {
+    const v = sh.getRange(2, 1, lastR - 1, GURUWALK_HEADERS.length).getValues();
+    v.forEach(r => { if (String(r[3] || '').trim() && r[10] !== true) pendingGuru.push(r); });
   }
   let pendingNoShows = 0;
   [QUEUE_TABS.VIATOR_NOSHOW, QUEUE_TABS.GYG_NOSHOW].forEach(name => {
     const q = ss.getSheetByName(name);
-    if (!q || q.getLastRow() < 2) return;
-    const v = q.getRange(2, 1, q.getLastRow() - 1, NOSHOW_HEADERS.length).getValues();
-    v.forEach(r => { if (r[11] !== true) pendingNoShows++; });
+    if (!q) return;
+    const lastQ = lastDataRow_(q);
+    if (lastQ < 2) return;
+    const v = q.getRange(2, 1, lastQ - 1, NOSHOW_HEADERS.length).getValues();
+    v.forEach(r => { if (String(r[4] || '').trim() && r[11] !== true) pendingNoShows++; });
   });
 
   if (!pendingGuru.length && !pendingNoShows) return;   // nothing to nag about
@@ -1309,7 +1352,7 @@ function testQueueIdempotency() {
   const ss = ledgerSS_();
   ensureQueueTabs_(ss);
   const count = () => [QUEUE_TABS.VIATOR_NOSHOW, QUEUE_TABS.GYG_NOSHOW, QUEUE_TABS.GURUWALK, 'Unassigned']
-    .map(n => { const s = ss.getSheetByName(n); return s ? s.getLastRow() : 0; });
+    .map(n => { const s = ss.getSheetByName(n); return s ? lastDataRow_(s) : 0; });
 
   updateManagementQueues();
   const first = count();

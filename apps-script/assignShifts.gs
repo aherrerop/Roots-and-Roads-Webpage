@@ -382,6 +382,7 @@ function readShiftValues_() {
   ss.getSheets().forEach(sh => {
     const tab = sh.getName();
     if (tab.indexOf(" Tours") === -1) return;
+    if (/^done\b/i.test(tab)) return;   // "Done Tours" is an aggregate, not bookings
     const language = tab.replace(" Tours", "").trim();
     if (sh.getLastRow() < 2) return;
     const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
@@ -406,6 +407,7 @@ function readPrivateCounts_() {
   ss.getSheets().forEach(sh => {
     const tab = sh.getName();
     if (tab.indexOf(" Tours") === -1) return;
+    if (/^done\b/i.test(tab)) return;   // "Done Tours" is an aggregate, not bookings
     const language = tab.replace(" Tours", "").trim();
     if (sh.getLastRow() < 2) return;
     const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
