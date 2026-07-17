@@ -299,6 +299,7 @@ function sourceConfigs_() {
  ******************************************************/
 
 let RNR_RUN_STARTED_AT_ = 0;
+let RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0 };
 let RNR_TEXT_CACHE_ = null;              // messageId -> best text
 let RNR_CANCEL_CACHE_ = null;            // array of cancellation bookings
 let RNR_CONFIRMATION_CACHE_ = null;      // "source|id" -> confirmation booking
@@ -312,6 +313,7 @@ var RNR_SKIP_PROCESSED_ = false;
 
 
 function resetRunCaches_() {
+  RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0 };
   RNR_TEXT_CACHE_ = new Map();
   RNR_CANCEL_CACHE_ = null;
   RNR_CONFIRMATION_CACHE_ = null;
@@ -428,8 +430,40 @@ function runBookingCore_(skipProcessed) {
     console.log(String(err && err.stack ? err.stack : err));
 
   } finally {
+    writeRunStatus_(skipProcessed ? 'fast (5-min)' : 'audit (full re-read)');
     lock.releaseLock();
   }
+}
+
+
+/**
+ * Heartbeat: rewrites the small "Status" tab after EVERY run so a manager can
+ * see at a glance that the system is alive and what the last run did.
+ */
+function writeRunStatus_(mode) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sh = ss.getSheetByName('Status');
+    if (!sh) sh = ss.insertSheet('Status');
+    const rows = [
+      ['Last run finished', Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss')],
+      ['Mode', mode],
+      ['Duration (seconds)', Math.round((Date.now() - RNR_RUN_STARTED_AT_) / 1000)],
+      ['Threads marked Processed this run', RNR_RUN_STATS_.processed],
+      ['Booking rows written/updated this run', RNR_RUN_STATS_.upserts],
+      ['Errors logged this run', RNR_RUN_STATS_.errors],
+      ['', ''],
+      ['How to read this', 'This tab refreshes after every run (every 5 min + audits). ' +
+        'If "Last run finished" is more than ~10 minutes old, the trigger is not running: ' +
+        'open Apps Script > Triggers and > Executions. Error details: Errors tab. ' +
+        'Full diagnosis: run systemStatus() in the editor.']
+    ];
+    sh.clear();
+    sh.getRange(1, 1, rows.length, 2).setValues(rows);
+    sh.getRange(1, 1, rows.length, 1).setFontWeight('bold');
+    sh.setColumnWidth(1, 280);
+    sh.setColumnWidth(2, 520);
+  } catch (e) { console.log('writeRunStatus_: ' + e); }
 }
 
 
@@ -450,6 +484,18 @@ function doPost(e) {
   const lock = LockService.getScriptLock();
 
   if (!lock.tryLock(30000)) {
+    // A long booking run holds the lock. NEVER lose the reservation: log it
+    // and email the raw details to management for manual entry.
+    try {
+      const raw = JSON.stringify(e && e.parameter ? e.parameter : {});
+      logError_('Website booking arrived while system busy — NOT saved automatically', 'manual entry needed', raw);
+      MailApp.sendEmail({
+        to: RNR.INTERNAL_ALERT_TO,
+        subject: 'R&R: WEBSITE BOOKING NEEDS MANUAL ENTRY (system was busy)',
+        body: 'Add this reservation to the BookingSheet by hand:\n\n' +
+              JSON.stringify(e && e.parameter ? e.parameter : {}, null, 2)
+      });
+    } catch (err2) { /* nothing more we can do */ }
     return textResponse_('BUSY');
   }
 
@@ -701,6 +747,7 @@ function moveThreadOutOfInbox_(thread) {
 function finalizeThreadProcessed_(thread) {
   safeAddLabel_(thread, RNR.LABELS.PROCESSED);
   moveThreadOutOfInbox_(thread);
+  if (RNR_RUN_STATS_) RNR_RUN_STATS_.processed++;
 }
 
 /**
@@ -884,11 +931,14 @@ function processConfirmationLabel_(labelName, source) {
       const bookings = uniqueBookings_(parseThread_(thread, source, 'confirm'));
 
       // A confirmation thread that yields NO parseable booking is a parser
-      // problem (or a mis-filed email). Log it and do NOT mark it Processed,
-      // so the audit keeps retrying it and it stays visible as unprocessed.
+      // problem (or a mis-filed email). Do NOT mark it Processed, so it keeps
+      // being retried. Only the audit logs it (a fast-run log would add a row
+      // every 5 minutes for the same thread).
       if (!bookings.length) {
-        logError_('Confirmation parse failed (no booking found)',
-          'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
+        if (!RNR_SKIP_PROCESSED_) {
+          logError_('Confirmation parse failed (no booking found)',
+            'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
+        }
         continue;
       }
 
@@ -2126,6 +2176,7 @@ function upsertActiveBooking_(booking) {
   const sheetName = languageToSheet_(b.language);
   const sh = ss.getSheetByName(sheetName);
   if (!sh) return;
+  if (RNR_RUN_STATS_) RNR_RUN_STATS_.upserts++;
 
   // Protect/restore the header row; a booking must never overwrite row 1.
   sh.getRange(1, 1, 1, RNR.ACTIVE_HEADERS.length).setValues([RNR.ACTIVE_HEADERS]);
@@ -2798,12 +2849,23 @@ function parseGygMessage_(msg, mode) {
   const subject = msg.getSubject() || '';
   const text = subject + '\n' + getBestMessageText_(msg);
 
-  // Classification (English + Spanish). A rebooking/modification must win over a
-  // cancellation, because GYG "reprogramada" emails contain the word "cancelada"
-  // ("...ha vuelto a reservar la actividad cancelada recientemente...").
-  const isModify = /reprogramad|ha vuelto a reservar|se ha modificado|modificad|amend|updated booking|rebooked|actualizad/i.test(text);
-  const isCancel = !isModify &&
-    /cancel(?:led|ed|lation)?|cancelad|cancelaci[oó]n|anulad|reserva anulada/i.test(text);
+  // Classification: the SUBJECT is authoritative — Gmail filters route on it,
+  // and GYG bodies contain harmless words like "actualizaciones" (footer) that
+  // would misclassify a confirmation as a modification. Body keywords are only
+  // a fallback for unknown subjects. A rebooking/modification still wins over
+  // a cancellation ("reprogramada" emails contain the word "cancelada").
+  let isModify, isCancel;
+  if (/cancelad|cancelaci[oó]n|cancelled|canceled|anulad/i.test(subject)) {
+    isModify = false; isCancel = true;
+  } else if (/booking detail change|cambio en los datos|reprogramad|rebooked/i.test(subject)) {
+    isModify = true; isCancel = false;
+  } else if (/nueva reserva recibida|new booking received|^\s*(?:re:\s*|fwd?:\s*)?booking\s*-/i.test(subject)) {
+    isModify = false; isCancel = false;
+  } else {
+    isModify = /reprogramad|ha vuelto a reservar|se ha modificado|modificad|amend|updated booking|rebooked|actualizad/i.test(text);
+    isCancel = !isModify &&
+      /cancel(?:led|ed|lation)?|cancelad|cancelaci[oó]n|anulad|reserva anulada/i.test(text);
+  }
 
   if (mode === 'confirm' && (isCancel || isModify)) return null;
   if (mode === 'cancel' && !isCancel) return null;
@@ -3617,6 +3679,7 @@ function safeString_(v) {
 
 function logError_(type, err, rawData) {
   try {
+    if (RNR_RUN_STATS_) RNR_RUN_STATS_.errors++;
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sh = ss.getSheetByName(RNR.SHEETS.ERRORS) || ss.insertSheet(RNR.SHEETS.ERRORS);
 
@@ -3875,6 +3938,12 @@ function testBookingParsers() {
     check('Viator kids: income unchanged by children', Math.abs(b.income - 95.6) < 0.01, b.income);
   }
 
+  // Footer noise ("actualizaciones") must NOT flip a confirmation to modify
+  f = RNR_FIXTURES_.gygEsChildren;
+  b = parseGygMessage_(makeFakeMsg_(f.subject,
+        f.body + '\nPuede recibir actualizaciones y novedades en su correo.'), 'confirm');
+  check('GYG ES: footer "actualizaciones" still parses as confirmation', !!b && b.bookingId === 'GYGWZARHZ63W', b);
+
   // Cancellation always wins over confirmation (classification level)
   const cancelTxt = f.body + '\nThe following booking has been cancelled.';
   const bc = parseViatorMessage_(makeFakeMsg_('Cancelled Booking: Mon, Aug 3, 2026', cancelTxt), 'confirm');
@@ -3883,4 +3952,101 @@ function testBookingParsers() {
   console.log('---------------------------------');
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   return fail === 0;
+}
+
+
+/******************************************************
+ * 29. MANAGER DIAGNOSIS + FORCE TOOLS
+ *
+ * systemStatus()            -> full health report in the execution log
+ * forceProcessEverythingNow() -> full audit re-read + status report
+ * testInternalAlertEmail()  -> proves this script can send email
+ ******************************************************/
+
+/**
+ * One-stop diagnosis. Run from the editor, read the Execution log.
+ * Checks: Gmail read access (quota), email quota, unprocessed threads per
+ * label, installed triggers, newest Errors rows.
+ */
+function systemStatus() {
+  const lines = [];
+  resetRunCaches_();
+  RNR_SKIP_PROCESSED_ = true;
+
+  // 1. Gmail read probe (fails loudly when the daily read quota is exhausted)
+  try {
+    const label = GmailApp.getUserLabelByName(RNR.LABELS.GYG_CONFIRM);
+    const t = label ? label.getThreads(0, 1) : [];
+    if (t.length) getBestMessageText_(t[0].getMessages()[0]);
+    lines.push('Gmail read access: OK');
+  } catch (e) {
+    lines.push('Gmail read access: FAILING -> ' + e +
+      '  (usually the daily Gmail quota; it recovers within 24h and unprocessed mail is retried automatically)');
+  }
+
+  // 2. Email quota
+  try { lines.push('Emails this script can still send today: ' + MailApp.getRemainingDailyQuota()); }
+  catch (e) { lines.push('Email quota check failed: ' + e); }
+
+  // 3. Unprocessed threads per label (newest 30 per label)
+  sourceConfigs_().forEach(cfg => {
+    [['confirm', cfg.confirm], ['modify', cfg.modify], ['cancel', cfg.cancel]].forEach(pair => {
+      const labelName = pair[1];
+      if (!labelName) return;
+      try {
+        const label = GmailApp.getUserLabelByName(labelName);
+        if (!label) { lines.push(labelName + ': LABEL MISSING IN GMAIL'); return; }
+        const threads = label.getThreads(0, 30) || [];
+        const un = threads.filter(t => !threadHasProcessedLabel_(t)).length;
+        if (un) lines.push(labelName + ': ' + un + ' unprocessed (of newest ' + threads.length + ')');
+      } catch (e) {
+        lines.push(labelName + ': read failed -> ' + e);
+      }
+    });
+  });
+
+  // 4. Triggers
+  try {
+    const fns = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
+    lines.push('Triggers installed here: ' + (fns.join(', ') || 'NONE'));
+    if (fns.indexOf('runBookingSystem') === -1) lines.push('WARNING: runBookingSystem has NO trigger');
+    if (fns.indexOf('runBookingAudit') === -1) lines.push('WARNING: runBookingAudit has NO trigger');
+  } catch (e) { lines.push('Trigger check failed: ' + e); }
+
+  // 5. Newest error rows
+  try {
+    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RNR.SHEETS.ERRORS);
+    if (sh && sh.getLastRow() > 1) {
+      const n = Math.min(5, sh.getLastRow() - 1);
+      const v = sh.getRange(sh.getLastRow() - n + 1, 1, n, 3).getDisplayValues();
+      lines.push('Newest Errors rows:');
+      v.forEach(r => lines.push('   ' + r[0] + ' | ' + r[1] + ' | ' + String(r[2]).slice(0, 140)));
+    } else {
+      lines.push('Errors tab: empty');
+    }
+  } catch (e) { lines.push('Errors read failed: ' + e); }
+
+  lines.forEach(l => console.log(l));
+  return lines.join('\n');
+}
+
+/**
+ * FORCE button: re-reads EVERY labelled thread (Processed included), repairs
+ * sheet state, then prints the status report. Safe to run any time —
+ * everything is idempotent. Use when you see mail without Processed or a
+ * missing/duplicated booking.
+ */
+function forceProcessEverythingNow() {
+  runBookingAudit();
+  return systemStatus();
+}
+
+/** Sends a test email to management so you can verify MailApp works. */
+function testInternalAlertEmail() {
+  MailApp.sendEmail({
+    to: RNR.INTERNAL_ALERT_TO,
+    subject: 'R&R test email — booking system',
+    body: 'If you can read this, the booking script CAN send email. Sent: ' + new Date()
+  });
+  console.log('Sent. Remaining daily email quota: ' + MailApp.getRemainingDailyQuota());
 }

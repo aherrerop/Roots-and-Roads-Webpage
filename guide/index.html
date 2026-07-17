@@ -101,6 +101,7 @@
   .loaderr{text-align:center;color:var(--muted);padding:40px 16px}
   .loaderr b{display:block;color:var(--danger);font-size:14px;margin-bottom:6px}
   .loaderr .retry{margin-top:14px;padding:11px 26px;border:none;border-radius:11px;background:var(--ink);color:#fff;font-weight:800;font-size:14px;cursor:pointer}
+  .testlink{display:inline-block;margin-top:12px;color:var(--blue);font-weight:700;font-size:13px}
 </style>
 </head>
 <body>
@@ -134,20 +135,48 @@
 /* ================== CONFIG ================== */
 const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hcjuNZ_Z7J8zu7iI5ZPq9P4Ag6rZ19-XYgx_qWjFLohAa7iEf/exec";
 
-/* ================== JSONP ================== */
-function api(action, params){
+/* ================== API (fetch first, JSONP fallback) ==================
+   fetch gives REAL error information (HTTP status, login redirects), which
+   JSONP cannot. If fetch itself is blocked (old browser, extension), we fall
+   back to the classic JSONP script tag. */
+console.log("R&R guide portal front-end v3");
+function buildUrl(action, params){
+  const q = Object.assign({action}, params||{});
+  return PORTAL_URL + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
+}
+function mkErr(kind,msg){ const e=new Error(msg); e.kind=kind; return e; }
+async function api(action, params){
+  const url = buildUrl(action, params);
+  try{
+    const res = await fetch(url, {method:"GET", redirect:"follow"});
+    const text = await res.text();
+    try{ return JSON.parse(text); }
+    catch(_){
+      if(/accounts\.google\.com/.test(res.url||"") || /ServiceLogin|Sign in - Google/i.test(text))
+        throw mkErr("auth","The portal deployment is asking for a Google sign-in. A manager must set the web app's \"Who has access\" to Anyone and deploy a new version.");
+      throw mkErr("badresp","The server answered, but not with portal data (HTTP "+res.status+"). The portal URL may point to a wrong or archived deployment.");
+    }
+  }catch(err){
+    if(err && (err.kind==="auth"||err.kind==="badresp")) throw err;
+    try{ return await apiJsonp(action, params); }
+    catch(err2){ throw err2; }
+  }
+}
+function apiJsonp(action, params){
   return new Promise((resolve,reject)=>{
     const cb = "cb_"+Math.random().toString(36).slice(2);
-    const q = Object.assign({action, callback:cb}, params||{});
-    const url = PORTAL_URL + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
+    const url = buildUrl(action, Object.assign({callback:cb}, params||{}));
     const s = document.createElement("script");
     let done=false;
     window[cb]=(data)=>{ done=true; cleanup(); resolve(data); };
     function cleanup(){ delete window[cb]; s.remove(); }
-    s.onerror=()=>{ if(!done){cleanup(); const e=new Error("NETWORK"); e.kind="network"; reject(e);} };
+    s.onerror=()=>{ if(!done){cleanup(); reject(mkErr("network","NETWORK"));} };
     s.src=url; document.body.appendChild(s);
-    setTimeout(()=>{ if(!done){cleanup(); const e=new Error("TIMEOUT"); e.kind="timeout"; reject(e);} }, 20000);
+    setTimeout(()=>{ if(!done){cleanup(); reject(mkErr("timeout","TIMEOUT"));} }, 20000);
   });
+}
+function serverTestLink(){
+  return '<br><a class="testlink" target="_blank" rel="noopener" href="'+buildUrl("health",{})+'">Test server connection</a>';
 }
 
 /* ================== STATE / HELPERS ================== */
@@ -205,9 +234,10 @@ async function doLogin(){
     if(!r.ok){ $("loginErr").textContent=r.error||"Login failed"; $("loginBtn").disabled=false; return; }
     store.token=r.token; store.name=r.guide.name; showDash();
   }catch(err){
-    $("loginErr").textContent = err&&err.kind==="network" ? "Can't reach the server — check your internet connection."
+    const msg = err&&err.kind==="network" ? "Can't reach the server — check your internet connection."
       : err&&err.kind==="timeout" ? "Server took too long — try again."
       : err.message;
+    $("loginErr").innerHTML = esc(msg) + serverTestLink();
     $("loginBtn").disabled=false;
   }
 }
@@ -246,16 +276,21 @@ async function loadTours(){
    connection apart from a server-side problem, then show a useful message. */
 async function showLoadError(err){
   let msg, hint;
-  try{
-    const h = await api("health",{});
-    if(h && h.ok){ msg="The server is up but the tours request failed."; hint="Pull to refresh or tap Retry. If it keeps failing, tell Albert or Carlos."; }
-    else { msg="The tour server reported a problem"+(h&&h.error?": "+h.error:"."); hint="Tell Albert or Carlos — this is a server-side issue, not your phone."; }
-  }catch(e2){
-    msg = err&&err.kind==="timeout" ? "The server took too long to answer." : "Can't reach the tour server.";
-    hint = "Check your internet connection (try opening any website), then tap Retry.";
+  if(err && (err.kind==="auth"||err.kind==="badresp")){
+    msg = err.message;
+    hint = "Tap the test link below: if it shows an error page or a Google sign-in instead of data, the deployment/URL is the problem (manager fix, not your phone).";
+  } else {
+    try{
+      const h = await api("health",{});
+      if(h && h.ok){ msg="The server is up but the tours request failed."; hint="Pull to refresh or tap Retry. If it keeps failing, tell Albert or Carlos."; }
+      else { msg="The tour server reported a problem"+(h&&h.error?": "+h.error:"."); hint="Tell Albert or Carlos — this is a server-side issue, not your phone."; }
+    }catch(e2){
+      msg = err&&err.kind==="timeout" ? "The server took too long to answer." : "Can't reach the tour server.";
+      hint = "Check your internet connection (try opening any website), then tap Retry.";
+    }
   }
   $("toursPane").innerHTML='<div class="loaderr"><b>'+esc(msg)+'</b>'+esc(hint)+
-    '<br><button class="retry" onclick="loadTours()">Retry</button></div>';
+    '<br><button class="retry" onclick="loadTours()">Retry</button>'+serverTestLink()+'</div>';
 }
 
 /* ================== TOUR CARDS ================== */
