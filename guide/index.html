@@ -95,6 +95,12 @@
 
   .empty{text-align:center;color:var(--muted);padding:50px 10px}
   .spin{text-align:center;color:var(--muted);padding:50px}
+  /* children: shown as "2+3" — adults normal, +children slightly smaller */
+  .kids{font-size:.72em;font-weight:800;color:var(--muted);margin-left:1px}
+  .count .kids{font-size:.7em}
+  .loaderr{text-align:center;color:var(--muted);padding:40px 16px}
+  .loaderr b{display:block;color:var(--danger);font-size:14px;margin-bottom:6px}
+  .loaderr .retry{margin-top:14px;padding:11px 26px;border:none;border-radius:11px;background:var(--ink);color:#fff;font-weight:800;font-size:14px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -138,9 +144,9 @@ function api(action, params){
     let done=false;
     window[cb]=(data)=>{ done=true; cleanup(); resolve(data); };
     function cleanup(){ delete window[cb]; s.remove(); }
-    s.onerror=()=>{ if(!done){cleanup(); reject(new Error("Network error"));} };
+    s.onerror=()=>{ if(!done){cleanup(); const e=new Error("NETWORK"); e.kind="network"; reject(e);} };
     s.src=url; document.body.appendChild(s);
-    setTimeout(()=>{ if(!done){cleanup(); reject(new Error("Timed out"));} }, 20000);
+    setTimeout(()=>{ if(!done){cleanup(); const e=new Error("TIMEOUT"); e.kind="timeout"; reject(e);} }, 20000);
   });
 }
 
@@ -198,7 +204,12 @@ async function doLogin(){
     const r=await api("login",{email,password});
     if(!r.ok){ $("loginErr").textContent=r.error||"Login failed"; $("loginBtn").disabled=false; return; }
     store.token=r.token; store.name=r.guide.name; showDash();
-  }catch(err){ $("loginErr").textContent=err.message; $("loginBtn").disabled=false; }
+  }catch(err){
+    $("loginErr").textContent = err&&err.kind==="network" ? "Can't reach the server — check your internet connection."
+      : err&&err.kind==="timeout" ? "Server took too long — try again."
+      : err.message;
+    $("loginBtn").disabled=false;
+  }
 }
 $("logoutBtn").onclick=()=>{ store.token=""; location.reload(); };
 
@@ -217,9 +228,10 @@ function showDash(){ $("loginView").classList.add("hidden"); $("dashView").class
 async function loadTours(){
   $("toursPane").innerHTML='<div class="spin">Loading…</div>';
   let r; try{ r=await api("tours",{token:store.token}); }
-  catch(err){ $("toursPane").innerHTML='<div class="empty">'+esc(err.message)+'</div>'; return; }
+  catch(err){ await showLoadError(err); return; }
   if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; location.reload(); return; }
-    $("toursPane").innerHTML='<div class="empty">'+esc(r.error||"Error")+'</div>'; return; }
+    $("toursPane").innerHTML='<div class="loaderr"><b>Server error</b>'+esc(r.error||"Unknown error")+
+      '<br><button class="retry" onclick="loadTours()">Retry</button></div>'; return; }
   RATES=r.rates||RATES;
   MANAGER=!!r.manager;
   const all=r.allTours||[];
@@ -230,6 +242,22 @@ async function loadTours(){
   bindTours(TOURS_CACHE);
 }
 
+/* Diagnose a failed load: try the lightweight health endpoint to tell a dead
+   connection apart from a server-side problem, then show a useful message. */
+async function showLoadError(err){
+  let msg, hint;
+  try{
+    const h = await api("health",{});
+    if(h && h.ok){ msg="The server is up but the tours request failed."; hint="Pull to refresh or tap Retry. If it keeps failing, tell Albert or Carlos."; }
+    else { msg="The tour server reported a problem"+(h&&h.error?": "+h.error:"."); hint="Tell Albert or Carlos — this is a server-side issue, not your phone."; }
+  }catch(e2){
+    msg = err&&err.kind==="timeout" ? "The server took too long to answer." : "Can't reach the tour server.";
+    hint = "Check your internet connection (try opening any website), then tap Retry.";
+  }
+  $("toursPane").innerHTML='<div class="loaderr"><b>'+esc(msg)+'</b>'+esc(hint)+
+    '<br><button class="retry" onclick="loadTours()">Retry</button></div>';
+}
+
 /* ================== TOUR CARDS ================== */
 function groupByDay(items){
   const g={}; items.forEach(t=>{ (g[t.dateKey]=g[t.dateKey]||[]).push(t); });
@@ -237,6 +265,7 @@ function groupByDay(items){
 }
 function renderTours(tours, paneId){
   const pane=$(paneId||"toursPane");
+  const seen={}; tours=(tours||[]).filter(t=>{ if(seen[t.id]) return false; seen[t.id]=true; return true; });
   if(!tours.length){ pane.innerHTML='<div class="empty">'+(paneId==="schedPane"?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; return; }
   let html="";
   groupByDay(tours).forEach(day=>{
@@ -258,7 +287,7 @@ function tourCard(t){
     '<div class="head js-toggle">'+
       '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+ flagImg(t.language)+
       (t.isPrivate?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
-      '<div class="count"><div class="big"><span class="ck">'+t.checkedGuests+'</span> / '+t.bookedGuests+'</div>'+sub+'</div>'+
+      '<div class="count"><div class="big"><span class="ck">'+t.checkedGuests+'</span> / '+t.bookedGuests+(t.bookedChildren?'<span class="kids">+'+t.bookedChildren+'</span>':'')+'</div>'+sub+'</div>'+
     '</div>'+
     '<div class="chips">'+chips+'</div>'+
     '<div class="bookings">'+bk+
@@ -271,14 +300,15 @@ function bookingRow(tourId,b,i){
   const ph = b.phone ? '<a class="ph" href="tel:'+esc(b.phone)+'">'+esc(b.phone)+'</a>' : '';
   return '<div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
     '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+'</div>'+
-    wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests)+
+    wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
     '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+(b.checked?' disabled':'')+'>'+(b.checked?'✓ In':'Check in')+'</button>'+
     '</div>';
 }
-function stepper(tourId,ref,val,max,total){
+function stepper(tourId,ref,val,max,total,kids){
+  const kidsHtml = kids?'<span class="kids">+'+kids+'</span>':'';
   return '<div class="stepper" data-ref="'+esc(ref)+'" data-tour="'+esc(tourId)+'" data-max="'+max+'">'+
     '<button class="js-dec">−</button><span class="val">'+val+'</span>'+
-    (total?'<span class="of">/'+total+'</span>':'')+'<button class="js-inc">+</button></div>';
+    (total?'<span class="of">/'+total+kidsHtml+'</span>':'')+'<button class="js-inc">+</button></div>';
 }
 function bindTours(tours){
   TOURS_CACHE=tours;

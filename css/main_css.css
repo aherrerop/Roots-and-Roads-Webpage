@@ -1292,6 +1292,19 @@ display:none;
   color: #ffffff;
 }
 
+/* Guide portal link in the footer: big enough to tap on a phone, clearly
+   separated from the copyright line. */
+.footer-guide-link {
+  display: inline-block;
+  margin-top: 22px;
+  padding: 10px 22px;
+  color: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  text-decoration: underline;
+  opacity: 0.9;
+}
+
 
 
 
