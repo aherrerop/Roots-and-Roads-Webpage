@@ -959,8 +959,10 @@ function minutesToTime_(minutes) {
 function setupLedger() {
   const ss = ledgerSS_();
   migrateLedgerChildrenColumn_();
+  repairLedgers();
   ensureGuideTabs_(ss);
   ensureQueueTabs_(ss);
+  repairQueueTabs();
   Logger.log('Ledger ready: ' + ss.getUrl());
 }
 
@@ -1023,9 +1025,21 @@ const NOSHOW_HEADERS = [
   'Children', 'Guide', 'Private', 'Portal status', 'OTA action done', 'Done at', 'Notes'
 ];
 const GURUWALK_HEADERS = [
-  'Tour date', 'Time', 'Language', 'Booking ID', 'Guest', 'Adults', 'Children',
-  'Guide', 'Checked-in at', '48h deadline', 'Reported in GuruWalk', 'Reported at', 'Notes'
+  'Tour date', 'Time', 'Language', 'Booking ID', 'Guest', 'Booked', 'Checked-in',
+  'Attendance', 'Children', 'Guide', 'Checked-in at', '48h deadline',
+  'Reported in GuruWalk', 'Reported at', 'Notes'
 ];
+// 0-based columns used when reading GuruWalk rows.
+const GW_BOOKINGID = 3, GW_BOOKED = 5, GW_CHECKEDIN = 6, GW_ATTEND = 7,
+      GW_CHILDREN = 8, GW_GUIDE = 9, GW_DEADLINE = 11, GW_REPORTED = 12;
+
+/** All (everyone came), Some (N of M), or None (no-show) for a guru booking. */
+function attendanceLabel_(booked, checkedIn) {
+  booked = Number(booked || 0); checkedIn = Number(checkedIn || 0);
+  if (checkedIn <= 0) return 'None';
+  if (checkedIn >= booked) return 'All';
+  return 'Some (' + checkedIn + ' of ' + booked + ')';
+}
 
 /** Last row that actually holds data (column A), ignoring stray checkboxes. */
 function lastDataRow_(sh) {
@@ -1041,6 +1055,50 @@ function lastDataRow_(sh) {
  * stray full-column checkboxes (they inflated getLastRow() to 1000 and made
  * appends land at row 1001). Safe to re-run.
  */
+/**
+ * RUN ONCE if a guide ledger tab's columns look misaligned (headers not
+ * matching the data, e.g. "R&R makes" missing). For every guide tab:
+ *   - if the data is still on the OLD 15-column layout (no Children column),
+ *     insert the Children column after Guests so data shifts into place;
+ *   - then rewrite row 1 to the canonical 16-column header.
+ * All writes/reads are positional, so this only fixes the visible header and
+ * the one-time Children insertion — money values are never recomputed. Safe
+ * to re-run.
+ */
+function repairLedgers() {
+  const ss = ledgerSS_();
+  ss.getSheets().forEach(sh => {
+    const name = sh.getName();
+    if (name === 'Rates' || name === 'Unassigned') return;
+    if (Object.values(QUEUE_TABS).indexOf(name) !== -1) return;
+
+    const hdr = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0].map(String);
+    const looksLikeGuideTab = hdr[0] === 'Date' || hdr.indexOf('Guests') !== -1;
+    if (!looksLikeGuideTab) return;
+
+    // Width of actual data (row 2), to detect the pre-Children 15-col layout.
+    let dataWidth = 0;
+    const dataRows = Math.max(0, lastDataRow_(sh) - 1);
+    if (dataRows > 0) {
+      const r2 = sh.getRange(2, 1, 1, sh.getMaxColumns()).getValues()[0];
+      for (let i = r2.length - 1; i >= 0; i--) {
+        if (String(r2[i]).trim() !== '') { dataWidth = i + 1; break; }
+      }
+    }
+
+    if (dataWidth === LEDGER_HEADERS.length - 1) {   // 15 -> needs Children inserted
+      sh.insertColumnAfter(8);                        // after 'Guests'
+      sh.getRange(1, 9).setValue('Children');
+      if (dataRows > 0) sh.getRange(2, 9, dataRows, 1).setValue(0);
+    }
+
+    // Canonical header (fixes any drift such as a missing 'R&R makes').
+    sh.getRange(1, 1, 1, LEDGER_HEADERS.length).setValues([LEDGER_HEADERS]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  });
+  Logger.log('Ledgers repaired.');
+}
+
 function repairQueueTabs() {
   const ss = ledgerSS_();
   [QUEUE_TABS.VIATOR_NOSHOW, QUEUE_TABS.GYG_NOSHOW, QUEUE_TABS.GURUWALK].forEach(name => {
@@ -1210,35 +1268,54 @@ function updateGuruwalkCheckinQueue_() {
   ensureQueueTabs_(ss);
   const sh = ss.getSheetByName(QUEUE_TABS.GURUWALK);
   const checkins = readAllCheckins_();
+  const completed = readCompletedLog_();
 
+  // Already-queued keys (skip blanks / phantom rows).
   const existing = new Set();
   const lastG = lastDataRow_(sh);
   if (lastG >= 2) {
     const v = sh.getRange(2, 1, lastG - 1, GURUWALK_HEADERS.length).getValues();
     v.forEach(r => {
-      if (String(r[3] || '').trim()) existing.add(String(r[3] || '') + '|' + toDateKey_(r[0]));
+      if (String(r[GW_BOOKINGID] || '').trim()) existing.add(String(r[GW_BOOKINGID]) + '|' + toDateKey_(r[0]));
     });
   }
 
   const rows = [];
+  const add = (dateKey, time, language, bookingId, guest, booked, checkedIn, children, guide, checkedAt) => {
+    const key = bookingId + '|' + dateKey;
+    if (!bookingId || existing.has(key)) return;
+    existing.add(key);
+    rows.push([
+      dateKey, time, language, bookingId, guest, booked, checkedIn,
+      attendanceLabel_(booked, checkedIn), children, guide, checkedAt,
+      guruwalkDeadline_(dateKey, time), false, '', ''
+    ]);
+  };
+
+  // 1. Guide-checked GuruWalk bookings -> All / Some.
   Object.keys(checkins).forEach(key => {
     const c = checkins[key];
     if (!/guruwalk/i.test(c.source)) return;
-    if (existing.has(key)) return;
-    existing.add(key);
     const parts = key.split('|');
-    const bookingId = parts[0], dateKey = parts[1];
-    const deadline = guruwalkDeadline_(dateKey, c.time);
-    rows.push([
-      dateKey, c.time, c.language, bookingId, c.booking, c.guests, c.children,
-      c.guide, c.updated, deadline, false, '', ''
-    ]);
+    add(parts[1], c.time, c.language, parts[0], c.booking, c.guests, c.checkedIn, c.children, c.guide, c.updated);
+  });
+
+  // 2. Completed GuruWalk bookings with NO check-in -> None (no-show).
+  //    Managers still report these (mark as no-show so no commission is owed).
+  let schedule = [];
+  try { schedule = readSchedule_(); } catch (e) { /* guide left blank */ }
+  completed.forEach(b => {
+    if (!/guruwalk/i.test(b.source)) return;
+    if (checkins[b.bookingId + '|' + b.dateKey]) return;   // handled in pass 1
+    const isPriv = /privat/i.test(b.notes || '');
+    add(b.dateKey, b.time, b.language, b.bookingId, b.name, b.adults, 0, b.children,
+        guideForShift_(schedule, b.dateKey, b.time, b.language, isPriv), '');
   });
 
   if (rows.length) {
     const start = Math.max(2, lastDataRow_(sh) + 1);
     sh.getRange(start, 1, rows.length, GURUWALK_HEADERS.length).setValues(rows);
-    sh.getRange(start, 11, rows.length, 1).insertCheckboxes();
+    sh.getRange(start, GW_REPORTED + 1, rows.length, 1).insertCheckboxes();
   }
 }
 
@@ -1265,39 +1342,59 @@ function sendGuruwalkCheckinReminder() {
   const lastR = sh ? lastDataRow_(sh) : 0;
   if (sh && lastR >= 2) {
     const v = sh.getRange(2, 1, lastR - 1, GURUWALK_HEADERS.length).getValues();
-    v.forEach(r => { if (String(r[3] || '').trim() && r[10] !== true) pendingGuru.push(r); });
+    v.forEach(r => {
+      if (String(r[GW_BOOKINGID] || '').trim() && r[GW_REPORTED] !== true) pendingGuru.push(r);
+    });
   }
-  let pendingNoShows = 0;
-  [QUEUE_TABS.VIATOR_NOSHOW, QUEUE_TABS.GYG_NOSHOW].forEach(name => {
-    const q = ss.getSheetByName(name);
+
+  const pendingNoShows = { Viator: [], GetYourGuide: [] };
+  [[QUEUE_TABS.VIATOR_NOSHOW, 'Viator'], [QUEUE_TABS.GYG_NOSHOW, 'GetYourGuide']].forEach(pair => {
+    const q = ss.getSheetByName(pair[0]);
     if (!q) return;
     const lastQ = lastDataRow_(q);
     if (lastQ < 2) return;
     const v = q.getRange(2, 1, lastQ - 1, NOSHOW_HEADERS.length).getValues();
-    v.forEach(r => { if (String(r[4] || '').trim() && r[11] !== true) pendingNoShows++; });
+    v.forEach(r => { if (String(r[4] || '').trim() && r[11] !== true) pendingNoShows[pair[1]].push(r); });
   });
 
-  if (!pendingGuru.length && !pendingNoShows) return;   // nothing to nag about
+  const totalNoShows = pendingNoShows.Viator.length + pendingNoShows.GetYourGuide.length;
+  if (!pendingGuru.length && !totalNoShows) return;   // nothing to do -> no email
 
-  let body = 'Daily management queue reminder.\n\n';
+  let body = 'Management queue — actions needed today.\n\n';
+
   if (pendingGuru.length) {
-    body += 'GURUWALK CHECK-INS TO REPORT (48h window from tour start):\n';
+    body += 'GURUWALK — report these on the GuruWalk platform (48h from tour start):\n';
+    // group by tour for readability
     pendingGuru.forEach(r => {
-      body += `  - ${toDateKey_(r[0])} ${r[1]} ${r[2]} | ${r[4]} (${r[5]} adults` +
-              (Number(r[6]) ? `, ${r[6]} children` : '') + `) | guide ${r[7]} | deadline ${r[9]}\n`;
+      const attend = String(r[GW_ATTEND] || '');
+      body += `  • ${r[4] || '(no name)'} — ${attend}` +
+              (Number(r[GW_CHILDREN]) ? ` (+${r[GW_CHILDREN]} children)` : '') +
+              `  [${toDateKey_(r[0])} ${r[1]} ${r[2]}, guide ${r[GW_GUIDE] || '?'}, deadline ${r[GW_DEADLINE]}]\n`;
+    });
+    body += '\n  Meaning: All = everyone came · Some (N of M) = guide checked in fewer · None = no-show.\n\n';
+  }
+
+  if (totalNoShows) {
+    body += 'OTA NO-SHOWS — mark as no-show inside the platform so they cannot review/refund:\n';
+    ['Viator', 'GetYourGuide'].forEach(src => {
+      pendingNoShows[src].forEach(r => {
+        body += `  • [${src}] ${r[5] || '(no name)'} — ${r[6]} adults` +
+                (Number(r[7]) ? `, ${r[7]} children` : '') +
+                `  [${toDateKey_(r[0])} ${r[1]} ${r[2]}, booking ${r[4]}, guide ${r[8] || '?'}]\n`;
+      });
     });
     body += '\n';
   }
-  if (pendingNoShows) {
-    body += `OTA NO-SHOWS pending action in Viator/GetYourGuide: ${pendingNoShows} ` +
-            `(see "Viator No-shows" and "GYG No-shows" tabs in Guide_Ledger_v1).\n`;
-  }
+
+  body += 'Tick the checkbox on each row in Guide_Ledger_v1 once done, so it drops off tomorrow\'s list.';
+
   MailApp.sendEmail({
     to: 'rootsandroadstours@gmail.com',
-    subject: 'R&R: GuruWalk check-ins / no-shows to process',
+    subject: 'R&R: ' + pendingGuru.length + ' GuruWalk + ' + totalNoShows + ' OTA no-shows to process',
     body
   });
 }
+
 
 
 /******************************************************

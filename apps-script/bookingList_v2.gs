@@ -300,6 +300,8 @@ function sourceConfigs_() {
 
 let RNR_RUN_STARTED_AT_ = 0;
 let RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0 };
+let RNR_LABEL_CACHE_ = null;     // labelName -> GmailLabel (1 lookup per run)
+let RNR_THREADS_CACHE_ = null;   // mode|labelName -> threads[] (1 fetch per run)
 let RNR_TEXT_CACHE_ = null;              // messageId -> best text
 let RNR_CANCEL_CACHE_ = null;            // array of cancellation bookings
 let RNR_CONFIRMATION_CACHE_ = null;      // "source|id" -> confirmation booking
@@ -314,6 +316,8 @@ var RNR_SKIP_PROCESSED_ = false;
 
 function resetRunCaches_() {
   RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0 };
+  RNR_LABEL_CACHE_ = new Map();
+  RNR_THREADS_CACHE_ = new Map();
   RNR_TEXT_CACHE_ = new Map();
   RNR_CANCEL_CACHE_ = null;
   RNR_CONFIRMATION_CACHE_ = null;
@@ -350,17 +354,25 @@ function runHasTimeLeft_() {
  * 3. MAIN FUNCTIONS
  ******************************************************/
 
+/**
+ * FULL setup. Run once from the editor, or automatically on audit runs.
+ * ensureLabels_ + formatSheets_ are Gmail/Spreadsheet-heavy, so the fast
+ * 5-minute run does NOT call this (see runBookingCore_).
+ */
 function setupBookingSystem() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureSheets_();
+  ensureLabels_();          // ~24 Gmail lookups — audit/manual only
+  formatSheets_();
+}
 
+/** Cheap: create the tabs if missing. No Gmail calls. */
+function ensureSheets_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureSheet_(ss, RNR.SHEETS.ENGLISH, RNR.ACTIVE_HEADERS);
   ensureSheet_(ss, RNR.SHEETS.GERMAN, RNR.ACTIVE_HEADERS);
   ensureSheet_(ss, RNR.SHEETS.SPANISH, RNR.ACTIVE_HEADERS);
   ensureSheet_(ss, RNR.SHEETS.DONE, RNR.DONE_HEADERS);
   ensureSheet_(ss, RNR.SHEETS.ERRORS, RNR.ERROR_HEADERS);
-
-  ensureLabels_();
-  formatSheets_();
 }
 
 
@@ -385,8 +397,16 @@ function runBookingCore_(skipProcessed) {
   RNR_SKIP_PROCESSED_ = !!skipProcessed;
 
   try {
-    setupBookingSystem();
-    ensureProcessedLabel_();
+    // Fast (5-min) runs must be Gmail-cheap: only create tabs. Labels already
+    // exist, and getThreadsSafe_ finds unprocessed mail via Gmail SEARCH
+    // (label:… -label:…-processed) instead of listing+inspecting every thread.
+    // The audit does the full, heavier setup a few times a day.
+    if (skipProcessed) {
+      ensureSheets_();
+    } else {
+      setupBookingSystem();
+      ensureProcessedLabel_();
+    }
 
     // ONE complete, idempotent pass. Every labelled thread is read every run
     // (read/unread and inbox state are NEVER used as a signal). Re-processing
@@ -653,26 +673,57 @@ function formatSheets_() {
  ******************************************************/
 
 /**
- * Returns threads under a label (read + unread alike). Read/unread and
- * inbox state are never used as a processing signal anywhere in this script.
- * Fast runs skip threads already carrying PROCESSED and use the smaller
- * MAX_THREADS_FAST cap; the audit run ignores PROCESSED and uses the larger
- * MAX_THREADS_AUDIT cap so it can clear a backlog.
+ * QUOTA MODEL (the fix for "Service invoked too many times for one day: gmail")
+ *
+ * The old approach fetched every thread under every label and then read each
+ * thread's labels to decide whether to skip it — hundreds of Gmail calls per
+ * run, ~288 runs/day, quota dead by afternoon.
+ *
+ * Now:
+ *   FAST run  -> ONE GmailApp.search per label:
+ *                  label:<x> -label:publishing-pages-processed
+ *                Gmail itself returns only the not-yet-processed threads.
+ *                An idle 5-minute run costs ~15 Gmail calls total.
+ *   AUDIT run -> direct label.getThreads (complete, no filtering needed
+ *                because audits deliberately re-read everything).
+ *   Every label object and every thread list is cached per run.
  */
 function getThreadsSafe_(labelName) {
   try {
-    const label = GmailApp.getUserLabelByName(labelName);
-    if (!label) return [];
+    if (!RNR_THREADS_CACHE_) RNR_THREADS_CACHE_ = new Map();
+    const key = (RNR_SKIP_PROCESSED_ ? 'F|' : 'A|') + labelName;
+    if (RNR_THREADS_CACHE_.has(key)) return RNR_THREADS_CACHE_.get(key);
 
-    const cap = RNR_SKIP_PROCESSED_ ? RNR.MAX_THREADS_FAST : RNR.MAX_THREADS_AUDIT;
-    const threads = label.getThreads(0, cap) || [];
-
-    if (!RNR_SKIP_PROCESSED_) return threads;
-    return threads.filter(t => !threadHasProcessedLabel_(t));
+    let threads;
+    if (RNR_SKIP_PROCESSED_) {
+      const q = searchTokenForLabel_(labelName) + ' -' + searchTokenForLabel_(RNR.LABELS.PROCESSED);
+      threads = GmailApp.search(q, 0, RNR.MAX_THREADS_FAST) || [];
+    } else {
+      const label = getLabel_(labelName);
+      threads = label ? (label.getThreads(0, RNR.MAX_THREADS_AUDIT) || []) : [];
+    }
+    RNR_THREADS_CACHE_.set(key, threads);
+    return threads;
   } catch (e) {
     console.log('getThreadsSafe_ ' + labelName + ': ' + e);
     return [];
   }
+}
+
+/** Gmail search canonical form: "Publishing Pages/Viator/Confirmations"
+ *  -> label:publishing-pages-viator-confirmations  (spaces and / become -). */
+function searchTokenForLabel_(labelName) {
+  return 'label:' + String(labelName || '').toLowerCase().replace(/[\s/]+/g, '-');
+}
+
+/** Cached label lookup: each label name costs at most ONE Gmail call per run. */
+function getLabel_(labelName) {
+  if (!RNR_LABEL_CACHE_) RNR_LABEL_CACHE_ = new Map();
+  if (RNR_LABEL_CACHE_.has(labelName)) return RNR_LABEL_CACHE_.get(labelName);
+  let label = null;
+  try { label = GmailApp.getUserLabelByName(labelName); } catch (e) { /* ignore */ }
+  RNR_LABEL_CACHE_.set(labelName, label);
+  return label;
 }
 
 function threadHasProcessedLabel_(thread) {
@@ -697,15 +748,18 @@ function threadHasLabel_(thread, labelName) {
 
 /**
  * Unconditional read of every thread under a label, ignoring PROCESSED.
- * Used only where full visibility matters more than quota (kept small: the
- * audit already gets full visibility from getThreadsSafe_).
+ * Cached per run. Only used where full visibility matters (GYG Done lookup).
  */
 function getThreadsForce_(labelName) {
   try {
-    const label = GmailApp.getUserLabelByName(labelName);
-    if (!label) return [];
+    if (!RNR_THREADS_CACHE_) RNR_THREADS_CACHE_ = new Map();
+    const key = 'X|' + labelName;
+    if (RNR_THREADS_CACHE_.has(key)) return RNR_THREADS_CACHE_.get(key);
     const cap = RNR_SKIP_PROCESSED_ ? RNR.MAX_THREADS_FAST : RNR.MAX_THREADS_AUDIT;
-    return label.getThreads(0, cap) || [];
+    const label = getLabel_(labelName);
+    const threads = label ? (label.getThreads(0, cap) || []) : [];
+    RNR_THREADS_CACHE_.set(key, threads);
+    return threads;
   } catch (e) {
     console.log('getThreadsForce_ ' + labelName + ': ' + e);
     return [];
@@ -722,14 +776,14 @@ function safeArchive_(thread) {
 
 function safeAddLabel_(thread, labelName) {
   try {
-    const label = GmailApp.getUserLabelByName(labelName);
+    const label = getLabel_(labelName);
     if (thread && label) thread.addLabel(label);
   } catch (e) { /* ignore */ }
 }
 
 function safeRemoveLabel_(thread, labelName) {
   try {
-    const label = GmailApp.getUserLabelByName(labelName);
+    const label = getLabel_(labelName);
     if (thread && label) thread.removeLabel(label);
   } catch (e) { /* ignore */ }
 }

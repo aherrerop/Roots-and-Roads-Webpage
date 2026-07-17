@@ -132,6 +132,40 @@ Health check from any phone browser:
 whether the Control sheet / BookingSheet / ledger are reachable. `ok: true`
 means the backend is fine — a portal problem is then front-end or network.
 
+## Gmail quota — why it used to break, and how it's prevented now
+
+The old script listed every thread under every label and inspected each one on
+every 5-minute run — hundreds of Gmail calls per run, which hit Google's
+"Service invoked too many times for one day: gmail" limit by the afternoon.
+
+The current fast run uses **the Processed label as a Gmail search filter**: it
+asks Gmail directly for "mail under this label that is NOT yet Processed", so
+an idle run costs about 20 Gmail calls instead of 400. It stays comfortably
+under quota at 5-minute frequency — you do NOT need to slow it down.
+
+The twice-daily **audit** deliberately re-reads everything (Processed
+included) to repair drift; that's the heavier run, and twice a day is fine.
+
+If you ever see the quota error again in the BookingSheet **Errors** tab:
+it self-heals within ~24h (Google's window is rolling), and nothing is lost
+because mail without the Processed label is retried automatically. To watch
+recovery, open the **Status** tab (BookingSheet) — it refreshes after every
+run.
+
+## Repair & audit functions (run from the editor when needed)
+
+- `systemStatus` (bookingList_v2.gs) — full diagnosis in the log: Gmail quota
+  state, email quota, unprocessed mail per label, triggers, latest errors.
+- `forceProcessEverythingNow` (bookingList_v2.gs) — force a full re-read and
+  repair now; safe, idempotent.
+- `testInternalAlertEmail` (bookingList_v2.gs) — confirms the script can email.
+- `repairLedgers` (guidePortal.gs) — fixes guide-tab columns if headers look
+  misaligned (e.g. "R&R makes" missing / Children column).
+- `repairQueueTabs` (guidePortal.gs) — clears stray checkboxes that could
+  inflate a queue tab's row count.
+- `repairLedgers` + `repairQueueTabs` also run automatically inside
+  `setupLedger`.
+
 ## Troubleshooting
 
 - **Booking missing**: is the email under the right label? No label → fix the
