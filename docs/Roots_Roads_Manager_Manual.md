@@ -97,6 +97,22 @@ Spam", never "Skip the Inbox"):
   Airbnb/Confirmations. FreeTour filters: to be added when the first real
   freetour.com email arrives (verify sender + subject first; do not guess).
 
+### The inbox IS the upcoming-tour list
+
+A booking email now STAYS in the inbox after the system processes it, and only
+leaves when the tour is over (start + 2h) or the booking is cancelled. So:
+
+- **In the inbox** = a tour that still has to happen.
+- **Archived + `<Source>/Done`** = tour finished.
+- **Archived + `<Source>/Cancellations`** = cancelled, nothing to run.
+- **`Processed` label** = the algorithm has read it and the booking is in the
+  BookingSheet. A confirmation in the inbox WITHOUT `Processed` is not in the
+  sheet yet.
+
+`restoreUpcomingThreadsToInbox` (bookingList_v2.gs) brings back any
+confirmation/modification for a tour that has not happened yet — use it if the
+inbox ever looks emptier than your upcoming tours.
+
 Label meanings:
 - `Publishing Pages/Processed` = the algorithm has fully handled that thread.
   A confirmation WITHOUT Processed is not in the BookingSheet yet (or failed
@@ -163,6 +179,9 @@ run.
   misaligned (e.g. "R&R makes" missing / Children column).
 - `repairQueueTabs` (guidePortal.gs) — clears stray checkboxes that could
   inflate a queue tab's row count.
+- `restoreUpcomingThreadsToInbox` (bookingList_v2.gs) — re-adds to the inbox
+  every confirmation/modification whose tour is still upcoming. Skips
+  cancelled and finished ones. Idempotent.
 - `repairLedgers` + `repairQueueTabs` also run automatically inside
   `setupLedger`.
 

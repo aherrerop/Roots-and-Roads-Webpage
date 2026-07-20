@@ -102,6 +102,8 @@
   .loaderr b{display:block;color:var(--danger);font-size:14px;margin-bottom:6px}
   .loaderr .retry{margin-top:14px;padding:11px 26px;border:none;border-radius:11px;background:var(--ink);color:#fff;font-weight:800;font-size:14px;cursor:pointer}
   .testlink{display:inline-block;margin-top:12px;color:var(--blue);font-weight:700;font-size:13px}
+  .asgsel{margin-left:6px;padding:6px 8px;border:1px solid #dfe3e8;border-radius:9px;font-size:13px;font-weight:700;color:var(--ink);background:#fff;max-width:150px}
+  .chip.miss{background:#fff7ed;color:#b45309;font-style:italic}
 </style>
 </head>
 <body>
@@ -180,13 +182,18 @@ function serverTestLink(){
 }
 
 /* ================== STATE / HELPERS ================== */
+/* localStorage (not sessionStorage): survives the phone killing the tab, so
+   guides stay logged in (~30 days, server-enforced) and the last tour list
+   renders instantly while fresh data loads. */
 const store = {
-  get token(){ return sessionStorage.getItem("rr_token"); },
-  set token(v){ v?sessionStorage.setItem("rr_token",v):sessionStorage.removeItem("rr_token"); },
-  get name(){ return sessionStorage.getItem("rr_name")||""; },
-  set name(v){ sessionStorage.setItem("rr_name",v||""); }
+  get token(){ return localStorage.getItem("rr_token"); },
+  set token(v){ v?localStorage.setItem("rr_token",v):localStorage.removeItem("rr_token"); },
+  get name(){ return localStorage.getItem("rr_name")||""; },
+  set name(v){ localStorage.setItem("rr_name",v||""); },
+  get cache(){ try{ return JSON.parse(localStorage.getItem("rr_tours")||"null"); }catch(e){ return null; } },
+  set cache(v){ try{ v?localStorage.setItem("rr_tours",JSON.stringify(v)):localStorage.removeItem("rr_tours"); }catch(e){} }
 };
-let RATES={paid:10,free:6}, DIRTY={}, TOURS_CACHE=[], MANAGER=false;
+let RATES={paid:10,free:6}, DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
 
 const LANG={
   English:{c:"EN",col:"#2563eb"}, Spanish:{c:"ES",col:"#e11d48"},
@@ -254,19 +261,30 @@ function switchTab(t){
 }
 
 /* ================== LOAD ================== */
-function showDash(){ $("loginView").classList.add("hidden"); $("dashView").classList.remove("hidden"); $("who").textContent=store.name; loadTours(); }
+function showDash(){
+  $("loginView").classList.add("hidden"); $("dashView").classList.remove("hidden");
+  $("who").textContent=store.name;
+  const c=store.cache;
+  if(c){ renderAll(c); }                 // instant render from the last load
+  loadTours();                            // then refresh from the server
+}
 async function loadTours(){
-  $("toursPane").innerHTML='<div class="spin">Loading…</div>';
+  if(!store.cache) $("toursPane").innerHTML='<div class="spin">Loading…</div>';
   let r; try{ r=await api("tours",{token:store.token}); }
   catch(err){ await showLoadError(err); return; }
-  if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; location.reload(); return; }
+  if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
     $("toursPane").innerHTML='<div class="loaderr"><b>Server error</b>'+esc(r.error||"Unknown error")+
       '<br><button class="retry" onclick="loadTours()">Retry</button></div>'; return; }
+  store.cache=r;
+  renderAll(r);
+}
+function renderAll(r){
   RATES=r.rates||RATES;
   MANAGER=!!r.manager;
+  GUIDES_BY_LANG=r.guidesByLanguage||{};
   const all=r.allTours||[];
   renderTours(r.tours||[], "toursPane");
-  if(MANAGER){ renderTours(all, "schedPane"); $("tabSched").textContent="All tours"; }
+  if(MANAGER){ renderTours(all, "schedPane", true); $("tabSched").textContent="All tours"; }
   else { renderSchedule(r.schedule||[]); $("tabSched").textContent="All guides"; }
   TOURS_CACHE = MANAGER ? (r.tours||[]).concat(all) : (r.tours||[]);
   bindTours(TOURS_CACHE);
@@ -298,22 +316,34 @@ function groupByDay(items){
   const g={}; items.forEach(t=>{ (g[t.dateKey]=g[t.dateKey]||[]).push(t); });
   return Object.keys(g).sort().map(dk=>({dateKey:dk, items:g[dk]}));
 }
-function renderTours(tours, paneId){
+function renderTours(tours, paneId, canAssign){
   const pane=$(paneId||"toursPane");
   const seen={}; tours=(tours||[]).filter(t=>{ if(seen[t.id]) return false; seen[t.id]=true; return true; });
-  if(!tours.length){ pane.innerHTML='<div class="empty">'+(paneId==="schedPane"?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; return; }
+  if(!tours.length){ pane.innerHTML='<div class="empty">'+(paneId==="schedPane"?"No tours this week.":"No upcoming tours assigned to you.")+'</div>'; return; }
   let html="";
   groupByDay(tours).forEach(day=>{
     html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
-    day.items.forEach(t=> html+=tourCard(t));
+    day.items.forEach(t=> html+=tourCard(t, canAssign));
   });
   pane.innerHTML=html;
 }
-function tourCard(t){
+/* Manager-only: dropdown of guides who SPEAK the tour's language. Picking one
+   writes it into the Schedule_<Language> grid in bold (= a management lock). */
+function assignSelect(t){
+  const opts=(GUIDES_BY_LANG[t.language]||[]);
+  const cur=(t.assigned&&t.assigned[0])||"";
+  let html='<select class="asgsel" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1}))+'\'>';
+  html+='<option value=""'+(cur?'':' selected')+'>Not assigned</option>';
+  opts.forEach(n=>{ html+='<option value="'+esc(n)+'"'+(n===cur?' selected':'')+'>'+esc(n)+'</option>'; });
+  return html+'</select>';
+}
+function tourCard(t, canAssign){
   const missN = Math.max(0, t.bookedGuests - t.checkedGuests);
   const sub = missN>0 ? '<div class="sub">'+missN+' to check in</div>' : '<div class="sub done">all checked</div>';
-  const assigned = (t.assigned && t.assigned.length) ? t.assigned : [store.name].concat(t.coGuides||[]);
-  const chips = assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join("");
+  const assigned = (t.assigned && t.assigned.length) ? t.assigned : (canAssign ? [] : [store.name].concat(t.coGuides||[]));
+  let chips = assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join("");
+  if(!assigned.length && canAssign) chips='<span class="chip miss">Not assigned</span>';
+  if(canAssign) chips+=assignSelect(t);
   let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i)).join("");
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   const srcSet=Array.from(new Set(t.bookings.map(b=>b.source))).filter(Boolean); if(!srcSet.length) srcSet.push("Website");
@@ -353,6 +383,18 @@ function bindTours(tours){
     const val=st.querySelector(".val"), max=Number(st.dataset.max);
     st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); recount(st.dataset.tour); };
     st.querySelector(".js-inc").onclick=()=>{ val.textContent=Math.min(max,+val.textContent+1); recount(st.dataset.tour); };
+  });
+  // Manager assign dropdowns.
+  document.querySelectorAll(".asgsel").forEach(sel=>{
+    sel.onchange=async ()=>{
+      const info=JSON.parse(sel.dataset.assign);
+      sel.disabled=true;
+      try{
+        const r=await api("assign",Object.assign({token:store.token, guide:sel.value},info));
+        if(!r.ok){ alert(r.error||"Could not assign"); sel.disabled=false; return; }
+        loadTours();
+      }catch(err){ alert(err.message||"Network problem — try again"); sel.disabled=false; }
+    };
   });
   // Check-in button per reservation: set the count, lock the row, save.
   document.querySelectorAll(".ckin:not(.done)").forEach(btn=>{

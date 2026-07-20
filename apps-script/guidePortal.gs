@@ -51,7 +51,7 @@ const PORTAL = {
 
   // Secret used to sign login tokens. CHANGE THIS to any long random string once.
   TOKEN_SECRET: 'CHANGE_ME_to_a_long_random_string',
-  TOKEN_TTL_HOURS: 12,
+  TOKEN_TTL_HOURS: 720,   // 30 days — guides stay logged in on their phones
 
   // Which sources are "paid" (we owe the guide). Everything else is "free".
   PAID_SOURCES: ['Viator', 'GetYourGuide', 'Airbnb'],
@@ -88,6 +88,7 @@ function doGet(e) {
       case 'login':  out = apiLogin_(p); break;
       case 'tours':  out = apiTours_(p); break;
       case 'save':   out = apiSave_(p);  break;
+      case 'assign': out = apiAssign_(p); break;
       case 'ping':   out = { ok: true, pong: true }; break;
       case 'health': out = apiHealth_(); break;
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
@@ -177,7 +178,7 @@ function apiTours_(p) {
     const checkedGuests = bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0);
 
     return {
-      id: shift.private ? key + '|P' : key,
+      id: shift.private ? key + '|P' + (shift.privIndex || 1) : key,
       dateKey: shift.dateKey,
       dateText: shift.dateText,
       day: shift.day,
@@ -194,10 +195,15 @@ function apiTours_(p) {
     };
   });
 
-  // "Schedule of other guides": compact, read-only view of all upcoming shifts.
-  const scheduleView = schedule.map(s => ({
+  // "Schedule of other guides" / manager All tours: only THIS WEEK
+  // (today .. Sunday), so the list stays scannable.
+  const weekEnd = weekEndKey_();
+  const thisWeek = schedule.filter(s => s.dateKey <= weekEnd);
+
+  const scheduleView = thisWeek.map(s => ({
     dateKey: s.dateKey, dateText: s.dateText, day: s.day,
-    time: s.time, language: s.language, assigned: s.assigned, status: s.status
+    time: s.time, language: s.language, assigned: s.assigned, status: s.status,
+    private: !!s.private
   }));
 
   // Managers get the full My-tours-style view of EVERY tour (with bookings +
@@ -208,7 +214,7 @@ function apiTours_(p) {
   if (isManager) {
     const ckCache = {};
     const getCk = g => (ckCache[g] || (ckCache[g] = readGuideCheckins_(g)));
-    allTours = schedule.map(shift => {
+    allTours = thisWeek.map(shift => {
       const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
       const primary = shift.assigned[0] || '';
       const ck = primary ? getCk(primary) : {};
@@ -227,7 +233,8 @@ function apiTours_(p) {
           };
         });
       return {
-        id: shift.private ? key + '|P' : key, dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
+        id: shift.private ? key + '|P' + (shift.privIndex || 1) : key,
+        dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
         time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
@@ -239,7 +246,110 @@ function apiTours_(p) {
     });
   }
 
-  return { ok: true, guide: name, manager: isManager, rates, tours, schedule: scheduleView, allTours };
+  // Managers get the eligible-guides list per language, to power the
+  // assign-from-portal dropdown.
+  let guidesByLanguage = null;
+  if (isManager) {
+    guidesByLanguage = {};
+    const raw = readGuidesRaw_();
+    const cols = guideColumns_(raw.header);
+    raw.rows.forEach(row => {
+      const g = parseGuideRow_(row, cols);
+      if (!g.name || !g.active) return;
+      Object.keys(g.languages).forEach(l => {
+        if (g.languages[l] === true) {
+          (guidesByLanguage[l] = guidesByLanguage[l] || []).push(g.name);
+        }
+      });
+    });
+  }
+
+  return { ok: true, guide: name, manager: isManager, rates, tours,
+           schedule: scheduleView, allTours, guidesByLanguage };
+}
+
+
+/**
+ * action=assign — MANAGER ONLY. Writes a guide into a Schedule_<Language>
+ * grid cell from the portal. The name is written in BOLD, i.e. it becomes a
+ * management LOCK that makeSchedule preserves. Empty guide = clear to
+ * "Not assigned".
+ *   params: token, dateKey (yyyy-MM-dd), time (24h "17:00"), language,
+ *           isPrivate ("1"/""), privIndex, guide
+ */
+function apiAssign_(p) {
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+
+  const dateKey = String(p.dateKey || '').trim();
+  const language = String(p.language || '').trim();
+  const time = normTime24_(String(p.time || ''));
+  const isPriv = String(p.isPrivate || '') === '1';
+  const privIndex = Number(p.privIndex) || 1;
+  const guide = String(p.guide || '').trim();   // '' -> unassign
+
+  if (!dateKey || !language || !time) return { ok: false, error: 'Missing shift info' };
+
+  if (guide) {
+    const g = findGuideByName_(guide);
+    if (!g) return { ok: false, error: 'Unknown guide: ' + guide };
+    if (!g.active) return { ok: false, error: guide + ' is inactive' };
+    if (g.languages[language] !== true) {
+      return { ok: false, error: guide + ' does not speak ' + language };
+    }
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
+  try {
+    return writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide) {
+  const sh = control_().getSheetByName('Schedule_' + language);
+  if (!sh || sh.getLastRow() < 3) {
+    return { ok: false, error: 'Schedule_' + language + ' tab not found or empty' };
+  }
+  const dv = sh.getDataRange().getDisplayValues();
+  const anchor = gridAnchor_(String(dv[0][0] || ''));
+  const timeRow = dv[1] || [];
+
+  let col = -1;
+  for (let c = 1; c < timeRow.length; c++) {
+    const h = parseGridTimeHeader_(timeRow[c]);
+    if (h && h.time === time && h.isPrivate === isPriv && (!isPriv || h.index === privIndex)) {
+      col = c; break;
+    }
+  }
+  if (col === -1) {
+    return { ok: false, error: 'No ' + (isPriv ? 'private ' : '') + time + ' column in Schedule_' + language };
+  }
+
+  let row = -1;
+  for (let r = 2; r < dv.length; r++) {
+    if (gridLabelToKey_(String(dv[r][0] || '').trim(), anchor) === dateKey) { row = r; break; }
+  }
+  if (row === -1) return { ok: false, error: dateKey + ' is not in Schedule_' + language };
+
+  const cell = sh.getRange(row + 1, col + 1);
+  if (!guide) {
+    cell.setValue('Not assigned');
+    cell.setFontWeight('normal').setFontStyle('italic').setFontColor('#94a3b8');
+    return { ok: true, assigned: '' };
+  }
+
+  // Manager assignment = LOCK -> bold, so makeSchedule never moves it.
+  cell.setFontStyle('normal').setFontColor('#1a2b49');
+  cell.setRichTextValue(
+    SpreadsheetApp.newRichTextValue().setText(guide)
+      .setTextStyle(0, guide.length, SpreadsheetApp.newTextStyle().setBold(true).build())
+      .build());
+  return { ok: true, assigned: guide };
 }
 
 
@@ -437,8 +547,10 @@ function readSchedule_() {
     const timeRow = vals[1] || [];
     const times = [];
     for (let c = 1; c < timeRow.length; c++) {
-      const t = normTime24_(timeRow[c]);
-      if (t) times.push({ col: c, time: t });
+      // New grids: "11:00" or "10:00 · Private [2]" headers. parseGridTimeHeader_
+      // is shared with assignShifts.gs (same project).
+      const h = parseGridTimeHeader_(timeRow[c]);
+      if (h) times.push({ col: c, time: h.time, headerPrivate: h.isPrivate, privIndex: h.index });
     }
 
     for (let r = 2; r < vals.length; r++) {
@@ -451,19 +563,37 @@ function readSchedule_() {
       times.forEach(t => {
         const raw = String(vals[r][t.col] || '').trim();
         if (!raw) return;
+        const minutes = timeToMinutes_(t.time);
+        // A tour disappears from the portal 2h after its start.
+        if (shiftIsOver_(dateKey, minutes)) return;
+
         const lines = raw.split('\n').map(s => s.trim()).filter(Boolean);
-        const privLines = lines.filter(l => /🔒|\(private\)/i.test(l));
-        const regLines = lines.filter(l => !/🔒|\(private\)/i.test(l));
 
         const base = {
           dateKey, dateText: prettyDate_(dateKey), day: dayNameFromKey_(dateKey),
-          time: t.time, timeLabel: to12h_(t.time), minutes: timeToMinutes_(t.time),
+          time: t.time, timeLabel: to12h_(t.time), minutes,
           language
         };
 
+        const namesFrom = ls => ls.filter(l => !/not assigned|need \d|lock conflict/i.test(l))
+          .join(',').split(',').map(s => s.trim()).filter(Boolean);
+
+        if (t.headerPrivate) {
+          // Whole column is one private group.
+          out.push(Object.assign({}, base, {
+            private: true, privIndex: t.privIndex,
+            assigned: namesFrom(lines.map(l => l.replace(/🔒/g, '').replace(/\(private\)/ig, ''))),
+            status: /not assigned/i.test(raw) ? 'Not assigned' : 'OK'
+          }));
+          return;
+        }
+
+        // Legacy grids could stack 🔒 private lines inside a regular cell.
+        const privLines = lines.filter(l => /🔒|\(private\)/i.test(l));
+        const regLines = lines.filter(l => !/🔒|\(private\)/i.test(l));
+
         if (regLines.length) {
-          const names = regLines.filter(l => !/not assigned/i.test(l))
-            .join(',').split(',').map(s => s.trim()).filter(Boolean);
+          const names = namesFrom(regLines);
           out.push(Object.assign({}, base, {
             private: false, assigned: names,
             status: names.length ? 'OK' : 'Not assigned'
@@ -471,14 +601,10 @@ function readSchedule_() {
         }
 
         if (privLines.length) {
-          const names = [];
-          privLines.forEach(l => {
-            let n = l.replace(/🔒/g, '').replace(/\(private\)/ig, '');
-            if (/not assigned/i.test(n)) n = n.replace(/not assigned/ig, '');
-            n.split(',').forEach(s => { s = s.trim(); if (s) names.push(s); });
-          });
+          const names = namesFrom(privLines.map(l =>
+            l.replace(/🔒/g, '').replace(/\(private\)/ig, '')));
           out.push(Object.assign({}, base, {
-            private: true, assigned: names,
+            private: true, privIndex: 1, assigned: names,
             status: names.length ? 'OK' : 'Not assigned'
           }));
         }
@@ -491,7 +617,7 @@ function readSchedule_() {
   const seen = {};
   const deduped = [];
   out.forEach(s => {
-    const k = shiftKey_(s.dateKey, s.minutes, s.language) + (s.private ? '|P' : '|R');
+    const k = shiftKey_(s.dateKey, s.minutes, s.language) + (s.private ? '|P' + (s.privIndex || 1) : '|R');
     if (seen[k]) {
       s.assigned.forEach(n => { if (seen[k].assigned.indexOf(n) === -1) seen[k].assigned.push(n); });
       if (seen[k].status !== 'OK' && s.status === 'OK') seen[k].status = 'OK';
@@ -698,25 +824,85 @@ function readGuideCheckins_(name) {
   return out;
 }
 
-/** Upsert this shift's rows for a guide (replace prior rows for the same shift). */
+/** Upsert this shift's rows for a guide (replace prior rows for the same shift).
+ *  Dedupe is belt-and-braces: rows matching the shift key OR carrying one of
+ *  the incoming Booking IDs on the same date are removed before the rewrite,
+ *  so a repeated save can never stack duplicates even if a time cell was
+ *  stored in a weird format by an older version. */
 function writeGuideLedger_(name, dateKey, time, language, rows) {
   const ss = ledgerSS_();
   const sh = guideTab_(ss, name);
   const minutes = timeToMinutes_(normTime24_(time));
   const targetKey = shiftKey_(dateKey, minutes, language);
 
-  // Delete existing rows for this exact shift (so re-saving overwrites cleanly).
+  const incomingIds = new Set();
+  rows.forEach(r => {
+    const id = String(r[LEDGER_BOOKINGID_COL] || '').trim();
+    if (id) incomingIds.add(id + '|' + toDateKey_(r[0]));
+  });
+
   if (sh.getLastRow() >= 2) {
     const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
     for (let i = v.length - 1; i >= 0; i--) {
-      const k = shiftKey_(toDateKey_(v[i][0]), timeToMinutes_(normTime24_(v[i][2])), String(v[i][3] || '').trim());
-      if (k === targetKey) sh.deleteRow(i + 2);
+      const rowDate = toDateKey_(v[i][0]);
+      const k = shiftKey_(rowDate, timeToMinutes_(normTime24_(v[i][2])), String(v[i][3] || '').trim());
+      const idKey = String(v[i][LEDGER_BOOKINGID_COL] || '').trim() + '|' + rowDate;
+      if (k === targetKey || (incomingIds.size && incomingIds.has(idKey))) sh.deleteRow(i + 2);
     }
   }
 
   if (rows.length) {
-    sh.getRange(sh.getLastRow() + 1, 1, rows.length, LEDGER_HEADERS.length).setValues(rows);
+    const start = sh.getLastRow() + 1;
+    // Time column as TEXT first, so Sheets can never coerce "11:00 AM" into a
+    // Date (the root cause of the duplicate check-ins).
+    sh.getRange(start, 3, rows.length, 1).setNumberFormat('@');
+    sh.getRange(start, 1, rows.length, LEDGER_HEADERS.length).setValues(rows);
   }
+}
+
+
+/**
+ * RUN ONCE: collapses duplicate check-in rows created before the Time-format
+ * fix. Keeps the NEWEST row (by the Updated column) per Booking ID + date,
+ * rewrites Time cells as text, and reports what it removed.
+ */
+function repairLedgerDuplicates() {
+  const ss = ledgerSS_();
+  let removed = 0;
+  ss.getSheets().forEach(sh => {
+    const name = sh.getName();
+    if (name === 'Rates' || name === 'Unassigned') return;
+    if (Object.values(QUEUE_TABS).indexOf(name) !== -1) return;
+    const lastCol = sh.getLastColumn();
+    if (!lastCol) return;
+    const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    if (header[7] !== 'Guests') return;   // not a guide ledger tab
+    const last = lastDataRow_(sh);
+    if (last < 2) return;
+
+    const v = sh.getRange(2, 1, last - 1, LEDGER_HEADERS.length).getValues();
+    const bestByKey = {};   // key -> {idx, updated}
+    v.forEach((r, i) => {
+      const key = String(r[LEDGER_BOOKINGID_COL] || '').trim() + '|' + toDateKey_(r[0]) +
+                  '|' + timeToMinutes_(normTime24_(r[2]));
+      const updated = String(r[LEDGER_HEADERS.length - 1] || '');
+      if (!bestByKey[key] || updated >= bestByKey[key].updated) {
+        bestByKey[key] = { idx: i, updated };
+      }
+    });
+    const keepIdx = new Set(Object.keys(bestByKey).map(k => bestByKey[k].idx));
+    const keepRows = v.filter((r, i) => keepIdx.has(i))
+      .map(r => { r[2] = to12h_(normTime24_(r[2])); return r; });   // Time back to text
+    removed += v.length - keepRows.length;
+
+    sh.getRange(2, 1, last - 1, LEDGER_HEADERS.length).clearContent();
+    if (keepRows.length) {
+      sh.getRange(2, 3, keepRows.length, 1).setNumberFormat('@');
+      sh.getRange(2, 1, keepRows.length, LEDGER_HEADERS.length).setValues(keepRows);
+    }
+  });
+  Logger.log('Duplicate ledger rows removed: ' + removed);
+  return removed;
 }
 
 /**
@@ -825,8 +1011,14 @@ function toDateKey_(v) {
   return '';
 }
 
-/** Normalise "11:00 AM" / "5:00 PM" / "17:00" / "11:00" to 24h "H:MM". */
+/** Normalise "11:00 AM" / "5:00 PM" / "17:00" / "11:00" to 24h "H:MM".
+ *  ALSO handles real Date objects: Sheets silently converts a time-looking
+ *  string in a non-text cell into a Date, which is what made the ledger's
+ *  dedupe-by-shift fail and append duplicate check-in rows. */
 function normTime24_(v) {
+  if (v instanceof Date && !isNaN(v)) {
+    return v.getHours() + ':' + String(v.getMinutes()).padStart(2, '0');
+  }
   const s = String(v || '').trim();
   if (!s) return '';
   let m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
@@ -853,6 +1045,24 @@ function to12h_(t24) {
 function timeToMinutes_(t24) {
   const m = String(t24 || '').match(/^(\d{1,2}):(\d{2})$/);
   return m ? Number(m[1]) * 60 + Number(m[2]) : -1;
+}
+
+/** True once a shift's tour is over (start + 2h — same rule as the booking
+ *  system's Done migration; keeps guides from editing check-ins later without
+ *  talking to management). */
+function shiftIsOver_(dateKey, minutes) {
+  const d = new Date(dateKey + 'T00:00:00');
+  if (isNaN(d)) return false;
+  const start = d.getTime() + Math.max(0, Number(minutes) || 0) * 60000;
+  return Date.now() > start + 2 * 3600000;
+}
+
+/** yyyy-MM-dd of the Sunday ending the current week (today..Sunday window). */
+function weekEndKey_() {
+  const now = new Date();
+  const dow = (now.getDay() + 6) % 7;          // 0=Mon..6=Sun
+  const sunday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (6 - dow), 12);
+  return Utilities.formatDate(sunday, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
 function todayKey_() {
