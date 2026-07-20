@@ -226,6 +226,16 @@ const RNR = {
 
   INTERNAL_ALERT_TO: 'rootsandroadstours@gmail.com',
 
+  // INBOX POLICY
+  //   A processed booking email STAYS IN THE INBOX until its tour is over.
+  //   The inbox is therefore the live "upcoming tours" list: anything sitting
+  //   there is a tour that still has to happen. It leaves the inbox only when
+  //   the tour completes (start + DONE_AFTER_HOURS) or when it is cancelled.
+  //   Cancelled bookings are archived immediately — that tour will never run,
+  //   so leaving it in the inbox would be noise. Set this to false if you
+  //   would rather keep cancellations in the inbox too.
+  ARCHIVE_CANCELLED_IMMEDIATELY: true,
+
   // Hidden handoff tab: full detail of every completed booking, written just
   // before its row leaves the active tabs for the aggregated "Done Tours".
   // The guide portal's no-show queues read this (Done Tours has no booking
@@ -710,6 +720,36 @@ function getThreadsSafe_(labelName) {
   }
 }
 
+/**
+ * Threads to consider for "tour finished -> archive + Done label".
+ *
+ * Since processed bookings now STAY in the inbox until their tour is over,
+ * the set of candidates is exactly "still in the inbox under this label" —
+ * a small, cheap search (one call per label) that keeps completion timely on
+ * the 5-minute run. The audit still walks the whole label so nothing that was
+ * archived by hand or by an older version is missed.
+ */
+function getThreadsForCompletionSweep_(labelName) {
+  try {
+    if (!RNR_THREADS_CACHE_) RNR_THREADS_CACHE_ = new Map();
+    const key = (RNR_SKIP_PROCESSED_ ? 'CF|' : 'CA|') + labelName;
+    if (RNR_THREADS_CACHE_.has(key)) return RNR_THREADS_CACHE_.get(key);
+
+    let threads;
+    if (RNR_SKIP_PROCESSED_) {
+      threads = GmailApp.search(searchTokenForLabel_(labelName) + ' in:inbox', 0, RNR.MAX_THREADS_FAST) || [];
+    } else {
+      const label = getLabel_(labelName);
+      threads = label ? (label.getThreads(0, RNR.MAX_THREADS_AUDIT) || []) : [];
+    }
+    RNR_THREADS_CACHE_.set(key, threads);
+    return threads;
+  } catch (e) {
+    console.log('getThreadsForCompletionSweep_ ' + labelName + ': ' + e);
+    return [];
+  }
+}
+
 /** Gmail search canonical form: "Publishing Pages/Viator/Confirmations"
  *  -> label:publishing-pages-viator-confirmations  (spaces and / become -). */
 function searchTokenForLabel_(labelName) {
@@ -798,9 +838,29 @@ function moveThreadOutOfInbox_(thread) {
  * after a Confirmation/Modification/Cancellation thread has been fully read
  * and acted on this run, regardless of which label it keeps.
  */
+/**
+ * Mark a thread as fully handled by the algorithm.
+ *
+ * IMPORTANT: this does NOT archive. A processed booking email stays in the
+ * inbox until its tour is over (see RNR.ARCHIVE_CANCELLED_IMMEDIATELY and
+ * moveCompletedPlatformThreadsToDone_). The inbox is the live list of
+ * upcoming tours; the Processed label is what tells the algorithm — and you —
+ * that the booking is already in the sheet.
+ */
 function finalizeThreadProcessed_(thread) {
   safeAddLabel_(thread, RNR.LABELS.PROCESSED);
-  moveThreadOutOfInbox_(thread);
+  safeMarkRead_(thread);
+  if (RNR_RUN_STATS_) RNR_RUN_STATS_.processed++;
+}
+
+/**
+ * Same as above, but for a thread whose booking is CANCELLED: that tour will
+ * never run, so it also leaves the inbox straight away.
+ */
+function finalizeThreadCancelled_(thread) {
+  safeAddLabel_(thread, RNR.LABELS.PROCESSED);
+  safeMarkRead_(thread);
+  if (RNR.ARCHIVE_CANCELLED_IMMEDIATELY) safeArchive_(thread);
   if (RNR_RUN_STATS_) RNR_RUN_STATS_.processed++;
 }
 
@@ -1004,7 +1064,10 @@ function processConfirmationLabel_(labelName, source) {
         // do not (re)add it to the active sheet.
         if (isBookingCancelledByEmail_(booking)) continue;
 
-        upsertActiveBooking_(booking);
+        // Confirmations INSERT only. Once the row exists, management edits
+        // are authoritative; audits re-reading this email will not revert
+        // them. Changes flow in through modification emails only.
+        upsertActiveBooking_(booking, false);
       }
 
       // Parsed OK -> mark considered. Confirm label itself is left in
@@ -1060,12 +1123,13 @@ function processCancellationLabel_(labelName, source) {
 
       // Even if the thread carried no usable cancellation signal, finalise
       // it: a cancellation-labelled thread should not create manual work.
+      // Cancelled => leaves the inbox now (that tour will never run).
       // NOTE: this only finalises the CANCELLATION thread itself (mark
       // Processed + archive). Relabelling the matching Confirm/Modify
       // threads to Cancel happens later in reconcileCancelledThreadLabels_,
       // after modifications have run, so a same-run GYG reinstatement is
       // already known and can't be wrongly cancelled.
-      finalizeThreadProcessed_(thread);
+      finalizeThreadCancelled_(thread);
 
     } catch (e) {
       logError_('processCancellationLabel_ ' + source, e, labelName);
@@ -1271,7 +1335,7 @@ function reconcileCancelledThreadLabels_() {
           if (cancelledId) {
             seen.add(threadKey);
             stripSourceLabelsExcept_(thread, cfg, [cfg.cancel]);
-            finalizeThreadProcessed_(thread);
+            finalizeThreadCancelled_(thread);
           }
         } catch (e) {
           logError_('reconcileCancelledThreadLabels_ ' + cfg.source, e, labelName);
@@ -1325,15 +1389,16 @@ function moveMatchingThreadsToCancellationById_(source, bookingId) {
   [confirmThread, modifyThread].forEach(thread => {
     if (!thread) return;
     stripSourceLabelsExcept_(thread, cfg, [cfg.cancel]);
-    finalizeThreadProcessed_(thread);
+    finalizeThreadCancelled_(thread);
   });
 }
 
 
 /**
- * Move a confirmation thread (found by booking id) out of the inbox, keeping
- * its confirmation label. O(1) via the index. Used when a booking is
- * modified but stays active (not cancelled, not done).
+ * A booking was modified but is still active (not cancelled, not done), so its
+ * confirmation thread stays in the inbox as an upcoming tour. We only mark it
+ * read + Processed. (Before the inbox policy change this archived the thread,
+ * which hid upcoming tours.)
  */
 function moveMatchingConfirmationOutOfInbox_(booking) {
   const b = normalizeBooking_(booking);
@@ -1341,7 +1406,7 @@ function moveMatchingConfirmationOutOfInbox_(booking) {
   if (!b.source || !id) return;
 
   const thread = getConfirmationThreadIndex_().get(b.source + '|' + id);
-  if (thread) moveThreadOutOfInbox_(thread);
+  if (thread) finalizeThreadProcessed_(thread);
 }
 
 
@@ -1930,7 +1995,7 @@ function moveCompletedPlatformThreadsToDone_() {
     const seen = new Set();
 
     activeLabels.forEach(activeLabelName => {
-      const threads = getThreadsSafe_(activeLabelName);
+      const threads = getThreadsForCompletionSweep_(activeLabelName);
 
       for (const thread of threads) {
         if (!runHasTimeLeft_()) break;
@@ -2127,7 +2192,7 @@ function extractTourTimeFromThread_(thread) {
 
 
 function moveCompletedWebsiteThreadsToDone_() {
-  const threads = getThreadsSafe_(RNR.LABELS.WEB_CONFIRM);
+  const threads = getThreadsForCompletionSweep_(RNR.LABELS.WEB_CONFIRM);
   if (!GmailApp.getUserLabelByName(RNR.LABELS.WEB_DONE)) return;
 
   for (const thread of threads) {
@@ -2152,7 +2217,7 @@ function moveCompletedWebsiteThreadsToDone_() {
 
 
 function moveCompletedViatorConversationThreads_() {
-  const threads = getThreadsSafe_(RNR.LABELS.VIATOR_CONVERSATIONS);
+  const threads = getThreadsForCompletionSweep_(RNR.LABELS.VIATOR_CONVERSATIONS);
 
   for (const thread of threads) {
     if (!runHasTimeLeft_()) break;
@@ -2214,7 +2279,8 @@ function extractBookingIdFromThread_(thread, source) {
  * 11. ACTIVE SHEET WRITE / DELETE
  ******************************************************/
 
-function upsertActiveBooking_(booking) {
+function upsertActiveBooking_(booking, allowUpdate) {
+  if (allowUpdate === undefined) allowUpdate = true;
   const b = normalizeBooking_(booking);
 
   // Final guard: no confirmation/modification can restore a cancelled booking.
@@ -2247,9 +2313,13 @@ function upsertActiveBooking_(booking) {
     for (let i = 0; i < rows.length; i++) {
       const existing = rowToBooking_(rows[i], sheetName);
 
-      // Update in place if it's the same booking.
+      // Same booking already on the sheet.
       if (sameBooking_(existing, b)) {
-        writeBookingRow_(sh, i + 2, b);
+        // MANUAL EDIT AUTHORITY: confirmation re-reads (audits) pass
+        // allowUpdate=false — an existing row is never touched, so whatever a
+        // manager typed in any column STAYS. Only modification/cancellation
+        // emails (allowUpdate=true) or reparseActiveRowsFromEmail change it.
+        if (allowUpdate) writeBookingRow_(sh, i + 2, b);
         return;
       }
 
@@ -3061,7 +3131,7 @@ function extractGygTime_(token) {
 function gygGuests_(text) {
   // "Group up to 10 ( 2 Personas)" — GYG wraps the count in <strong>, which
   // htmlToText turns into a space after "(", so allow whitespace inside the parens.
-  const priv = String(text || '').match(/\(\s*(\d+)\s*(?:personas?|personen|people|guests?|pax)\)/i);
+  const priv = String(text || '').match(/\([\s*_]*(\d+)[\s*_]*(?:personas?|personen|people|guests?|pax)[\s*_]*\)/i);
   if (priv) return Number(priv[1]);
 
   const val = valueAfterLabel_(text, [
@@ -3091,7 +3161,7 @@ function gygParticipants_(text) {
   const s = String(text || '');
 
   // Private: the "(N Personas)" figure is the whole group.
-  const priv = s.match(/\(\s*(\d+)\s*(?:personas?|personen|people|guests?|pax)\)/i);
+  const priv = s.match(/\([\s*_]*(\d+)[\s*_]*(?:personas?|personen|people|guests?|pax)[\s*_]*\)/i);
   if (priv) return { adults: Number(priv[1]), children: 0, infants: 0 };
 
   // Window of lines after the participants label (label + up to 5 lines).
@@ -3323,7 +3393,9 @@ function parseWebsiteAlertMessage_(msg, mode) {
 function participantCounts_(text) {
   const s = String(text || '');
   let adults = 0, children = 0, infants = 0;
-  const re = /(\d+)\s*(?:x\s*)?(adult[oe]?s?|adults?|child(?:ren)?|ni[ñn][oa]s?|kids?|infants?|beb[eé]s?|kinder|erwachsene[rn]?)\b/gi;
+  // [\s*_·-]* between the parts so bold markers / stray punctuation from any
+  // body flavour ("*3 x* Adults", "3 x  Adults") still match.
+  const re = /(\d+)[\s*_·-]*(?:x[\s*_·-]*)?(adult[oe]?s?|adults?|child(?:ren)?|ni[ñn][oa]s?|kids?|infants?|beb[eé]s?|kinder|erwachsene[rn]?)\b/gi;
   let m;
   while ((m = re.exec(s))) {
     const n = Number(m[1]);
@@ -3634,6 +3706,37 @@ function doneKey_(date, time, language) {
  * abort the run ("operation not allowed" fix).
  ******************************************************/
 
+/**
+ * Choose which rendering of a message body to parse, then normalise it.
+ *
+ * Gmail gives two flavours and they are NOT equivalent:
+ *   getBody()       -> real HTML. htmlToText_ turns the booking table into
+ *                      "label \n value" lines. This is the good one.
+ *   getPlainBody()  -> Gmail's own text conversion. It renders <strong> as
+ *                      *asterisks* ("*1 x* Child", "(*5* Personas)") and can
+ *                      flatten the table, which is what made a 3-adult
+ *                      booking store as 1 guest and a 5-person private group
+ *                      store as 1.
+ *
+ * Rule: prefer the flavour that actually contains the participants block; if
+ * both or neither do, prefer HTML when it looks substantial. Then strip the
+ * asterisk bold markers so either flavour parses identically.
+ */
+function pickBestBody_(html, plain) {
+  const norm = t => String(t || '').replace(/\*+/g, '');
+  const h = norm(html), p = norm(plain);
+  const hasParts = t => /N[uú]mero de participantes|Participantes|Number of participants|Participants?\b|Travelers?:|Travellers?:/i.test(t);
+
+  const hOk = h && hasParts(h);
+  const pOk = p && hasParts(p);
+
+  if (hOk && !pOk) return h;
+  if (pOk && !hOk) return p;
+  if (h && h.length >= 200) return h;      // both or neither: HTML is richer
+  return p || h;
+}
+
+
 function getBestMessageText_(msg) {
   try {
     if (!RNR_TEXT_CACHE_) RNR_TEXT_CACHE_ = new Map();
@@ -3645,7 +3748,7 @@ function getBestMessageText_(msg) {
     try {
       const plain = String(msg.getPlainBody() || '').trim();
       const html = htmlToText_(msg.getBody() || '');
-      text = (html && html.length >= plain.length * 0.6) ? html : (plain || html);
+      text = pickBestBody_(html, plain);
     } catch (bodyErr) {
       // Rare Gmail states throw on body read. Fall back to the subject.
       text = String(msg.getSubject() || '');
@@ -3916,6 +4019,39 @@ const RNR_FIXTURES_ = {
       'Phone: (Alternate Phone)DE+49 1797747255 Send the customer a message.'
     ].join('\n')
   },
+  // REGRESSION (2026-07-20): real bookings that were stored as 1 guest.
+  // Gmail's getPlainBody() renders <strong> as *...*; these are that exact
+  // flavour. GYG996ZFRKQ9 = 3 adults + 1 child, GYG48YMW6KAB = 5-person private.
+  gygPlainBodyChildren: {
+    subject: 'Booking - S779080 - GYG996ZFRKQ9',
+    body: [
+      '¡Hola! Buenas noticias.', 'Ha recibido una reserva de última hora:',
+      'Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town',
+      'Número de referencia', 'GYG996ZFRKQ9',
+      'Fecha', 'July 20, 2026 11:00 AM',
+      'Número de participantes', '',
+      '*1 x* Child (Edad 0 - 13)', '*3 x* Adults (Edad 14 - 99)',
+      'Cliente principal', 'Katarzyna Świstak',
+      'Teléfono: +48607788771', 'Idioma: Polish',
+      'Idioma del tour', 'Inglés (Live tour guide)',
+      'Precio', '54,90 €'
+    ].join('\n')
+  },
+  gygPlainBodyPrivate: {
+    subject: 'Booking - S779080 - GYG48YMW6KAB',
+    body: [
+      '¡Hola! Buenas noticias.', 'Se ha reservado tu producto',
+      'Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town', 'Tour privado',
+      'Número de referencia', 'GYG48YMW6KAB',
+      'Fecha', 'July 21, 2026 10:00 AM',
+      'Número de participantes', '',
+      '*1 x* Group up to 8 (*5* Personas)',
+      'Cliente principal', 'Angelika Mbanza',
+      'Teléfono: +41763166313', 'Idioma: French',
+      'Idioma del tour', 'Inglés (Live tour guide)',
+      'Precio', '133,30 €'
+    ].join('\n')
+  },
   // Viator mixed adults + children
   viatorChildren: {
     subject: 'New Booking for Mon, Aug 3, 2026 (#BR-1409320087)',
@@ -3990,6 +4126,28 @@ function testBookingParsers() {
     check('Viator kids: 3 children', b.children === 3, b.children);
     check('Viator kids: notes', /3 children/.test(b.notes), b.notes);
     check('Viator kids: income unchanged by children', Math.abs(b.income - 95.6) < 0.01, b.income);
+  }
+
+  // REGRESSION: Gmail plain-body (*bold*) flavour must parse identically.
+  f = RNR_FIXTURES_.gygPlainBodyChildren;
+  b = parseGygMessage_(makeFakeMsg_(f.subject, f.body), 'confirm');
+  check('GYG plain-body: parses', !!b, b);
+  if (b) {
+    check('GYG plain-body: 3 adults (was 1 — the bug)', b.guests === 3, b.guests);
+    check('GYG plain-body: 1 child recorded', b.children === 1, b.children);
+    check('GYG plain-body: notes mention child', /1 child/.test(b.notes), b.notes);
+    check('GYG plain-body: name with diacritics', b.name === 'Katarzyna Świstak', b.name);
+    check('GYG plain-body: income 54.90*0.75', Math.abs(b.income - 41.18) < 0.02, b.income);
+  }
+
+  f = RNR_FIXTURES_.gygPlainBodyPrivate;
+  b = parseGygMessage_(makeFakeMsg_(f.subject, f.body), 'confirm');
+  check('GYG plain-body private: parses', !!b, b);
+  if (b) {
+    check('GYG plain-body private: 5 guests (was 1 — the bug)', b.guests === 5, b.guests);
+    check('GYG plain-body private: Private note', /Private/.test(b.notes), b.notes);
+    check('GYG plain-body private: no children', b.children === 0, b.children);
+    check('GYG plain-body private: income 133.30*0.75', Math.abs(b.income - 99.98) < 0.02, b.income);
   }
 
   // Footer noise ("actualizaciones") must NOT flip a confirmation to modify
@@ -4103,4 +4261,300 @@ function testInternalAlertEmail() {
     body: 'If you can read this, the booking script CAN send email. Sent: ' + new Date()
   });
   console.log('Sent. Remaining daily email quota: ' + MailApp.getRemainingDailyQuota());
+}
+
+
+/******************************************************
+ * 30. INBOX BACKFILL
+ *
+ * The system used to archive a booking email as soon as it was processed, so
+ * confirmations/modifications for tours that have NOT happened yet ended up
+ * out of the inbox. Under the current policy the inbox is the live list of
+ * upcoming tours, so those threads must come back.
+ *
+ * restoreUpcomingThreadsToInbox() walks every Confirmations and Modifications
+ * label, works out each thread's tour date, and moves it back to the inbox if
+ * the tour has not finished yet. Cancelled threads are never restored.
+ * Idempotent: a thread already in the inbox is left alone. Run it once from
+ * the editor after deploying; safe to run again any time.
+ ******************************************************/
+
+function restoreUpcomingThreadsToInbox() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) { console.log('Another run is active; try again in a minute.'); return; }
+
+  RNR_RUN_STARTED_AT_ = Date.now();
+  resetRunCaches_();
+  RNR_SKIP_PROCESSED_ = false;      // walk EVERYTHING, processed included
+
+  let restored = 0, checked = 0, skippedDone = 0, errors = 0;
+  const restoredList = [];
+
+  try {
+    sourceConfigs_().forEach(cfg => {
+      [cfg.confirm, cfg.modify].filter(Boolean).forEach(labelName => {
+        if (!runHasTimeLeft_()) return;
+        const label = getLabel_(labelName);
+        if (!label) return;
+
+        const threads = label.getThreads(0, RNR.MAX_THREADS_AUDIT) || [];
+        threads.forEach(thread => {
+          if (!runHasTimeLeft_()) return;
+          checked++;
+          try {
+            // Never resurrect a cancelled booking's thread.
+            if (threadHasLabel_(thread, cfg.cancel)) return;
+            if (thread.isInInbox()) return;                 // already visible
+
+            if (threadTourIsUpcoming_(thread, cfg.source)) {
+              thread.moveToInbox();
+              restored++;
+              if (restoredList.length < 40) {
+                restoredList.push(thread.getFirstMessageSubject() || '(no subject)');
+              }
+            } else {
+              skippedDone++;
+            }
+          } catch (e) {
+            errors++;
+            console.log('restore skip: ' + e);
+          }
+        });
+      });
+    });
+  } catch (err) {
+    logError_('restoreUpcomingThreadsToInbox', err, '');
+  } finally {
+    lock.releaseLock();
+  }
+
+  console.log('Threads checked: ' + checked);
+  console.log('Restored to inbox (upcoming tours): ' + restored);
+  console.log('Left archived (tour already finished): ' + skippedDone);
+  console.log('Errors: ' + errors);
+  if (restoredList.length) {
+    console.log('--- restored ---');
+    restoredList.forEach(s => console.log('  ' + s));
+    if (restored > restoredList.length) console.log('  ...and ' + (restored - restoredList.length) + ' more');
+  }
+  return restored;
+}
+
+/**
+ * True when a thread's tour has NOT finished yet. Uses the parsed bookings
+ * first, then the subject/body date fallback. Unknown date -> treated as
+ * upcoming, so we never hide something we could not read.
+ */
+function threadTourIsUpcoming_(thread, source) {
+  try {
+    const bookings = uniqueBookings_(parseThread_(thread, source, 'any')).filter(isValidBooking_);
+    if (bookings.length) return bookings.some(b => !isCompleted_(b));
+
+    const d = extractTourDateFromThread_(thread);
+    if (!d) return true;                       // unreadable -> show it
+    const t = extractTourTimeFromThread_(thread) || RNR.DEFAULT_TIME;
+    return !isCompleted_(normalizeBooking_({
+      name: 'x', bookingId: 'x', date: d, time: t,
+      language: RNR.LANGUAGE.ENGLISH, source,
+      hasExplicitDate: true, hasExplicitTime: true
+    }));
+  } catch (e) {
+    return true;                               // on doubt, show it
+  }
+}
+
+
+/******************************************************
+ * 31. SINGLE-BOOKING DIAGNOSIS + FORCE REPAIR
+ *
+ * Use these when a row on the sheet does not match the email.
+ *
+ *   debugBooking('GYG996ZFRKQ9')   -> prints EXACTLY what the script reads
+ *                                     and parses for that booking.
+ *   reparseActiveRowsFromEmail()   -> re-reads every active row's own
+ *                                     confirmation email and rewrites the
+ *                                     row. Fixes historical rows in one go.
+ ******************************************************/
+
+/**
+ * Print the full parsing story for ONE booking id. Read the Execution log
+ * top to bottom: it shows which label the thread sits under, which body
+ * flavour was chosen and why, the exact participants window the parser saw,
+ * and the final parsed booking. This is the fastest way to prove whether a
+ * wrong guest count is a parser problem or a "never re-processed" problem.
+ */
+// Edit this id, then run debugBooking from the editor (the editor cannot
+// pass arguments to a function).
+const DEBUG_BOOKING_ID = 'GYG996ZFRKQ9';
+
+function debugBooking(bookingId) {
+  const wanted = normalizeId_(bookingId || DEBUG_BOOKING_ID);
+  if (!wanted) { console.log('Set DEBUG_BOOKING_ID at the top of section 31, then run again.'); return; }
+
+  resetRunCaches_();
+  RNR_SKIP_PROCESSED_ = false;
+  let found = 0;
+
+  sourceConfigs_().forEach(cfg => {
+    [['CONFIRM', cfg.confirm], ['MODIFY', cfg.modify], ['CANCEL', cfg.cancel]].forEach(pair => {
+      const kind = pair[0], labelName = pair[1];
+      if (!labelName) return;
+      const label = getLabel_(labelName);
+      if (!label) return;
+
+      (label.getThreads(0, RNR.MAX_THREADS_AUDIT) || []).forEach(thread => {
+        const subject = thread.getFirstMessageSubject() || '';
+        thread.getMessages().forEach(msg => {
+          let html = '', plain = '';
+          try { html = htmlToText_(msg.getBody() || ''); } catch (e) { html = '(html read failed: ' + e + ')'; }
+          try { plain = String(msg.getPlainBody() || '').trim(); } catch (e) { plain = '(plain read failed: ' + e + ')'; }
+          const chosen = pickBestBody_(html, plain);
+          const full = subject + '\n' + chosen;
+          if (full.toUpperCase().indexOf(wanted) === -1) return;
+
+          found++;
+          console.log('\n==================================================');
+          console.log('FOUND under: ' + labelName + '  (' + kind + ')');
+          console.log('Subject    : ' + subject);
+          console.log('In inbox   : ' + thread.isInInbox() + '   | Processed label: ' + threadHasProcessedLabel_(thread));
+          console.log('Body sizes : html=' + html.length + ' chars, plain=' + plain.length + ' chars');
+          console.log('Body used  : ' + (chosen === html.replace(/\*+/g, '') ? 'HTML' : 'PLAIN') +
+                      ' (whichever contained the participants block)');
+
+          // The exact window the participant parser works on.
+          const lines = String(chosen).split('\n').map(l => l.trim());
+          let idx = -1;
+          for (let i = 0; i < lines.length; i++) {
+            if (/^(N[uú]mero de participantes|Participantes|Participants?|Number of participants|Travelers?:|Travellers?:)/i.test(lines[i])) { idx = i; break; }
+          }
+          if (idx === -1) {
+            console.log('PARTICIPANTS BLOCK: *** NOT FOUND *** — this is why the guest count is wrong.');
+            console.log('First 40 lines of the text actually parsed:');
+            lines.slice(0, 40).forEach((l, i) => console.log('   ' + i + ': [' + l + ']'));
+          } else {
+            console.log('Participants window (what the parser sees):');
+            lines.slice(idx, idx + 6).forEach((l, i) => console.log('   ' + (idx + i) + ': [' + l + ']'));
+            console.log('participantCounts_ -> ' + JSON.stringify(participantCounts_(lines.slice(idx, idx + 6).join('\n'))));
+          }
+
+          if (cfg.source === RNR.SOURCE.GYG) {
+            console.log('gygParticipants_   -> ' + JSON.stringify(gygParticipants_(full)));
+            console.log('gygGuests_ (legacy)-> ' + gygGuests_(full));
+          }
+
+          const parsed = parseThread_(thread, cfg.source, 'any')
+            .filter(b => normalizeId_(b.bookingId) === wanted)[0];
+          console.log('PARSED BOOKING     -> ' + JSON.stringify(parsed, null, 2));
+
+          const row = findActiveBookingById_(cfg.source, wanted);
+          console.log('CURRENT SHEET ROW  -> ' + (row ? JSON.stringify({
+            name: row.name, guests: row.guests, children: row.children,
+            notes: row.notes, date: row.dateKey, time: row.time
+          }) : '(no active row)'));
+          if (parsed && row && Number(parsed.guests) !== Number(row.guests)) {
+            console.log('>>> MISMATCH: email says ' + parsed.guests + ' guests, sheet says ' + row.guests +
+                        '. Run reparseActiveRowsFromEmail() to rewrite the sheet from the emails.');
+          }
+        });
+      });
+    });
+  });
+
+  if (!found) console.log('No thread found containing ' + wanted + ' under any RNR label.');
+}
+
+
+/**
+ * Re-read every ACTIVE booking row's own confirmation email and rewrite the
+ * row from it. Use after a parser fix so historical rows pick up the
+ * correction without waiting for anything. Idempotent: rows are updated in
+ * place (never duplicated), and cancelled/completed bookings are untouched.
+ */
+function reparseActiveRowsFromEmail() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) { console.log('Another run is active; try again in a minute.'); return; }
+
+  RNR_RUN_STARTED_AT_ = Date.now();
+  resetRunCaches_();
+  RNR_SKIP_PROCESSED_ = false;   // read everything, Processed included
+
+  let checked = 0, fixed = 0, unchanged = 0, noEmail = 0;
+  const changes = [];
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // Index every confirmation booking once (source|id -> parsed booking).
+    const cache = getConfirmationCache_();
+
+    activeSheetNames_().forEach(sheetName => {
+      const sh = ss.getSheetByName(sheetName);
+      if (!sh || sh.getLastRow() < 2) return;
+
+      const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
+      rows.forEach((row, i) => {
+        const current = rowToBooking_(row, sheetName);
+        if (!current.bookingId || !current.source) return;
+        checked++;
+
+        const parsed = cache.get(current.source + '|' + normalizeId_(current.bookingId));
+        if (!parsed) { noEmail++; return; }
+
+        const newGuests = Number(parsed.guests || 0);
+        const newChildren = Number(parsed.children || 0);
+        const newNotes = String(parsed.notes || '');
+
+        // Only rewrite when the email genuinely disagrees with the sheet.
+        const differs = newGuests !== Number(current.guests) ||
+                        newChildren !== Number(current.children) ||
+                        (newNotes && newNotes !== String(current.notes || ''));
+        if (!differs) { unchanged++; return; }
+
+        // Preserve any manual note a manager typed (e.g. "Moved to 21 ...").
+        const manualNote = String(current.notes || '')
+          .split(' · ')
+          .filter(part => !/^Private$/i.test(part) && !/\d+\s*(child|infant)/i.test(part))
+          .join(' · ');
+        const mergedNotes = [newNotes, manualNote].filter(Boolean).join(' · ');
+
+        const updated = normalizeBooking_({
+          name: current.name || parsed.name,
+          phone: current.phone || parsed.phone,
+          guests: newGuests,
+          children: newChildren,
+          infants: Number(parsed.infants || 0),
+          date: current.date,           // keep the sheet's date/time: a
+          time: current.time,           // modification may have moved it
+          language: current.language,
+          source: current.source,
+          income: Number(parsed.income || current.income || 0),
+          bookingId: current.bookingId,
+          notes: mergedNotes,
+          hasExplicitGuests: true, hasExplicitDate: true,
+          hasExplicitTime: true, hasExplicitIncome: true
+        });
+
+        writeBookingRow_(sh, i + 2, updated);
+        fixed++;
+        changes.push(current.bookingId + ' (' + current.name + '): guests ' +
+                     current.guests + ' -> ' + newGuests +
+                     (newChildren ? ', children ' + newChildren : '') );
+      });
+    });
+  } catch (err) {
+    logError_('reparseActiveRowsFromEmail', err, '');
+    console.log(String(err && err.stack ? err.stack : err));
+  } finally {
+    lock.releaseLock();
+  }
+
+  console.log('Active rows checked      : ' + checked);
+  console.log('Rows corrected from email: ' + fixed);
+  console.log('Already correct          : ' + unchanged);
+  console.log('No confirmation email found (left alone): ' + noEmail);
+  if (changes.length) {
+    console.log('--- corrections ---');
+    changes.forEach(c => console.log('  ' + c));
+  }
+  return fixed;
 }
