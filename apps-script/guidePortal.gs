@@ -89,6 +89,7 @@ function doGet(e) {
       case 'tours':  out = apiTours_(p); break;
       case 'save':   out = apiSave_(p);  break;
       case 'assign': out = apiAssign_(p); break;
+      case 'move':   out = apiMoveBooking_(p); break;
       case 'ping':   out = { ok: true, pong: true }; break;
       case 'health': out = apiHealth_(); break;
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
@@ -168,6 +169,7 @@ function apiTours_(p) {
           paid: isPaidSource_(b.source),
           income: Number(b.income || 0),
           isPrivate: /privat/i.test(b.note || ''),
+          note: String(b.note || ''),
           checked: isCk,
           checkedIn: isCk ? Number(priorCheckins[kk]) : Number(b.guests || 0) // locked count, or booked default to adjust
         };
@@ -211,6 +213,23 @@ function apiTours_(p) {
   const me = findGuideByName_(name);
   const isManager = !!(me && me.manager);
   let allTours = [];
+  let guidesByLanguage = null;
+  let busyMap = null;
+  if (isManager) {
+    guidesByLanguage = {};
+    const raw = readGuidesRaw_();
+    const cols = guideColumns_(raw.header);
+    raw.rows.forEach(row => {
+      const g = parseGuideRow_(row, cols);
+      if (!g.name || !g.active) return;
+      Object.keys(g.languages).forEach(l => {
+        if (g.languages[l] === true) {
+          (guidesByLanguage[l] = guidesByLanguage[l] || []).push(g.name);
+        }
+      });
+    });
+    busyMap = buildBusyMap_(schedule);
+  }
   if (isManager) {
     const ckCache = {};
     const getCk = g => (ckCache[g] || (ckCache[g] = readGuideCheckins_(g)));
@@ -228,6 +247,7 @@ function apiTours_(p) {
             children: Number(b.children || 0), infants: Number(b.infants || 0),
             income: Number(b.income || 0),
             paid: isPaidSource_(b.source), isPrivate: /privat/i.test(b.note || ''),
+            note: String(b.note || ''),
             checked: isCk,
             checkedIn: isCk ? Number(ck[kk]) : Number(b.guests || 0)
           };
@@ -236,6 +256,8 @@ function apiTours_(p) {
         id: shift.private ? key + '|P' + (shift.privIndex || 1) : key,
         dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
         time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
+        privIndex: shift.privIndex || 1,
+        eligible: eligibleGuidesForShift_(shift, busyMap, guidesByLanguage),
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
         bookedGuests: bookings.reduce((s, b) => s + Number(b.guests || 0), 0),
@@ -243,24 +265,6 @@ function apiTours_(p) {
         checkedGuests: bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0),
         bookings
       };
-    });
-  }
-
-  // Managers get the eligible-guides list per language, to power the
-  // assign-from-portal dropdown.
-  let guidesByLanguage = null;
-  if (isManager) {
-    guidesByLanguage = {};
-    const raw = readGuidesRaw_();
-    const cols = guideColumns_(raw.header);
-    raw.rows.forEach(row => {
-      const g = parseGuideRow_(row, cols);
-      if (!g.name || !g.active) return;
-      Object.keys(g.languages).forEach(l => {
-        if (g.languages[l] === true) {
-          (guidesByLanguage[l] = guidesByLanguage[l] || []).push(g.name);
-        }
-      });
     });
   }
 
@@ -299,6 +303,27 @@ function apiAssign_(p) {
     if (g.languages[language] !== true) {
       return { ok: false, error: guide + ' does not speak ' + language };
     }
+
+    // Incompatibility check: another tour within MIN_SEPARATION_HOURS.
+    // Management can ENFORCE the change anyway with force=1 (the portal asks
+    // for confirmation first) — the decision is theirs, but never accidental.
+    if (String(p.force || '') !== '1') {
+      const target = { dateKey, minutes: timeToMinutes_(time), language, private: isPriv, privIndex };
+      const myKey = shiftKeyFull_(target);
+      const st = shiftStartMs_(dateKey, target.minutes);
+      const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
+      const b = buildBusyMap_(readSchedule_())[guide.trim().toLowerCase()] || [];
+      const clash = b.find(x => x.k !== myKey && Math.abs(x.ms - st) < sepMs);
+      if (clash) {
+        const parts = clash.k.split('|');
+        return {
+          ok: false, conflict: true,
+          error: guide + ' already has a tour on ' + parts[0] + ' at ' +
+                 to12h_(minutesToTime_(Number(parts[1]))) + ' (' + parts[2] + ') — less than ' +
+                 ASSIGN_CFG.MIN_SEPARATION_HOURS + 'h apart.'
+        };
+      }
+    }
   }
 
   const lock = LockService.getScriptLock();
@@ -308,6 +333,79 @@ function apiAssign_(p) {
   } finally {
     lock.releaseLock();
   }
+}
+
+
+/**
+ * action=move — MANAGER ONLY. Moves a booking to another language's tour
+ * (e.g. a German or French guest who agrees to join the English tour).
+ * The row physically moves between BookingSheet language tabs; a
+ * "moved from X" note is appended so the change is traceable. The booking
+ * system treats the tab as authoritative once a row exists, so emails will
+ * NOT move it back.
+ */
+function apiMoveBooking_(p) {
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+
+  const bookingId = String(p.bookingId || '').trim();
+  const fromLanguage = String(p.fromLanguage || '').trim();
+  const toLanguage = String(p.toLanguage || '').trim();
+  if (!bookingId || !fromLanguage || !toLanguage) return { ok: false, error: 'Missing booking info' };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
+  try {
+    return moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage) {
+  if (fromLanguage === toLanguage) return { ok: true, moved: false };
+  const ss = bookingSS_();
+  const fromSh = ss.getSheetByName(fromLanguage + PORTAL.BOOKING_TAB_SUFFIX);
+  const toSh = ss.getSheetByName(toLanguage + PORTAL.BOOKING_TAB_SUFFIX);
+  if (!fromSh) return { ok: false, error: fromLanguage + ' Tours tab not found' };
+  if (!toSh) return { ok: false, error: toLanguage + ' Tours tab not found' };
+
+  const idNorm = bookingId.toUpperCase().replace(/\s+/g, '');
+  let vals = null;
+
+  const last = fromSh.getLastRow();
+  if (last >= 2) {
+    const rows = fromSh.getRange(2, 1, last - 1, 9).getValues();
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (String(rows[i][7] || '').toUpperCase().replace(/\s+/g, '') === idNorm) {
+        vals = rows[i];
+        fromSh.deleteRow(i + 2);
+      }
+    }
+  }
+  if (!vals) return { ok: false, error: bookingId + ' not found in ' + fromLanguage + ' Tours' };
+
+  // Never duplicate if it somehow already exists in the target tab.
+  const tLast = toSh.getLastRow();
+  let exists = false;
+  if (tLast >= 2) {
+    exists = toSh.getRange(2, 8, tLast - 1, 1).getValues()
+      .some(r => String(r[0] || '').toUpperCase().replace(/\s+/g, '') === idNorm);
+  }
+  if (!exists) {
+    const note = String(vals[8] || '');
+    if (!/moved from/i.test(note)) {
+      vals[8] = (note ? note + ' · ' : '') + 'moved from ' + fromLanguage;
+    }
+    const row = toSh.getLastRow() + 1;
+    toSh.getRange(row, 2, 1, 1).setNumberFormat('@');
+    toSh.getRange(row, 5, 1, 1).setNumberFormat('@');
+    toSh.getRange(row, 8, 1, 1).setNumberFormat('@');
+    toSh.getRange(row, 1, 1, 9).setValues([vals]);
+  }
+  return { ok: true, moved: true, to: toLanguage };
 }
 
 function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide) {
@@ -1055,6 +1153,50 @@ function shiftIsOver_(dateKey, minutes) {
   if (isNaN(d)) return false;
   const start = d.getTime() + Math.max(0, Number(minutes) || 0) * 60000;
   return Date.now() > start + 2 * 3600000;
+}
+
+/** Epoch ms of a shift's start. */
+function shiftStartMs_(dateKey, minutes) {
+  const d = new Date(dateKey + 'T00:00:00');
+  if (isNaN(d)) return 0;
+  return d.getTime() + Math.max(0, Number(minutes) || 0) * 60000;
+}
+
+/** Unique key of a shift incl. its private index. */
+function shiftKeyFull_(s) {
+  return s.dateKey + '|' + s.minutes + '|' + String(s.language || '').toLowerCase() +
+         '|' + (s.private ? 'P' + (s.privIndex || 1) : 'R');
+}
+
+/** guideNameLower -> [{ms, k}] of every assignment in the schedule. */
+function buildBusyMap_(schedule) {
+  const busy = {};
+  (schedule || []).forEach(s => {
+    const ms = shiftStartMs_(s.dateKey, s.minutes);
+    const k = shiftKeyFull_(s);
+    (s.assigned || []).forEach(n => {
+      const nk = String(n).trim().toLowerCase();
+      if (!nk) return;
+      (busy[nk] = busy[nk] || []).push({ ms, k });
+    });
+  });
+  return busy;
+}
+
+/**
+ * Guides who can take this shift WITHOUT creating an incompatibility:
+ * speak the language, active, and no other assigned tour within
+ * MIN_SEPARATION_HOURS. This feeds the portal's assign dropdown, so managers
+ * are only offered compatible choices by default.
+ */
+function eligibleGuidesForShift_(shift, busy, guidesByLanguage) {
+  const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
+  const myKey = shiftKeyFull_(shift);
+  const st = shiftStartMs_(shift.dateKey, shift.minutes);
+  return (guidesByLanguage[shift.language] || []).filter(n => {
+    const b = busy[String(n).trim().toLowerCase()] || [];
+    return !b.some(x => x.k !== myKey && Math.abs(x.ms - st) < sepMs);
+  });
 }
 
 /** yyyy-MM-dd of the Sunday ending the current week (today..Sunday window). */

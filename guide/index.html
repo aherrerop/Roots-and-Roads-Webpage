@@ -104,6 +104,8 @@
   .testlink{display:inline-block;margin-top:12px;color:var(--blue);font-weight:700;font-size:13px}
   .asgsel{margin-left:6px;padding:6px 8px;border:1px solid #dfe3e8;border-radius:9px;font-size:13px;font-weight:700;color:var(--ink);background:#fff;max-width:150px}
   .chip.miss{background:#fff7ed;color:#b45309;font-style:italic}
+  .bnote{font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
+  .mvsel{margin-top:4px;padding:3px 6px;border:1px solid #e2e6ea;border-radius:7px;font-size:11px;color:var(--muted);background:#fff}
 </style>
 </head>
 <body>
@@ -330,8 +332,11 @@ function renderTours(tours, paneId, canAssign){
 /* Manager-only: dropdown of guides who SPEAK the tour's language. Picking one
    writes it into the Schedule_<Language> grid in bold (= a management lock). */
 function assignSelect(t){
-  const opts=(GUIDES_BY_LANG[t.language]||[]);
+  // Server-computed: guides who speak the language AND have no other tour
+  // within 5h. The current assignee stays listed even if now conflicted.
+  let opts=(t.eligible||GUIDES_BY_LANG[t.language]||[]).slice();
   const cur=(t.assigned&&t.assigned[0])||"";
+  if(cur && opts.indexOf(cur)===-1) opts=[cur].concat(opts);
   let html='<select class="asgsel" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1}))+'\'>';
   html+='<option value=""'+(cur?'':' selected')+'>Not assigned</option>';
   opts.forEach(n=>{ html+='<option value="'+esc(n)+'"'+(n===cur?' selected':'')+'>'+esc(n)+'</option>'; });
@@ -344,7 +349,7 @@ function tourCard(t, canAssign){
   let chips = assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join("");
   if(!assigned.length && canAssign) chips='<span class="chip miss">Not assigned</span>';
   if(canAssign) chips+=assignSelect(t);
-  let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i)).join("");
+  let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language)).join("");
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   const srcSet=Array.from(new Set(t.bookings.map(b=>b.source))).filter(Boolean); if(!srcSet.length) srcSet.push("Website");
   const walk = srcSet.map(s=>'<div class="wl"><span class="lbl">Walk-in ('+esc(s)+')</span>'+stepper(t.id,"walk|"+s,0,99,0)+'</div>').join("");
@@ -360,11 +365,15 @@ function tourCard(t, canAssign){
       '<div class="savebar"><span class="msg" data-msg="'+esc(t.id)+'"></span></div>'+
     '</div></div>';
 }
-function bookingRow(tourId,b,i){
+function bookingRow(tourId,b,i,canAssign,lang){
   const wa = digits(b.phone) ? '<a class="wa" target="_blank" href="https://wa.me/'+digits(b.phone)+'">'+WA_ICON+'</a>' : '';
   const ph = b.phone ? '<a class="ph" href="tel:'+esc(b.phone)+'">'+esc(b.phone)+'</a>' : '';
+  const note = b.note ? '<div class="bnote">'+esc(b.note)+'</div>' : '';
+  const mv = (canAssign&&b.bookingId) ?
+    '<select class="mvsel" data-move=\''+esc(JSON.stringify({bookingId:b.bookingId,from:lang,name:b.name||b.bookingId}))+'\'>'+
+    ['English','German','Spanish'].map(L=>'<option'+(L===lang?' selected':'')+'>'+L+'</option>').join('')+'</select>' : '';
   return '<div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+'</div>'+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mv+'</div>'+
     wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
     '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+(b.checked?' disabled':'')+'>'+(b.checked?'✓ In':'Check in')+'</button>'+
     '</div>';
@@ -390,10 +399,30 @@ function bindTours(tours){
       const info=JSON.parse(sel.dataset.assign);
       sel.disabled=true;
       try{
-        const r=await api("assign",Object.assign({token:store.token, guide:sel.value},info));
-        if(!r.ok){ alert(r.error||"Could not assign"); sel.disabled=false; return; }
+        let r=await api("assign",Object.assign({token:store.token, guide:sel.value},info));
+        if(!r.ok && r.conflict){
+          // Management can ENFORCE the change — but never by accident.
+          if(confirm(r.error+"\n\nAssign anyway?")){
+            r=await api("assign",Object.assign({token:store.token, guide:sel.value, force:1},info));
+          }
+        }
+        if(!r.ok){ if(r.error&&!r.conflict) alert(r.error); sel.disabled=false; loadTours(); return; }
         loadTours();
       }catch(err){ alert(err.message||"Network problem — try again"); sel.disabled=false; }
+    };
+  });
+  // Manager: move a booking to another language's tour (guest agreed).
+  document.querySelectorAll(".mvsel").forEach(sel=>{
+    sel.onchange=async ()=>{
+      const info=JSON.parse(sel.dataset.move);
+      if(sel.value===info.from){ return; }
+      if(!confirm("Move "+info.name+" from the "+info.from+" tour to the "+sel.value+" tour?")){ sel.value=info.from; return; }
+      sel.disabled=true;
+      try{
+        const r=await api("move",{token:store.token,bookingId:info.bookingId,fromLanguage:info.from,toLanguage:sel.value});
+        if(!r.ok){ alert(r.error||"Could not move"); sel.disabled=false; sel.value=info.from; return; }
+        loadTours();
+      }catch(err){ alert(err.message||"Network problem — try again"); sel.disabled=false; sel.value=info.from; }
     };
   });
   // Check-in button per reservation: set the count, lock the row, save.

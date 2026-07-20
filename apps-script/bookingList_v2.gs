@@ -1771,6 +1771,12 @@ function completeModifiedBookingFromExisting_(booking) {
 
 
 function findActiveBookingById_(source, bookingId) {
+  const ref = findActiveBookingRowRef_(source, bookingId);
+  return ref ? ref.booking : null;
+}
+
+/** Locate a booking's row ACROSS ALL language tabs: {sh, row, sheetName, booking}. */
+function findActiveBookingRowRef_(source, bookingId) {
   const id = normalizeId_(bookingId);
   if (!id) return null;
 
@@ -1781,9 +1787,11 @@ function findActiveBookingById_(source, bookingId) {
     if (!sh || sh.getLastRow() < 2) continue;
 
     const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
-    for (const row of rows) {
-      const b = rowToBooking_(row, sheetName);
-      if (b.source === source && normalizeId_(b.bookingId) === id) return b;
+    for (let i = 0; i < rows.length; i++) {
+      const b = rowToBooking_(rows[i], sheetName);
+      if (b.source === source && normalizeId_(b.bookingId) === id) {
+        return { sh, row: i + 2, sheetName, booking: b };
+      }
     }
   }
   return null;
@@ -2292,6 +2300,21 @@ function upsertActiveBooking_(booking, allowUpdate) {
     return;
   }
 
+  // CROSS-TAB AUTHORITY: if this booking already lives on ANY language tab,
+  // that tab wins — management may have moved the guest to another language
+  // (portal "move"), and an email must never move it back or duplicate it
+  // into the original language.
+  if (b.bookingId) {
+    const ref = findActiveBookingRowRef_(b.source, b.bookingId);
+    if (ref) {
+      if (allowUpdate) {
+        if (RNR_RUN_STATS_) RNR_RUN_STATS_.upserts++;
+        writeBookingRow_(ref.sh, ref.row, b);   // update fields, keep the tab
+      }
+      return;
+    }
+  }
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheetName = languageToSheet_(b.language);
   const sh = ss.getSheetByName(sheetName);
@@ -2337,6 +2360,39 @@ function upsertActiveBooking_(booking, allowUpdate) {
   } else {
     writeBookingRow_(sh, Math.max(sh.getLastRow() + 1, 2), b);
   }
+}
+
+
+/** One retry after a pause for Google's transient "Service Spreadsheets
+ *  failed" errors (seen in the Errors tab on heavy write passes). */
+function withRetry_(fn) {
+  try { return fn(); }
+  catch (e) { Utilities.sleep(1500); return fn(); }
+}
+
+/**
+ * BULK write of many booking rows in ONE setValues call (plus one number-
+ * format pass per column). The old per-cell writer cost 9 API calls per row,
+ * which is what made dedupe/sort passes slow and prone to transient
+ * Spreadsheets-service failures.
+ */
+function writeBookingRowsBulk_(sh, startRow, bookings) {
+  if (!bookings.length) return;
+  const n = bookings.length;
+  withRetry_(() => {
+    sh.getRange(startRow, 2, n, 1).setNumberFormat('@');        // phone as text
+    sh.getRange(startRow, 3, n, 1).setNumberFormat('0');
+    sh.getRange(startRow, 4, n, 1).setNumberFormat('ddd, mmm d');
+    sh.getRange(startRow, 5, n, 1).setNumberFormat('@');        // time as text
+    sh.getRange(startRow, 7, n, 1).setNumberFormat('0.##');
+    sh.getRange(startRow, 8, n, 1).setNumberFormat('@');        // booking id as text
+  });
+  const values = bookings.map(b => {
+    const bb = normalizeBooking_(b);
+    return [bb.name, cleanPhone_(bb.phone), Number(bb.guests || 0), stripTime_(bb.date),
+            normalizeTime_(bb.time), bb.source, Number(bb.income || 0), bb.bookingId, bb.notes || ''];
+  });
+  withRetry_(() => sh.getRange(startRow, 1, n, 9).setValues(values));
 }
 
 
@@ -2436,8 +2492,8 @@ function dedupeActiveSheets_() {
       else keep[idx] = chooseBetterBooking_(keep[idx], b);
     });
 
-    sh.getRange(2, 1, sh.getLastRow() - 1, 9).clearContent();
-    keep.forEach((booking, i) => writeBookingRow_(sh, i + 2, booking));
+    withRetry_(() => sh.getRange(2, 1, sh.getLastRow() - 1, 9).clearContent());
+    writeBookingRowsBulk_(sh, 2, keep);
   });
 }
 
@@ -2529,8 +2585,8 @@ function sortActiveSheets_() {
 
     bookings.sort((a, b) => combineDateTime_(a.date, a.time) - combineDateTime_(b.date, b.time));
 
-    sh.getRange(2, 1, sh.getLastRow() - 1, 9).clearContent();
-    bookings.forEach((booking, i) => writeBookingRow_(sh, i + 2, booking));
+    withRetry_(() => sh.getRange(2, 1, sh.getLastRow() - 1, 9).clearContent());
+    writeBookingRowsBulk_(sh, 2, bookings);
   });
 }
 
@@ -4557,4 +4613,74 @@ function reparseActiveRowsFromEmail() {
     changes.forEach(c => console.log('  ' + c));
   }
   return fixed;
+}
+
+
+/******************************************************
+ * 32. DAILY SELF-TEST  (silence = healthy)
+ *
+ * Set a DAILY time trigger (e.g. 08:00-09:00). Emails management ONLY when
+ * something needs attention: the 5-minute run has stopped, errors were
+ * logged in the last 24h, or labelled mail is sitting unprocessed.
+ ******************************************************/
+
+function dailyBookingSelfTest() {
+  const problems = [];
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // 1. Is the 5-minute run alive? (Status tab heartbeat)
+  try {
+    const sh = ss.getSheetByName('Status');
+    const stamp = sh ? String(sh.getRange(1, 2).getValue() || '') : '';
+    const last = stamp ? new Date(stamp.replace(' ', 'T')) : null;
+    if (!last || isNaN(last)) {
+      problems.push('Status tab has no readable heartbeat — has runBookingSystem ever run?');
+    } else if (Date.now() - last.getTime() > 30 * 60000) {
+      problems.push('runBookingSystem has NOT run since ' + stamp +
+        ' — check Apps Script > Triggers and > Executions.');
+    }
+  } catch (e) { problems.push('Heartbeat check failed: ' + e); }
+
+  // 2. Errors logged in the last 24h?
+  try {
+    const sh = ss.getSheetByName(RNR.SHEETS.ERRORS);
+    if (sh && sh.getLastRow() > 1) {
+      const n = Math.min(50, sh.getLastRow() - 1);
+      const v = sh.getRange(sh.getLastRow() - n + 1, 1, n, 2).getValues();
+      const cutoff = Date.now() - 24 * 3600000;
+      const recent = v.filter(r => r[0] instanceof Date && r[0].getTime() > cutoff);
+      if (recent.length) {
+        problems.push(recent.length + ' error(s) logged in the last 24h — see the Errors tab. Newest: ' +
+          String(recent[recent.length - 1][1] || ''));
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  // 3. Unprocessed labelled mail (1 cheap search per label).
+  try {
+    const stuck = [];
+    sourceConfigs_().forEach(cfg => {
+      [cfg.confirm, cfg.modify, cfg.cancel].forEach(labelName => {
+        if (!labelName) return;
+        try {
+          const q = searchTokenForLabel_(labelName) + ' -' + searchTokenForLabel_(RNR.LABELS.PROCESSED);
+          const n = GmailApp.search(q, 0, 20).length;
+          if (n) stuck.push(labelName + ': ' + n);
+        } catch (e) { stuck.push(labelName + ': read failed (' + e + ')'); }
+      });
+    });
+    if (stuck.length) {
+      problems.push('Unprocessed mail under labels:\n  ' + stuck.join('\n  ') +
+        '\nIf these persist for hours, run forceProcessEverythingNow and check Errors.');
+    }
+  } catch (e) { /* ignore */ }
+
+  if (problems.length) {
+    MailApp.sendEmail({
+      to: RNR.INTERNAL_ALERT_TO,
+      subject: 'R&R booking check: ' + problems.length + ' issue(s) need attention',
+      body: problems.join('\n\n')
+    });
+  }
+  return problems.length;
 }
