@@ -59,8 +59,36 @@ const ASSIGN_CFG = {
   PAID_SOURCES: ["Viator", "GetYourGuide", "Airbnb"],
 
   // Where schedule problems (lock conflicts, missing eligibility) are logged.
-  ERRORS_TAB: "Errors"
+  ERRORS_TAB: "Errors",
+
+  // Availability slots for PRIVATE tours, per weekday. These only add tick
+  // columns to the availability sheet — they never create tours ("Private"
+  // is NOT a language and never appears in Weekly_Schedule). Actual private
+  // shifts are booking-driven at the booking's real time, in the booking's
+  // language.
+  PRIVATE_AVAILABILITY: {
+    Monday:    ['10:30', '17:00'],
+    Tuesday:   ['10:30', '17:00'],
+    Wednesday: ['10:30', '17:00'],
+    Thursday:  ['10:30', '17:00'],
+    Friday:    ['10:30', '17:00'],
+    Saturday:  ['17:00'],
+    Sunday:    []
+  }
 };
+
+/** Pseudo-rules that expose the private availability slots as columns in the
+ *  Week tabs. Shaped like Weekly_Schedule rules so the sync code can just
+ *  concat them. */
+function privateAvailabilityRules_() {
+  const out = [];
+  Object.keys(ASSIGN_CFG.PRIVATE_AVAILABILITY).forEach(day => {
+    ASSIGN_CFG.PRIVATE_AVAILABILITY[day].forEach(time => {
+      out.push({ day, time, language: 'Private', guidesNeeded: 0, activeFrom: null, activeUntil: null });
+    });
+  });
+  return out;
+}
 
 // Back-compat aliases (used across this file).
 const TOUR_DURATION_HOURS = ASSIGN_CFG.MIN_SEPARATION_HOURS;
@@ -107,6 +135,7 @@ function makeSchedule() {
   });
 
   shifts = expandPrivateShifts_(shifts, availIndex, startDate, endDate);   // private = own shift at its own time
+  shifts = expandOrphanShifts_(shifts, availIndex, startDate, endDate);    // bookings outside Weekly_Schedule still get a shift
 
   // Availability advantage: total slots each guide ticked across the window.
   const availCount = {};
@@ -153,7 +182,10 @@ function makeSchedule() {
           problems.push('overlaps another assigned tour (<' + ASSIGN_CFG.MIN_SEPARATION_HOURS + 'h apart)');
         }
       }
-      // Keep the lock regardless; flag any problem.
+      // Keep the lock regardless; flag any problem. "Not marked available"
+      // alone is SOFT (managers assign people all the time after talking to
+      // them — that must not paint the grid red); wrong language / overlap /
+      // unknown guide are HARD conflicts.
       shift.lockedGuides.push(nm);
       if (g) {
         accVal[g.name] += shift.value;
@@ -161,9 +193,11 @@ function makeSchedule() {
         assignedByGuide[g.name].push(shift.dateTimeObj);
       }
       if (problems.length) {
+        const hard = problems.some(p => p.indexOf('not marked available') === -1);
         conflicts.push({
           dateText: shift.dateText, time: shift.time, language: shift.language,
-          isPrivate: !!shift.isPrivate, privIndex: shift.privIndex, guide: nm, problems
+          isPrivate: !!shift.isPrivate, privIndex: shift.privIndex, guide: nm,
+          problems, hard
         });
       }
     });
@@ -205,6 +239,7 @@ function makeSchedule() {
     const needTotal = shift.guidesNeeded || 1;
     const ok = totalAssigned >= needTotal;
     const hasConflictFlag = conflicts.some(c =>
+      c.hard &&
       c.dateText === shift.dateText && normalizeTime_(c.time) === normalizeTime_(shift.time) &&
       c.language === shift.language && !!c.isPrivate === !!shift.isPrivate &&
       (Number(c.privIndex) || 1) === (Number(shift.privIndex) || 1));
@@ -218,6 +253,7 @@ function makeSchedule() {
       status: ok ? "OK" : "Not assigned",
       notes: [
         shift.isPrivate ? "Private" : "",
+        shift.extra ? "Extra tour (not in Weekly_Schedule)" : "",
         shift.lockedGuides.length ? "Locked: " + shift.lockedGuides.join(", ") : "",
         hasConflictFlag ? "LOCK CONFLICT (see Errors tab)" : "",
         ok ? "" : `Need ${needTotal}, assigned ${totalAssigned}`
@@ -247,13 +283,14 @@ function makeSchedule() {
  * maintain it by hand).
  *
  * Current offer (decided 2026-07, GYG + Viator):
- *   Mon/Tue/Thu/Fri: English 11:00 + 17:00 · Spanish 10:30 · Private 10:30 + 17:00
- *   Wednesday:       English 17:00 · Private 10:30 + 17:00
- *   Saturday:        English 17:00 · Private 17:00
- * "Private" rows do NOT create tours — they only expose availability slots
- * that guides can tick. Actual private shifts are booking-driven, at the
- * booking's real time. (If a Spanish or private morning booking arrives,
- * management closes the other one on the OTA — outside this system.)
+ *   Mon/Tue/Thu/Fri: English 11:00 + 17:00 · Spanish 10:30
+ *   Wednesday:       English 17:00
+ *   Saturday:        English 17:00
+ * Weekly_Schedule holds ONLY real tour languages. Private availability slots
+ * live in ASSIGN_CFG.PRIVATE_AVAILABILITY (they are not tours and private is
+ * not a language). German rows are preserved exactly as you maintain them —
+ * including repairing any time cell Sheets had corrupted into 12/30/1899.
+ * The Time column is text-formatted so the corruption cannot come back.
  */
 function updateWeeklyScheduleToCurrentOffer() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -262,12 +299,24 @@ function updateWeeklyScheduleToCurrentOffer() {
 
   const today = formatDate_(dateOnly_(new Date()));
 
-  // Preserve rows for languages this function does not manage (e.g. German).
+  // Preserve rows for languages this function does not manage (e.g. German),
+  // normalising the Time cell whether it is a string or a coerced Date.
   const preserved = [];
   if (sh.getLastRow() > 1) {
-    sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues().forEach(r => {
-      const lang = String(r[2] || '').trim().toLowerCase();
-      if (lang && ['english', 'spanish', 'private'].indexOf(lang) === -1) preserved.push(r);
+    const raw = sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues();
+    const dv = sh.getRange(2, 1, sh.getLastRow() - 1, 6).getDisplayValues();
+    raw.forEach((r, i) => {
+      const lang = String(dv[i][2] || r[2] || '').trim();
+      if (!lang || ['english', 'spanish', 'private'].indexOf(lang.toLowerCase()) !== -1) return;
+      const time = normalizeTime_(dv[i][1]) || timeFromCellValue_(r[1]);
+      preserved.push([
+        String(dv[i][0] || r[0] || '').trim(),
+        time || String(dv[i][1] || ''),
+        lang,
+        Number(r[3]) || 1,
+        r[4] || '',
+        r[5] || ''
+      ]);
     });
   }
 
@@ -278,24 +327,21 @@ function updateWeeklyScheduleToCurrentOffer() {
   add(MTThF, '11:00', 'English');
   add(MTThF, '17:00', 'English');
   add(MTThF, '10:30', 'Spanish');
-  add(MTThF, '10:30', 'Private');
-  add(MTThF, '17:00', 'Private');
   add(['Wednesday'], '17:00', 'English');
-  add(['Wednesday'], '10:30', 'Private');
-  add(['Wednesday'], '17:00', 'Private');
   add(['Saturday'], '17:00', 'English');
-  add(['Saturday'], '17:00', 'Private');
 
   const all = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until']]
     .concat(rows)
     .concat(preserved);
 
   sh.clear();
+  // Time column as TEXT before writing: "11:00" can never again become a Date.
+  sh.getRange(1, 2, all.length, 1).setNumberFormat('@');
   sh.getRange(1, 1, all.length, 6).setValues(all);
   sh.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
   sh.setFrozenRows(1);
   Logger.log('Weekly_Schedule updated: ' + rows.length + ' offer rows + ' +
-             preserved.length + ' preserved rows (German etc.).');
+             preserved.length + ' preserved rows (German etc., times repaired).');
 }
 
 
@@ -403,7 +449,7 @@ function logScheduleConflicts_(controlSS, conflicts) {
   }
   const ts = Utilities.formatDate(new Date(), "Europe/Madrid", "yyyy-MM-dd HH:mm");
   const rows = conflicts.map(c => [
-    ts, "Schedule lock conflict",
+    ts, c.hard === false ? "Schedule note" : "Schedule lock conflict",
     `${c.guide} locked on ${c.dateText} ${c.time} ${c.language}${c.isPrivate ? " (private)" : ""}: ${c.problems.join("; ")}`,
     ""
   ]);
@@ -487,6 +533,65 @@ function expandPrivateShifts_(shifts, availIndex, startDate, endDate) {
   return out;
 }
 
+/**
+ * SAFETY NET: any non-private booking sitting at a date/time/language with NO
+ * matching shift (a slot missing from Weekly_Schedule, a legacy time, a
+ * manually added row...) still becomes a tour: it shows in the grids and the
+ * portal, gets auto-assigned from availability like everything else, and
+ * comes out "Not assigned" when nobody fits — so management KNOWS to find a
+ * guide instead of the tour silently not existing.
+ */
+function expandOrphanShifts_(shifts, availIndex, startDate, endDate) {
+  const existing = new Set(shifts.filter(s => !s.isPrivate)
+    .map(s => s.dateText + '|' + normalizeTime_(s.time) + '|' + s.language));
+  const out = shifts.slice();
+
+  readActiveBookingSlots_().forEach(slot => {
+    const key = slot.dateText + '|' + slot.time + '|' + slot.language;
+    if (existing.has(key)) return;
+    existing.add(key);
+    const dateObj = new Date(slot.dateText + 'T12:00:00');
+    const d = dateOnly_(dateObj);
+    if (d < startDate || d > endDate) return;
+    out.push({
+      week: '', dateObj,
+      dateTimeObj: combineDateAndTime_(dateObj, slot.time),
+      dateText: slot.dateText, day: fullDayName_(dateObj),
+      time: slot.time, language: slot.language, guidesNeeded: 1,
+      availableGuides: privateAvailability_(availIndex, slot.dateText, slot.time),
+      isPrivate: false, privIndex: 0,
+      extra: true                       // flagged in the Schedule tab notes
+    });
+  });
+  return out;
+}
+
+/** Unique (date, time, language) slots of all NON-private active bookings. */
+function readActiveBookingSlots_() {
+  const seen = new Set();
+  const out = [];
+  const ss = SpreadsheetApp.openById(BOOKING_SHEET_ID);
+  ss.getSheets().forEach(sh => {
+    const tab = sh.getName();
+    if (tab.indexOf(" Tours") === -1) return;
+    if (/^done\b/i.test(tab)) return;
+    const language = tab.replace(" Tours", "").trim();
+    if (sh.getLastRow() < 2) return;
+    const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
+    rows.forEach(row => {
+      if (/privat/i.test(String(row[8] || ""))) return;
+      const time = timeFromCellValue_(row[4]) || normalizeTime_(row[4]);
+      if (!/^\d{1,2}:\d{2}$/.test(time)) return;
+      const dateText = row[3] instanceof Date ? formatDate_(row[3]) : formatDate_(new Date(row[3]));
+      const key = dateText + '|' + time + '|' + language;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ dateText, time, language });
+    });
+  });
+  return out;
+}
+
 /** Availability for a private booking: exact time, else nearest slot within
  *  the tolerance window (same day). */
 function privateAvailability_(availIndex, dateText, time) {
@@ -523,7 +628,7 @@ function readShiftValues_() {
     rows.forEach(row => {
       if (/privat/i.test(String(row[8] || ""))) return;   // private valued as its own shift
       const dateKey = row[3] instanceof Date ? formatDate_(row[3]) : formatDate_(new Date(row[3]));
-      const time = normalizeTime_(row[4]);
+      const time = timeFromCellValue_(row[4]) || normalizeTime_(row[4]);
       const guests = Number(row[2] || 0);
       const source = String(row[5] || "");
       const paid = PAID_SOURCES_ASSIGN.some(s => s.toLowerCase() === source.toLowerCase());
@@ -551,7 +656,7 @@ function readPrivateGroups_() {
       const dateText = row[3] instanceof Date ? formatDate_(row[3]) : formatDate_(new Date(row[3]));
       out.push({
         dateText,
-        time: normalizeTime_(row[4]),
+        time: timeFromCellValue_(row[4]) || normalizeTime_(row[4]),
         language,
         bookingId: String(row[7] || '').trim() || ('ROW' + out.length)
       });
@@ -568,7 +673,7 @@ function syncAvailabilityFile() {
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
 
   const guideNames = readActiveGuideNames_(controlSS);
-  const scheduleRules = readWeeklySchedule_(controlSS);
+  const scheduleRules = readWeeklySchedule_(controlSS).concat(privateAvailabilityRules_());
 
   guideSS.getSheets().forEach(sheet => {
     if (!sheet.getName().startsWith("Week ")) return;
@@ -670,7 +775,7 @@ function ensureWeekTabs_() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
   const guideNames = readActiveGuideNames_(controlSS);
-  const scheduleRules = readWeeklySchedule_(controlSS);
+  const scheduleRules = readWeeklySchedule_(controlSS).concat(privateAvailabilityRules_());
 
   const today = dateOnly_(new Date());
   const dow = (today.getDay() + 6) % 7;
@@ -919,7 +1024,10 @@ function readWeeklySchedule_(ss) {
   for (let r = 1; r < values.length; r++) {
     const rawRow = values[r], displayRow = displayValues[r];
     const day = String(displayRow[0] || "").trim();
-    const time = normalizeTime_(displayRow[1]);
+    // Sheets sometimes coerces a "10:00" cell into a Date (epoch 1899, shown
+    // as 12/30/1899). Fall back to the raw Date's hours/minutes so the rule
+    // survives instead of silently disappearing.
+    const time = normalizeTime_(displayRow[1]) || timeFromCellValue_(rawRow[1]);
     const language = String(displayRow[2] || "").trim();
     const guidesNeeded = Number(rawRow[3]) || 1;
     if (!day || !time || !language) continue;
@@ -984,6 +1092,16 @@ function readGuideCalendar_(guideSS, weekName) {
   return slots;
 }
 
+/**
+ * Build the tour shifts for a week.
+ *
+ * IMPORTANT DESIGN RULE: tours come from Weekly_Schedule RULES × DATES, never
+ * from the availability sheet's column layout. The old version only created a
+ * tour when the Week tab happened to have a matching time column — so when the
+ * offer changed (e.g. English 11:00 added) before the tabs were re-synced, the
+ * tour silently disappeared from the schedule. Now a tour ALWAYS exists; if
+ * nobody ticked availability for it, it simply comes out "Not assigned".
+ */
 function buildShifts_(availability, weeklySchedule, guideCalendar) {
   const availabilityMap = {};
   availability.forEach(a => {
@@ -991,20 +1109,28 @@ function buildShifts_(availability, weeklySchedule, guideCalendar) {
     if (!availabilityMap[key]) availabilityMap[key] = [];
     if (!availabilityMap[key].includes(a.guideName)) availabilityMap[key].push(a.guideName);
   });
-  const shifts = [];
+
+  // Unique DATES covered by this week tab (its columns no longer matter).
+  const dates = new Map();
   guideCalendar.forEach(slot => {
+    if (!dates.has(slot.dateText)) {
+      dates.set(slot.dateText, { dateObj: slot.dateObj, day: slot.day, week: slot.week });
+    }
+  });
+
+  const shifts = [];
+  dates.forEach((info, dateText) => {
     weeklySchedule.forEach(rule => {
-      if (rule.day !== slot.day) return;
-      if (rule.time !== slot.time) return;
-      const slotDateOnly = dateOnly_(slot.dateObj);
+      if (rule.day !== info.day) return;
+      const slotDateOnly = dateOnly_(info.dateObj);
       if (rule.activeFrom && slotDateOnly < rule.activeFrom) return;
       if (rule.activeUntil && slotDateOnly > rule.activeUntil) return;
-      const key = `${slot.dateText}|${slot.day}|${slot.time}`;
       shifts.push({
-        week: slot.week, dateObj: slot.dateObj, dateTimeObj: slot.dateTimeObj,
-        dateText: slot.dateText, day: slot.day, time: slot.time,
+        week: info.week, dateObj: info.dateObj,
+        dateTimeObj: combineDateAndTime_(info.dateObj, rule.time),
+        dateText, day: info.day, time: rule.time,
         language: rule.language, guidesNeeded: rule.guidesNeeded,
-        availableGuides: availabilityMap[key] || []
+        availableGuides: availabilityMap[`${dateText}|${info.day}|${rule.time}`] || []
       });
     });
   });
@@ -1180,6 +1306,14 @@ function hasConflict_(assignedDates, candidateDate) {
   return assignedDates.some(existing => Math.abs(candidateDate - existing) / (1000 * 60 * 60) < TOUR_DURATION_HOURS);
 }
 
+/** "10:00" from a Date-coerced time cell (epoch 1899), else ''. */
+function timeFromCellValue_(v) {
+  if (v instanceof Date && !isNaN(v)) {
+    return v.getHours() + ':' + String(v.getMinutes()).padStart(2, '0');
+  }
+  return '';
+}
+
 function normalizeTime_(value) {
   if (!value) return "";
   const s = String(value).trim();
@@ -1301,6 +1435,141 @@ function validateScheduleGrids() {
     })));
   } else {
     console.log("Schedule grids: no violations found.");
+  }
+  return problems.length;
+}
+
+
+/* ---------- live validation of MANUAL grid edits ---------- */
+
+/**
+ * RUN ONCE: installs the on-edit trigger that watches the Schedule_<Language>
+ * grids. From then on, when a manager types a guide name into a grid cell:
+ *   1. the cell is automatically made BOLD (= a management lock, so the
+ *      Friday regeneration will never wipe a hand edit again), and
+ *   2. the assignment is validated immediately — wrong language, unknown
+ *      name, or an overlapping tour (<5h) puts a ⚠ note on the cell and a
+ *      row in the Errors tab. The edit is KEPT (management decides); the
+ *      flag just makes the problem impossible to miss.
+ */
+function setupScheduleEditValidation() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const exists = ScriptApp.getProjectTriggers().some(t =>
+    t.getHandlerFunction() === 'handleScheduleEdit');
+  if (!exists) {
+    ScriptApp.newTrigger('handleScheduleEdit').forSpreadsheet(ss).onEdit().create();
+  }
+  Logger.log('Schedule edit validation installed.');
+}
+
+function handleScheduleEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    const sh = e.range.getSheet();
+    const name = sh.getName();
+    if (name.indexOf('Schedule_') !== 0) return;
+    if (e.range.getRow() < 3 || e.range.getColumn() < 2) return;
+    if (e.range.getNumRows() > 1 || e.range.getNumColumns() > 1) return;
+
+    const language = name.substring('Schedule_'.length).trim();
+    const val = String(e.range.getValue() || '').trim();
+    if (!val || /not assigned/i.test(val)) { e.range.setNote(''); return; }
+
+    // A typed name IS a management decision -> lock it (bold, like the
+    // portal's assign action), so makeSchedule preserves it.
+    e.range.setRichTextValue(
+      SpreadsheetApp.newRichTextValue().setText(val)
+        .setTextStyle(0, val.length, SpreadsheetApp.newTextStyle().setBold(true).build())
+        .build());
+    e.range.setFontStyle('normal').setFontColor('#1a2b49');
+
+    const problems = validateCellAssignment_(sh, e.range, language, val);
+    if (problems.length) {
+      e.range.setNote('⚠ ' + problems.join('\n⚠ '));
+      logScheduleConflicts_(SpreadsheetApp.getActiveSpreadsheet(), problems.map(p => ({
+        dateText: '', time: '', language, isPrivate: false, privIndex: 1,
+        guide: val, problems: [p], hard: true
+      })));
+    } else {
+      e.range.setNote('');
+    }
+  } catch (err) {
+    console.error('handleScheduleEdit: ' + err);
+  }
+}
+
+/** Problems (strings) with putting `namesText` into this grid cell. */
+function validateCellAssignment_(sh, range, language, namesText) {
+  const problems = [];
+  const dv = sh.getDataRange().getDisplayValues();
+  const anchor = gridAnchor_(String((dv[0] && dv[0][0]) || ''));
+  const header = parseGridTimeHeader_(String((dv[1] || [])[range.getColumn() - 1] || ''));
+  const dateKey = gridLabelToKey_(String((dv[range.getRow() - 1] || [])[0] || '').trim(), anchor);
+  if (!header || !dateKey) return problems;   // not a data cell we understand
+
+  const startMs = shiftStartMs_(dateKey, timeToMinutes_(header.time));
+  const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
+  const myKey = dateKey + '|' + timeToMinutes_(header.time) + '|' + language.toLowerCase() +
+                '|' + (header.isPrivate ? 'P' + header.index : 'R');
+
+  let busy = {};
+  try { busy = buildBusyMap_(readSchedule_()); } catch (err) { /* portal reader unavailable */ }
+
+  namesText.split(/[\n,]/).map(s => s.trim()).filter(Boolean).forEach(nm => {
+    if (/not assigned|need \d|lock conflict/i.test(nm)) return;
+    const g = findGuideByName_(nm);
+    if (!g) { problems.push(nm + ': not in the Guides tab'); return; }
+    if (!g.active) problems.push(nm + ' is marked inactive');
+    if (g.languages[language] !== true) problems.push(nm + ' does not speak ' + language);
+    const b = busy[nm.trim().toLowerCase()] || [];
+    const clash = b.find(x => x.k !== myKey && Math.abs(x.ms - startMs) < sepMs);
+    if (clash) {
+      const parts = clash.k.split('|');
+      problems.push(nm + ' already has a tour ' + parts[0] + ' at ' +
+        to12h_(minutesToTime_(Number(parts[1]))) + ' (' + parts[2] + ') — less than ' +
+        ASSIGN_CFG.MIN_SEPARATION_HOURS + 'h apart');
+    }
+  });
+  return problems;
+}
+
+
+/* ---------- daily self-test: silence = healthy ---------- */
+
+/**
+ * Set a DAILY time trigger (e.g. 08:00-09:00). Emails management ONLY when
+ * something needs attention: schedule violations, an unreadable
+ * Weekly_Schedule, or unassigned tours in the next 3 days.
+ */
+function dailyScheduleSelfTest() {
+  const problems = [];
+
+  try {
+    const v = validateScheduleGrids();
+    if (v) problems.push(v + ' schedule violation(s) — details in the Control sheet Errors tab.');
+  } catch (e) { problems.push('validateScheduleGrids failed: ' + e); }
+
+  try {
+    const rules = readWeeklySchedule_(SpreadsheetApp.getActiveSpreadsheet());
+    if (!rules.length) problems.push('Weekly_Schedule parsed to ZERO rules — the tab is broken or empty.');
+  } catch (e) { problems.push('Weekly_Schedule unreadable: ' + e); }
+
+  try {
+    const soon = addDaysKey_(todayKey_(), 3);
+    const un = readSchedule_().filter(s => s.dateKey <= soon && !(s.assigned && s.assigned.length));
+    if (un.length) {
+      problems.push('UNASSIGNED tours in the next 3 days:\n' + un.map(s =>
+        '  - ' + s.dateKey + ' ' + to12h_(s.time) + ' ' + s.language + (s.private ? ' (private)' : '')
+      ).join('\n') + '\nAssign from the guide portal (All tours) or the Schedule grids.');
+    }
+  } catch (e) { /* portal reader hiccup — booking self-test covers the rest */ }
+
+  if (problems.length) {
+    MailApp.sendEmail({
+      to: 'rootsandroadstours@gmail.com',
+      subject: 'R&R schedule check: ' + problems.length + ' issue(s) need attention',
+      body: problems.join('\n\n')
+    });
   }
   return problems.length;
 }

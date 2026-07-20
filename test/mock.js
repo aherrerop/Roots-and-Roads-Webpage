@@ -108,6 +108,11 @@ class MockRange{
   setFontFamily(){return this;} setBackground(){return this;} setBorder(){return this;} setWrap(){return this;}
   setHorizontalAlignment(){return this;} setVerticalAlignment(){return this;}
   clearContent(){for(let i=0;i<this.nr;i++)for(let j=0;j<this.nc;j++){if(this.sh.rows[this.r-1+i])this.sh.rows[this.r-1+i][this.c-1+j]='';}return this;}
+  getSheet(){return this.sh;}
+  getRow(){return this.r;} getColumn(){return this.c;}
+  getNumRows(){return this.nr;} getNumColumns(){return this.nc;}
+  setNote(n){(this.sh.notes=this.sh.notes||{})[this.r+'|'+this.c]=n;return this;}
+  getNote(){return (this.sh.notes||{})[this.r+'|'+this.c]||'';}
   clearDataValidations(){return this;}
 }
 function rtObj(rt){
