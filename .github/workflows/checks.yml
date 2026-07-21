@@ -23,4 +23,4 @@ jobs:
         run: node test/check-references.js
 
       - name: Sheets-logic test suite
-        run: bash test/run-tests.sh
+        run: node test/run-tests.js

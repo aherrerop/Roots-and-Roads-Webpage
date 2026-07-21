@@ -7,7 +7,7 @@
     "login": "clasp login",
     "check-references": "node test/check-references.js",
     "pretest": "node test/check-references.js",
-    "test": "bash test/run-tests.sh",
+    "test": "node test/run-tests.js",
     "prepush:booking": "npm test",
     "push:booking": "cd apps-script/booking && clasp push -f",
     "prepush:control": "npm test",
