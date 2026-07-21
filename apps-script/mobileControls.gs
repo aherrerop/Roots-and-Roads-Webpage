@@ -190,3 +190,29 @@ function validateMobileControls() {
   else console.log('Mobile Controls: everything configured correctly.');
   return problems;
 }
+
+
+/**
+ * RECOVERY: clears a stuck "Running…" status (e.g. after an execution
+ * timeout) and unticks any stuck checkbox. Safe any time — it only resets
+ * the display cells; it never launches or kills a run.
+ */
+function clearStaleControls() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(MC.TAB);
+  if (!sh) { Logger.log('No ' + MC.TAB + ' tab.'); return; }
+  const n = mcActions_().length;
+  const status = sh.getRange(MC.FIRST_ACTION_ROW, MC.COL_STATUS, n, 1);
+  const vals = status.getValues();
+  let cleared = 0;
+  vals.forEach((r, i) => {
+    if (/^Running/.test(String(r[0] || ''))) {
+      sh.getRange(MC.FIRST_ACTION_ROW + i, MC.COL_STATUS)
+        .setValue('Reset (was stuck) ' +
+          Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm'));
+      cleared++;
+    }
+  });
+  sh.getRange(MC.FIRST_ACTION_ROW, MC.COL_RUN, n, 1).setValue(false);
+  Logger.log('Stuck statuses cleared: ' + cleared + '. All checkboxes reset.');
+}

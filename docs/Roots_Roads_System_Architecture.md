@@ -1,134 +1,117 @@
 # Roots & Roads — System Architecture
 
-Last updated: 2026-07-17
+Last updated: 2026-07-20 (post-audit)
 
 ## Components
 
 ```
-                 OTA emails (Viator, GYG, GuruWalk, FreeTour, Airbnb)
-                                   |
-                       Gmail filters (label per source/type)
-                                   |
-   Website booking form ----> [BookingSheet project]
-   (doPost, instant)          bookingList_v2.gs  (runBookingSystem every 5 min,
-                              runBookingAudit 2-3x/day)
-                              websiteAvailabilityUpdate.gs (doGet: website
-                              calendar + admin remote-run hook)
-                                   |
-                     BookingSheet spreadsheet
-                     (1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw)
-                     English/German/Spanish Tours · Done Tours · Errors
-                     · Completed Log (hidden handoff)
-                                   |
-        +--------------------------+---------------------------+
-        |                                                      |
-[Control project]                                     [Guide portal front end]
-Roots_Roads_Control_v1                                rootsandroadsbcn.com/guide/
-(1A8RrqIoWw-HpxCLDRGVJLcflja8tSGEOgaXd-2sSkLs)        (guide/index.html, JSONP)
-assignShifts.gs   — availability + scheduling                  |
-guidePortal.gs    — portal API (doGet), ledger, queues  <------+
-mobileControls.gs — phone checkbox controls
-        |
-        +--> Availability spreadsheet (1ZkF0yDVE5Q7V2XUO5051ojJdTXtsvb8FA2sh15rqf-0)
-        |    "Week NN" checkbox tabs guides tick
-        +--> Guide_Ledger_v1 (auto-created, folder 1AkSO3hS5aoUP8vZXXIBKCjQrhmavUz5j)
-             Rates · per-guide tabs · Unassigned
-             · Viator No-shows · GYG No-shows · GuruWalk Check-ins
+             OTA emails (Viator, GYG, GuruWalk, FreeTour, Airbnb)
+                               |
+                   Gmail filters (label per source/type)
+                               |
+ Website form ---> [BookingSheet project "RootsRoadsBookings"]
+ (doPost, instant) bookingList_v2.gs   (runBookingSystem 5min / audit 8h)
+                   websiteAvailabilityUpdate.gs (doGet: calendar + admin hook)
+                               |
+                 BookingSheet (1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw)
+                 English/German/Spanish Tours · Done Tours · Errors · Status
+                 · Completed Log (hidden)
+                               |
+      +------------------------+---------------------------+
+      |                                                    |
+[Control project "mobBoss"]                       [Portal front end]
+Roots_Roads_Control_v1                            rootsandroadsbcn.com/guide/
+(1A8RrqIoWw-HpxCLDRGVJLcflja8tSGEOgaXd-2sSkLs)    guide/index.html (fetch+JSONP)
+assignShifts.gs    scheduling + grid locks + edits         |
+guidePortal.gs     portal API + ledger + queues + health <-+
+mobileControls.gs  phone checkbox controls
+   Tabs: Guides · Weekly_Schedule · Website_Schedule · Schedule ·
+         Schedule_<Language> grids · Control (health A1:B14 + controls N2:P12)
+         · Errors
+      |
+      +--> Availability (1ZkF0yDVE5Q7V2XUO5051ojJdTXtsvb8FA2sh15rqf-0) Week NN tabs
+      +--> Guide_Ledger_v1 (folder 1AkSO3hS5aoUP8vZXXIBKCjQrhmavUz5j)
+           Rates · per-guide tabs · Unassigned · Viator No-shows ·
+           GYG No-shows · GuruWalk Check-ins
 ```
+
+Timezone: **Europe/Madrid everywhere.** Both Apps Script projects must have it
+set in Project Settings; `systemStatus` and `?action=health` verify it.
 
 ## Authoritative data
 
 | Data | Source of truth |
 |---|---|
-| Active bookings | BookingSheet `English/German/Spanish Tours` tabs |
-| Completed tours (aggregate) | BookingSheet `Done Tours` |
-| Completed bookings (detail, w/ ids) | BookingSheet `Completed Log` (hidden, 21-day retention) |
-| Guides, languages, seniority, portal logins | Control `Guides` tab |
-| Weekly tour offer | Control `Weekly_Schedule` (+ `Website_Schedule` extras) |
-| Assignments shown everywhere | Control `Schedule_<Language>` grids (bold = manager lock) |
-| Guide availability | Availability spreadsheet `Week NN` tabs |
-| Check-ins & money per guide | Guide_Ledger_v1 per-guide tabs |
-| Management queues | Guide_Ledger_v1 `Unassigned`, `Viator No-shows`, `GYG No-shows`, `GuruWalk Check-ins` |
+| Active bookings | BookingSheet language tabs. Once a row exists, **manual edits win**: confirmation re-reads never touch it; only modification/cancellation emails, managers, or `reparseActiveRowsFromEmail` change it. A booking's TAB (language) can only be changed by management (portal "move"). |
+| Completed tours | `Done Tours` (aggregate) + `Completed Log` (detail w/ ids, 21-day retention, feeds no-show queues) |
+| Guides, languages, seniority, logins | Control `Guides` tab |
+| Tour offer | Control `Weekly_Schedule` (real languages only — "Private" is NOT a language). Private availability slots: `ASSIGN_CFG.PRIVATE_AVAILABILITY` in assignShifts.gs |
+| Operational schedule | `Schedule_<Language>` grids. **Bold = management lock** (from typing — auto-bolded by the edit trigger — or portal assignment). Private tours get their own columns (`10:00 · Private`). |
+| Availability | Availability spreadsheet Week tabs (tick columns from offer + private slots) |
+| Check-ins & money | Guide_Ledger_v1 per-guide tabs (Time column text-formatted; dedupe by shift AND booking id) |
+| Management queues | Ledger `Unassigned`, `Viator No-shows`, `GYG No-shows`, `GuruWalk Check-ins`. Queue tabs are laid out **row 1 = CLEAR button, row 2 = headers, row 3+ = entries**; ticking CLEAR wipes the entries once you have entered them on the platform. |
 
-## Booking lifecycle
+## Enforced invariants (checked by `checkInvariants_` on every audit)
 
-1. **Confirmation** email arrives → Gmail filter labels it (e.g. `Publishing
-   Pages/GetYourGuide/Confirmations`). `runBookingSystem` (every 5 min) parses
-   it: adults → `Number of Guests`, children/infants → Notes ("3 children"),
-   private keyword → Notes "Private", income per source model. Row upserted
-   into the language tab. Thread gets `Publishing Pages/Processed` **only after
-   a successful parse+write** and is archived. A thread that parses to nothing
-   is logged to Errors and left un-Processed so the audit retries it.
-2. **Modification** → same label logic per source. Viator "Amended Booking:"
-   emails (delta style: traveler added/removed) are summed per booking id and
-   applied against the ORIGINAL confirmation guest count (idempotent). GYG
-   reschedules keep only the newest state per booking code and reinstate the
-   code against stale cancellations. Guruwalk/FreeTour carry the new state
-   directly. Modification threads also get Processed on success.
-3. **Cancellation always wins.** The cancellation pass removes the sheet row;
-   `reconcileCancelledThreadLabels_` strips Confirm/Modify labels from that
-   booking's threads, applies the Cancel label, marks Processed, archives.
-   `upsertActiveBooking_` refuses to re-add any booking present in the
-   cancellation cache, so an old confirmation can never resurrect it.
-4. **Completion** (start + 2h): row is written in full to `Completed Log`,
-   aggregated into `Done Tours`, deleted from the active tab. The Gmail
-   threads lose all working labels and keep only `<Source>/Done` — the live
-   Confirmations/Modifications labels show only upcoming operational mail.
-5. Read/unread status is NEVER a signal anywhere.
+I1 one booking id ⇒ max one active row (all tabs) · I2 cancellation always wins
+and cancelled bookings cannot return (cancellation cache guards every write
+path) · I3 completed tours (start+2h) leave the active tabs · I4 rows are
+complete · idempotent reprocessing everywhere (thread level, sheet level,
+ledger level, queue level) · Processed only after successful parse+write ·
+read/unread is never a signal · children/infants never affect paid counts or
+income · no auto-assignment across unsupported languages or within 5h overlap
+· locks preserved, conflicts flagged (soft: availability; hard: language/
+overlap → red cell + Errors) · private tours keep their real booked time.
 
-## Scheduling lifecycle
+## Lifecycles (condensed)
 
-`runWeeklyScheduling` (Friday evening trigger): `ensureWeekTabs_` →
-`syncAvailabilityFile` → `makeSchedule` → `emailWeeklySchedule` (HTML tables of
-each `Schedule_<Language>` grid to rootsandroadstours@gmail.com).
+**Booking**: filter → label → fast run (Gmail SEARCH `label:x -label:processed`,
+~20 calls/run) → parse (subject-first classification; both body flavours
+normalised — asterisk bold stripped) → adults to Guests, children/infants/
+private to Notes → insert (never update) into language tab → Processed +
+mark-read, **stays in inbox until tour ends** (inbox = upcoming tours).
+Modifications update fields (never the tab); Viator deltas anchor to the
+original confirmation; GYG keeps newest state + reinstates against stale
+cancellations. Cancellation: row deleted, threads relabelled Cancel +
+archived immediately, id blocked from re-insertion. Completion (start+2h):
+row → Completed Log + Done Tours; threads stripped to `<Source>/Done` +
+archived. Errors tab is structured + deduplicated (Count / Last seen).
 
-`makeSchedule`:
-1. Reads guides (languages/seniority), Weekly_Schedule offer, availability.
-2. Reads **manager locks**: bold names in the current `Schedule_<Language>`
-   grids. Locks are seated first and never overwritten; conflicts (wrong
-   language, unavailable, overlapping, unknown name) keep the lock, tint the
-   cell red, and log to the Control `Errors` tab.
-3. Auto-assigns remaining seats deterministically (see `ASSIGN_CFG` in
-   assignShifts.gs): seniority → carried value → tour count → availability
-   volume → sheet order. Two tours per guide must start ≥ 5 h apart.
-4. Private bookings (Notes contains "Private") become their own shifts at
-   their REAL booked time, never folded into a regular slot; several private
-   groups at one time stay distinct.
-5. Writes the `Schedule` detail tab + `Schedule_<Language>` grids (locked
-   names re-written in bold so locks survive regeneration).
+**Scheduling**: rules × dates (availability columns can NEVER hide a tour) +
+private shifts per booking at real times + **orphan shifts** for any booking
+outside the offer → locks seated first → deterministic scoring (seniority →
+carried value → tour count → availability volume → order; 5h separation) →
+all Schedule_ grids regenerated (stale tabs cleared) → `validateScheduleGrids`
+auto-runs → Unassigned queue → portal.
 
-## Portal & check-in lifecycle
+**Portal**: login (localStorage, 30-day token) → tours (cached render, then
+refresh) → per-shift `eligible` guides (language + no 5h clash) → assign
+(bold lock; conflicts require confirmed `force`) → move booking between
+languages (traceable note; emails can't move it back) → idempotent check-in
+(shift + booking-id dedupe) → guide ledger → GuruWalk queue (All/Some/None) /
+no-show queues from Completed Log → 2h cutoff hides finished tours; All tours
+shows current week only.
 
-Portal front end calls the Control web app (JSONP):
-`login` → token · `tours` → my tours + all-tours/schedule + rates ·
-`save` → check-ins · `health` → deployment sanity.
+## Triggers
 
-Check-in writes replace that shift's rows in the guide's ledger tab
-(idempotent; LockService guarded). Booking rows show adults and children as
-`2+3` (children never counted or paid). After the tour completes, any paid
-booking with no check-in row lands once in `Viator No-shows` / `GYG No-shows`;
-every GuruWalk check-in lands once in `GuruWalk Check-ins` with a 48 h
-deadline. `updateManagementQueues` (hourly) + `sendGuruwalkCheckinReminder`
-(daily afternoon) keep managers on top of both. `archiveLedgerMonthly`
-(1st of month) copies the ledger to `YYYY_MM_Guide_Ledger_v1` and clears the
-live one.
-
-## Trigger schedule (all Europe/Madrid)
-
-| Function | Project | Type | Frequency |
+| Project | Function | Type | Frequency |
 |---|---|---|---|
-| runBookingSystem | BookingSheet | time | every 5 min |
-| runBookingAudit | BookingSheet | time | 2-3x/day |
-| runWeeklyScheduling | Control | time | Friday 18:00-19:00 |
-| updateManagementQueues | Control | time | hourly |
-| sendGuruwalkCheckinReminder | Control | time | daily 16:00-17:00 |
-| archiveLedgerMonthly | Control | time | monthly, 1st, 02:00-03:00 |
-| handleMobileControlsEdit | Control | installable onEdit | on checkbox tick |
+| BookingSheet | runBookingSystem | time | every 5 min |
+| BookingSheet | runBookingAudit | time | every 8 h |
+| Control | runWeeklyScheduling | time | Friday 18–19 |
+| Control | updateManagementQueues | time | hourly |
+| Control | archiveLedgerMonthly | time | monthly, 1st, 02–03 |
+| Control | handleMobileControlsEdit | installable onEdit (Control sheet) | — |
+| Control | handleScheduleEdit | installable onEdit (Control sheet) | — |
+| Control | handleLedgerEdit | installable onEdit (Guide_Ledger_v1) | — |
 
-## Failure handling
+## Observability
 
-Booking-side errors log to BookingSheet `Errors`; schedule conflicts to
-Control `Errors`. Per-thread Gmail failures are contained (safe wrappers);
-a failed parse is retried by the audit because Processed is only applied on
-success. All caches are per-execution; every write path is idempotent, so
-re-running anything is safe.
+BookingSheet `Status` tab: heartbeat after every run. Control tab `A1:B14`:
+manager dashboard (last runs, unassigned/pending counts, error count) —
+refreshed hourly. **No recurring notification emails**: the system is silent by design. The
+only mail it sends is the Friday schedule (requested), the per-booking website
+alert, and an emergency "manual entry needed" note if a website reservation
+arrives while the system is locked. Status is *pulled* from the dashboard, not
+pushed. Deduped Errors tabs in both spreadsheets. `systemStatus` / `?action=health` for full
+diagnosis. Test harness in `test/` (`bash test/run-tests.sh`).
