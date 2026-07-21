@@ -1,0 +1,23 @@
+{
+  "name": "roots-and-roads-webpage",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Roots & Roads website and its two Google Apps Script projects (clasp-managed).",
+  "scripts": {
+    "login": "clasp login",
+    "check-references": "node test/check-references.js",
+    "pretest": "node test/check-references.js",
+    "test": "bash test/run-tests.sh",
+    "prepush:booking": "npm test",
+    "push:booking": "cd apps-script/booking && clasp push -f",
+    "prepush:control": "npm test",
+    "push:control": "cd apps-script/control && clasp push -f",
+    "predeploy:booking": "npm test",
+    "deploy:booking": "cd apps-script/booking && clasp push -f && clasp deploy -i PASTE_BOOKING_DEPLOYMENT_ID_HERE -d \"Deployed via npm run deploy:booking\"",
+    "predeploy:control": "npm test",
+    "deploy:control": "cd apps-script/control && clasp push -f && clasp deploy -i PASTE_CONTROL_DEPLOYMENT_ID_HERE -d \"Deployed via npm run deploy:control\""
+  },
+  "devDependencies": {
+    "@google/clasp": "^2.4.2"
+  }
+}

@@ -1,0 +1,11 @@
+# Node / npm
+node_modules/
+npm-debug.log*
+
+# clasp credentials — NEVER commit these (OAuth tokens for your Google account)
+.clasprc.json
+apps-script/**/.clasprc.json
+
+# OS / editor cruft
+.DS_Store
+*.log
