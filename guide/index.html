@@ -321,7 +321,7 @@ function groupByDay(items){
 function renderTours(tours, paneId, canAssign){
   const pane=$(paneId||"toursPane");
   const seen={}; tours=(tours||[]).filter(t=>{ if(seen[t.id]) return false; seen[t.id]=true; return true; });
-  if(!tours.length){ pane.innerHTML='<div class="empty">'+(paneId==="schedPane"?"No tours this week.":"No upcoming tours assigned to you.")+'</div>'; return; }
+  if(!tours.length){ pane.innerHTML='<div class="empty">'+(paneId==="schedPane"?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; return; }
   let html="";
   groupByDay(tours).forEach(day=>{
     html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';

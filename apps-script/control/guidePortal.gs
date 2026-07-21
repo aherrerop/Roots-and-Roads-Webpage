@@ -197,8 +197,9 @@ function apiTours_(p) {
     };
   });
 
-  // "Schedule of other guides" / manager All tours: only THIS WEEK
-  // (today .. Sunday), so the list stays scannable.
+  // "Schedule of other guides" (shown to every guide): only THIS WEEK
+  // (today .. Sunday), so the compact list stays scannable. The manager
+  // "All tours" tab below uses the full upcoming window instead.
   const weekEnd = weekEndKey_();
   const thisWeek = schedule.filter(s => s.dateKey <= weekEnd);
 
@@ -233,7 +234,9 @@ function apiTours_(p) {
   if (isManager) {
     const ckCache = {};
     const getCk = g => (ckCache[g] || (ckCache[g] = readGuideCheckins_(g)));
-    allTours = thisWeek.map(shift => {
+    // Managers see EVERY upcoming tour (full UPCOMING_DAYS window), not just
+    // this week, so they can plan and assign ahead.
+    allTours = schedule.map(shift => {
       const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
       const primary = shift.assigned[0] || '';
       const ck = primary ? getCk(primary) : {};
