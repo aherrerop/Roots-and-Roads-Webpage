@@ -1,0 +1,26 @@
+name: Apps Script checks
+
+# Runs the same gate as `npm test` on every push and PR. A red check here
+# means the code would throw a ReferenceError at runtime in Apps Script or
+# fails the Sheets-logic tests — do not deploy until this is green.
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Reference check (calls resolve, no duplicate definitions)
+        run: node test/check-references.js
+
+      - name: Sheets-logic test suite
+        run: bash test/run-tests.sh

@@ -502,6 +502,11 @@ function writeRunStatus_(mode) {
         'Full diagnosis: run systemStatus() in the editor.']
     ];
     sh.clear();
+    // Column B as TEXT first: otherwise Sheets turns the timestamp into a Date
+    // object and anything reading it back gets "Mon Jul 20 2026 11:57:44 GMT…"
+    // instead of a parseable stamp (this is what made the health check read
+    // "NaN min ago").
+    sh.getRange(1, 2, rows.length, 1).setNumberFormat('@');
     sh.getRange(1, 1, rows.length, 2).setValues(rows);
     sh.getRange(1, 1, rows.length, 1).setFontWeight('bold');
     sh.setColumnWidth(1, 280);
@@ -1045,11 +1050,26 @@ function processConfirmationLabel_(labelName, source) {
     try {
       const bookings = uniqueBookings_(parseThread_(thread, source, 'confirm'));
 
-      // A confirmation thread that yields NO parseable booking is a parser
-      // problem (or a mis-filed email). Do NOT mark it Processed, so it keeps
-      // being retried. Only the audit logs it (a fast-run log would add a row
-      // every 5 minutes for the same thread).
       if (!bookings.length) {
+        // A thread under Confirmations can legitimately contain NO
+        // confirmation:
+        //   - Gmail groups a booking's confirmation, modification and
+        //     cancellation into ONE conversation, so the thread carries
+        //     several of our labels at once;
+        //   - OTA subjects overlap ("Booking detail change: - S779080 - GYG…"
+        //     also matches the broad "Booking -" confirmation filter).
+        // Those threads are owned by the modification / cancellation passes.
+        // Skip them SILENTLY and, critically, do NOT mark them Processed here
+        // — those passes run after this one and select threads with the same
+        // "not yet Processed" search, so finalising now would make them skip
+        // the thread entirely.
+        const ownedElsewhere = parseThread_(thread, source, 'any').length > 0;
+        if (ownedElsewhere) continue;
+
+        // Nothing parsed in ANY mode -> a genuine parser/misfile problem.
+        // Not marked Processed, so the audit keeps retrying it. Logged on
+        // audits only (a fast-run log would add a row every 5 minutes), and
+        // logError_ deduplicates repeats.
         if (!RNR_SKIP_PROCESSED_) {
           logError_('Confirmation parse failed (no booking found)',
             'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
@@ -1145,6 +1165,12 @@ function processCancellationLabel_(labelName, source) {
  * No new tabs, no new labels, no unread dependency, no manual review queue.
  ******************************************************/
 
+
+
+/** Sources that have a cancellation label. */
+function cancellationConfigs_() {
+  return sourceConfigs_().filter(cfg => cfg.cancel);
+}
 
 
 /**
@@ -1876,7 +1902,11 @@ function appendCompletedLog_(completed) {
       ]);
     });
     if (rows.length) {
-      sh.getRange(sh.getLastRow() + 1, 1, rows.length, header.length).setValues(rows);
+      const start = sh.getLastRow() + 1;
+      // Time as TEXT so Sheets cannot coerce "11:00 AM" into a Date (that
+      // corruption broke shift matching for the Unassigned audit).
+      sh.getRange(start, 2, rows.length, 1).setNumberFormat('@');
+      sh.getRange(start, 1, rows.length, header.length).setValues(rows);
     }
   } catch (e) {
     logError_('appendCompletedLog_', e, '');
@@ -2113,6 +2143,39 @@ function completedThreadShouldMoveToDone_(thread, source) {
 }
 
 
+
+
+/**
+ * Confirmation bookings indexed by "source|id" (built once per run).
+ * Used to anchor modifications to the ORIGINAL confirmation, and to fill
+ * fields a modification email omits.
+ */
+function getConfirmationCache_() {
+  if (RNR_CONFIRMATION_CACHE_) return RNR_CONFIRMATION_CACHE_;
+
+  const cache = new Map();
+
+  sourceConfigs_().forEach(cfg => {
+    if (!runHasTimeLeft_()) return;
+    const threads = getThreadsSafe_(cfg.confirm);
+
+    for (const thread of threads) {
+      if (!runHasTimeLeft_()) break;
+      try {
+        parseThread_(thread, cfg.source, 'confirm').forEach(b => {
+          const n = normalizeBooking_(b);
+          const id = normalizeId_(n.bookingId);
+          if (id) cache.set(cfg.source + '|' + id, n);
+        });
+      } catch (e) {
+        logError_('getConfirmationCache_ ' + cfg.source, e, cfg.confirm);
+      }
+    }
+  });
+
+  RNR_CONFIRMATION_CACHE_ = cache;
+  return RNR_CONFIRMATION_CACHE_;
+}
 
 
 /**
@@ -3160,7 +3223,7 @@ function debugWhereIsBooking() {
 function gygFields_(text) {
   return {
     bookingId: extractFirst_(text, [/\b(GYG[A-Z0-9]{5,})\b/i, /\b(S\d{5,})\b/i]),
-    name: valueAfterLabel_(text, [/^Cliente principal\b/i, /^Lead customer\b/i, /^Main customer\b/i]),
+    name: cleanGygName_(valueAfterLabel_(text, [/^Cliente principal\b/i, /^Lead customer\b/i, /^Main customer\b/i])),
     phone: extractFirst_(text, [
       /Tel[eé]fono:\s*([+\d][+\d\s().-]*)/i,
       /Phone(?:\s*number)?:\s*([+\d][+\d\s().-]*)/i,
@@ -3173,6 +3236,23 @@ function gygFields_(text) {
     langRaw: gygLanguageRaw_(text),
     price: gygPrice_(text)
   };
+}
+
+
+/**
+ * Keep only the human name from the "Cliente principal / Lead customer" value.
+ * GYG anonymises the customer address as customer-xxxx@reply.getyourguide.com,
+ * and some emails render that address (plus "Teléfono:" / "Idioma:" labels) on
+ * the same line as the name, e.g.
+ *   "Daleska Miclos customer-raawfecnv52myobv@reply.getyourguide.com Teléfono: +34632276997 Idioma: English"
+ * Everything from the email (or a trailing field label) onward is dropped, so
+ * only "Daleska Miclos" is stored. A clean name line is returned unchanged.
+ */
+function cleanGygName_(raw) {
+  let s = String(raw || '').trim();
+  s = s.replace(/\s*\S*@\S+.*$/i, '');                               // email + anything after it
+  s = s.replace(/\s*(?:Tel[eé]fono|Phone|M[oó]vil|Idioma|Language|Lengua)\s*:.*$/i, ''); // trailing labels
+  return s.replace(/[\s,;:_-]+$/, '').trim();
 }
 
 
@@ -4140,6 +4220,23 @@ const RNR_FIXTURES_ = {
       'Net Rate: EUR €95,60',
       'Phone: +17032093574'
     ].join('\n')
+  },
+  // REGRESSION (2026-07): GYG rendered the anonymised customer email (and the
+  // Teléfono/Idioma labels) on the SAME line as "Cliente principal", so the
+  // whole "Name customer-...@... Teléfono ... Idioma ..." string landed in the
+  // Name column. Only the human name must survive.
+  gygInlineCustomerEmail: {
+    subject: 'Booking - S779080 - GYG996ZAK7R7',
+    body: [
+      '¡Hola! Buenas noticias.', 'Se ha reservado tu producto',
+      'Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town',
+      'Número de referencia', 'GYG996ZAK7R7',
+      'Fecha', 'July 23, 2026 11:00 AM',
+      'Número de participantes', '1 x Adults (Edad 14 - 99)',
+      'Cliente principal Daleska Miclos customer-raawfecnv52myobv@reply.getyourguide.com Teléfono: +34632276997 Idioma: English',
+      'Idioma del tour', 'Inglés (Live tour guide)',
+      'Precio', '18,30 €'
+    ].join('\n')
   }
 };
 
@@ -4223,6 +4320,17 @@ function testBookingParsers() {
     check('GYG plain-body private: Private note', /Private/.test(b.notes), b.notes);
     check('GYG plain-body private: no children', b.children === 0, b.children);
     check('GYG plain-body private: income 133.30*0.75', Math.abs(b.income - 99.98) < 0.02, b.income);
+  }
+
+  // REGRESSION: customer email inline with the name must be stripped so the
+  // Name column holds only the person's name.
+  f = RNR_FIXTURES_.gygInlineCustomerEmail;
+  b = parseGygMessage_(makeFakeMsg_(f.subject, f.body), 'confirm');
+  check('GYG inline email: parses', !!b, b);
+  if (b) {
+    check('GYG inline email: name only (no email/labels)', b.name === 'Daleska Miclos', b.name);
+    check('GYG inline email: name carries no @ or customer-', !/@|customer-/i.test(b.name), b.name);
+    check('GYG inline email: booking id', b.bookingId === 'GYG996ZAK7R7', b.bookingId);
   }
 
   // Footer noise ("actualizaciones") must NOT flip a confirmation to modify

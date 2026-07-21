@@ -633,7 +633,8 @@ function findGuideByName_(guideName) {
  *   "🔒 Bob (private)"               private group
  *   "Carlos\n🔒 Bob (private)"       regular + private in one cell
  */
-function readSchedule_() {
+function readSchedule_(opts) {
+  const includePast = !!(opts && opts.includePast);
   const ss = control_();
   const today = todayKey_();
   const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
@@ -661,14 +662,15 @@ function readSchedule_() {
       if (!label) continue;
       const dateKey = gridLabelToKey_(label, anchor);
       if (!dateKey) continue;
-      if (dateKey < today || dateKey > maxKey) continue;
+      if (!includePast && (dateKey < today || dateKey > maxKey)) continue;
 
       times.forEach(t => {
         const raw = String(vals[r][t.col] || '').trim();
         if (!raw) return;
         const minutes = timeToMinutes_(t.time);
-        // A tour disappears from the portal 2h after its start.
-        if (shiftIsOver_(dateKey, minutes)) return;
+        // A tour disappears from the portal 2h after its start. The
+        // includePast reader (used to audit tours that already ran) keeps them.
+        if (!includePast && shiftIsOver_(dateKey, minutes)) return;
 
         const lines = raw.split('\n').map(s => s.trim()).filter(Boolean);
 
@@ -1157,6 +1159,35 @@ function shiftIsOver_(dateKey, minutes) {
   return Date.now() > start + 2 * 3600000;
 }
 
+/**
+ * Read a timestamp cell that may be EITHER a text stamp ("2026-07-20 11:57")
+ * or a Date (Sheets silently coerces such strings). Returns {date, text} with
+ * date=null when unreadable. Used by the health checks.
+ */
+function readStampCell_(v) {
+  if (v instanceof Date && !isNaN(v)) {
+    return { date: v, text: Utilities.formatDate(v, 'Europe/Madrid', 'yyyy-MM-dd HH:mm') };
+  }
+  const s = String(v || '').trim();
+  if (!s) return { date: null, text: '' };
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (m) {
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+                       Number(m[4]), Number(m[5]), Number(m[6] || 0));
+    return { date: isNaN(d) ? null : d, text: s };
+  }
+  const d2 = new Date(s);
+  return { date: isNaN(d2) ? null : d2, text: s };
+}
+
+/** True when two timezone names are currently at the same UTC offset. */
+function sameUtcOffset_(tzA, tzB) {
+  try {
+    const now = new Date();
+    return Utilities.formatDate(now, tzA, 'Z') === Utilities.formatDate(now, tzB, 'Z');
+  } catch (e) { return false; }
+}
+
 /** Epoch ms of a shift's start. */
 function shiftStartMs_(dateKey, minutes) {
   const d = new Date(dateKey + 'T00:00:00');
@@ -1242,52 +1273,121 @@ function dayNameFromKey_(dateKey) {
 
 function updateUnassignedLedger() { rebuildUnassignedLedger_(); }
 
+/**
+ * "Unassigned" = TOURS THAT ALREADY RAN WITH NOBODY ASSIGNED.
+ *
+ * This is a post-mortem alert — guests had a booking for a tour that has now
+ * passed and no guide was ever put on it. It is NOT a list of upcoming
+ * bookings awaiting assignment (that is simply the normal pipeline, visible
+ * in the portal's All tours, and it was pure noise here).
+ *
+ * Source of truth: the BookingSheet's "Completed Log" (bookings whose tour is
+ * over), cross-checked against the schedule grids READ INCLUDING PAST DATES.
+ * Lookback is bounded by UNASSIGNED_LOOKBACK_DAYS; older entries age out on
+ * the next rebuild, and the grids themselves only retain a couple of weeks.
+ *
+ * Rebuilt from scratch on every run (it is a derived view), so it can never
+ * accumulate duplicates.
+ */
+const UNASSIGNED_LOOKBACK_DAYS = 14;
+
+/**
+ * Which dates each Schedule_<Language> grid actually contains as ROWS.
+ * Returns { language: {dateKey: true} }.
+ *
+ * Needed because the grids only span the generated window (~2 weeks). For a
+ * date OUTSIDE that window there is no evidence either way, so a tour on such
+ * a date must NOT be reported as "ran with no guide" — absence of a grid row
+ * is not absence of a guide.
+ */
+function readScheduleDateCoverage_() {
+  const cover = {};
+  control_().getSheets().forEach(sh => {
+    const name = sh.getName();
+    if (name.indexOf('Schedule_') !== 0) return;
+    const language = name.substring('Schedule_'.length).trim();
+    if (!language || sh.getLastRow() < 3) return;
+    const vals = sh.getDataRange().getDisplayValues();
+    const anchor = gridAnchor_(String((vals[0] && vals[0][0]) || ''));
+    cover[language] = cover[language] || {};
+    for (let r = 2; r < vals.length; r++) {
+      const dk = gridLabelToKey_(String(vals[r][0] || '').trim(), anchor);
+      if (dk) cover[language][dk] = true;
+    }
+  });
+  return cover;
+}
+
 function rebuildUnassignedLedger_() {
-  const schedule = readSchedule_();      // grid-driven: who is assigned where
-  const bookings = readBookingsIndex_(); // dateKey|minutes|language -> [bookings]
   const rates = readRates_();
 
-  // Assignment lookup: shiftKey + '|P' (private) or '|R' (regular) -> assigned[]
+  // Who was assigned — including dates already in the past.
   const asg = {};
-  schedule.forEach(s => {
-    const k = shiftKey_(s.dateKey, s.minutes, s.language) + (s.private ? '|P' : '|R');
-    asg[k] = (asg[k] || []).concat(s.assigned || []);
-  });
-
-  const today = todayKey_();
-  const rows = [];
-  Object.keys(bookings).forEach(k => {
-    const parts = k.split('|');
-    const dateKey = parts[0], minutes = Number(parts[1]);
-    if (dateKey < today) return;                            // upcoming only, no expired tours
-    bookings[k].forEach(b => {
-      const guests = Number(b.guests || 0);
-      const source = String(b.source || '');
-      if (/guruwalk/i.test(source) && guests <= 0) return;    // skip zero-people Guruwalk
-      const isPriv = /privat/i.test(b.note || '');
-      const assigned = asg[k + (isPriv ? '|P' : '|R')] || [];
-      if (assigned.length) return;                            // assigned -> not unassigned
-      const language = tabLanguageForKey_(k);
-      const m = computeMoney_(source, guests, isPriv, b.income, rates);
-      rows.push([
-        dateKey, dayNameFromKey_(dateKey), to12h_(minutesToTime_(minutes)), language,
-        source, b.name || '', guests,
-        isPriv ? 'Private' : (isPaidSource_(source) ? 'Paid' : 'Free'),
-        Number(b.income || 0), m.rrMakes, '', b.bookingId || ''
-      ]);
+  try {
+    readSchedule_({ includePast: true }).forEach(s => {
+      const k = shiftKey_(s.dateKey, s.minutes, s.language) +
+                (s.private ? '|P' + (s.privIndex || 1) : '|R');
+      asg[k] = (asg[k] || []).concat(s.assigned || []);
+      // Regular shifts also answer for private groups at the same slot when a
+      // grid predates the private-column layout.
+      const loose = shiftKey_(s.dateKey, s.minutes, s.language);
+      asg[loose] = (asg[loose] || []).concat(s.assigned || []);
     });
+  } catch (e) { /* no grids yet: everything will look unassigned, which is safe */ }
+
+  // Only judge dates the grids actually cover (see readScheduleDateCoverage_).
+  let coverage = {};
+  try { coverage = readScheduleDateCoverage_(); } catch (e) { /* judge nothing */ }
+
+  const cutoff = addDaysKey_(todayKey_(), -UNASSIGNED_LOOKBACK_DAYS);
+  const rows = [];
+  let skippedNoGrid = 0;
+
+  readCompletedLog_().forEach(b => {
+    if (!b.dateKey || b.dateKey < cutoff) return;             // bounded lookback
+    // No grid row for that date+language -> no evidence -> do not accuse.
+    if (!(coverage[b.language] && coverage[b.language][b.dateKey])) { skippedNoGrid++; return; }
+    const minutes = timeToMinutes_(normTime24_(b.time));
+    if (!shiftIsOver_(b.dateKey, minutes)) return;            // paranoia: past only
+    const guests = Number(b.adults || 0);
+    const source = String(b.source || '');
+    if (/guruwalk/i.test(source) && guests <= 0) return;      // zero-people Guruwalk
+    const isPriv = /privat/i.test(b.notes || '');
+
+    const exact = shiftKey_(b.dateKey, minutes, b.language) +
+                  (isPriv ? '|P1' : '|R');
+    const loose = shiftKey_(b.dateKey, minutes, b.language);
+    const assigned = (asg[exact] || []).concat(asg[loose] || []);
+    if (assigned.length) return;                              // a guide ran it
+
+    const m = computeMoney_(source, guests, isPriv, b.income, rates);
+    rows.push([
+      b.dateKey, dayNameFromKey_(b.dateKey), to12h_(normTime24_(b.time)), b.language,
+      source, b.name || '', guests,
+      isPriv ? 'Private' : (isPaidSource_(source) ? 'Paid' : 'Free'),
+      Number(b.income || 0), m.rrMakes, b.bookingId || ''
+    ]);
   });
 
   rows.sort((a, b) => (a[0] + a[2]).localeCompare(b[0] + b[2]));
+  if (skippedNoGrid) {
+    console.log('Unassigned audit: ' + skippedNoGrid +
+      ' completed booking(s) skipped — their date is outside the schedule grids.');
+  }
 
   const ss = ledgerSS_();
   const sh = ss.getSheetByName('Unassigned') || ss.insertSheet('Unassigned');
   sh.clear();
+  const title = 'TOURS THAT RAN WITH NO GUIDE ASSIGNED — last ' +
+                UNASSIGNED_LOOKBACK_DAYS + ' days (rebuilt automatically)';
+  sh.getRange(1, 1, 1, 11).merge().setValue(title)
+    .setFontWeight('bold').setBackground('#fde68a').setFontColor('#7c2d12');
   const header = ['Date', 'Day', 'Time', 'Language', 'Source', 'Booking', 'Guests',
-                  'Type', 'OTA income (€)', 'R&R makes (€)', 'Guide', 'Booking ID'];
-  sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold');
-  if (rows.length) sh.getRange(2, 1, rows.length, header.length).setValues(rows);
-  sh.setFrozenRows(1);
+                  'Type', 'OTA income (€)', 'R&R makes (€)', 'Booking ID'];
+  sh.getRange(2, 1, 1, header.length).setValues([header])
+    .setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+  if (rows.length) sh.getRange(3, 1, rows.length, header.length).setValues(rows);
+  sh.setFrozenRows(2);
   return rows.length;
 }
 
@@ -1636,7 +1736,9 @@ function readCompletedLog_() {
       const dateKey = toDateKey_(r[0]);
       if (!bookingId || !dateKey) return;
       out.push({
-        dateKey, time: String(r[1] || ''), language: String(r[2] || ''),
+        // normTime24_ handles a Date-coerced cell; String() would produce
+        // "Sat Dec 30 1899 11:00:00 GMT…" and silently break shift matching.
+        dateKey, time: normTime24_(r[1]), language: String(r[2] || ''),
         name: String(r[3] || ''), phone: String(r[4] || ''),
         adults: Number(r[5] || 0), children: Number(r[6] || 0),
         source: String(r[7] || ''), income: Number(r[8] || 0),
@@ -1801,14 +1903,15 @@ function updateControlHealth_() {
     let bookingBeat = '(no Status tab)';
     try {
       const st = bookingSS_().getSheetByName('Status');
-      if (st) bookingBeat = String(st.getRange(1, 2).getValue() || '(empty)');
+      if (st) bookingBeat = readStampCell_(st.getRange(1, 2).getValue()).text || '(empty)';
     } catch (e) { bookingBeat = 'BookingSheet unreachable'; }
 
     // Live counters.
     let unassigned = 0, pendingGuru = 0, pendingNoShows = 0, openErrors = 0;
     try {
-      const weekEnd = addDaysKey_(todayKey_(), 7);
-      unassigned = readSchedule_().filter(s => s.dateKey <= weekEnd && !(s.assigned || []).length).length;
+      // Rows on the Unassigned tab = tours that already RAN with no guide.
+      const u = ledgerSS_().getSheetByName('Unassigned');
+      if (u) unassigned = Math.max(0, lastDataRow_(u) - 2);   // title + header rows
     } catch (e) { /* leave 0 */ }
     try {
       const ss = ledgerSS_();
@@ -1845,7 +1948,7 @@ function updateControlHealth_() {
       ['Last schedule generation', props.getProperty('HB_SCHEDULE') || '(never)'],
       ['Last queue/ledger refresh', props.getProperty('HB_QUEUES') || '(never)'],
       ['Last daily self-test', props.getProperty('HB_SELFTEST') || '(never)'],
-      ['Unassigned tours (next 7 days)', unassigned],
+      ['Tours that ran with NO guide (14d)', unassigned],
       ['Pending GuruWalk check-ins', pendingGuru],
       ['Pending OTA no-shows', pendingNoShows],
       ['Schedule errors (last 48h)', openErrors],
@@ -1915,7 +2018,7 @@ function testQueueIdempotency() {
   const ss = ledgerSS_();
   ensureQueueTabs_(ss);
   const count = () => [QUEUE_TABS.VIATOR_NOSHOW, QUEUE_TABS.GYG_NOSHOW, QUEUE_TABS.GURUWALK, 'Unassigned']
-    .map(n => { const s = ss.getSheetByName(n); return s ? (n === 'Unassigned' ? lastDataRow_(s) : lastQueueRow_(s)) : 0; });
+    .map(n => { const s = ss.getSheetByName(n); return s ? lastDataRow_(s) : 0; });
 
   updateManagementQueues();
   const first = count();
@@ -1926,4 +2029,218 @@ function testQueueIdempotency() {
   console.log('Queue rows after run 1: ' + first + ' | after run 2: ' + second +
               ' -> ' + (stable ? 'PASS (idempotent)' : 'FAIL (duplicates added)'));
   return stable;
+}
+
+
+/******************************************************
+ * 13. FULL SYSTEM TEST  (read-only, safe any time)
+ *
+ * Run fullSystemTest() from the Control project editor. It checks every
+ * component end to end and prints a PASS/FAIL/WARN report. It writes
+ * NOTHING except the health dashboard, so it is safe to run in production
+ * at any moment, including mid-tour.
+ ******************************************************/
+
+function fullSystemTest() {
+  const R = [];
+  const ok   = (m, d) => R.push(['PASS', m, d || '']);
+  const bad  = (m, d) => R.push(['FAIL', m, d || '']);
+  const warn = (m, d) => R.push(['WARN', m, d || '']);
+
+  /* --- 1. Configuration --- */
+  try {
+    const tz = Session.getScriptTimeZone();
+    if (tz === 'Europe/Madrid') ok('Timezone Europe/Madrid');
+    else if (sameUtcOffset_(tz, 'Europe/Madrid')) {
+      warn('Timezone is ' + tz + ' (same clock as Madrid, no data impact)',
+           'set Project Settings > Time zone to Europe/Madrid for consistency');
+    } else {
+      bad('Timezone is ' + tz + ' — different offset to Madrid',
+          'Project Settings > Time zone must be Europe/Madrid');
+    }
+  } catch (e) { bad('Timezone unreadable', e); }
+
+  const props = PropertiesService.getScriptProperties();
+  ['LEDGER_ID', 'BOOKING_WEBAPP_URL', 'ADMIN_KEY'].forEach(k => {
+    props.getProperty(k) ? ok('Script property ' + k + ' set')
+                         : warn('Script property ' + k + ' MISSING',
+                                k === 'LEDGER_ID' ? 'run setupLedger' : 'phone booking controls will not work');
+  });
+  if (PORTAL.TOKEN_SECRET.indexOf('CHANGE_ME') === 0) {
+    warn('TOKEN_SECRET is still the placeholder', 'edit guidePortal.gs section 1');
+  } else { ok('TOKEN_SECRET customised'); }
+
+  /* --- 2. Spreadsheets + tabs --- */
+  let control, booking, ledger;
+  try { control = control_(); ok('Control sheet reachable'); } catch (e) { bad('Control sheet unreachable', e); }
+  try { booking = bookingSS_(); ok('BookingSheet reachable'); } catch (e) { bad('BookingSheet unreachable', e); }
+  try { ledger = ledgerSS_(); ok('Ledger reachable'); } catch (e) { bad('Ledger unreachable', e); }
+
+  if (control) {
+    ['Guides', 'Weekly_Schedule', 'Control'].forEach(t =>
+      control.getSheetByName(t) ? ok('Control tab "' + t + '"') : bad('Control tab "' + t + '" MISSING'));
+    const grids = control.getSheets().filter(s => s.getName().indexOf('Schedule_') === 0);
+    grids.length ? ok('Schedule grids: ' + grids.map(s => s.getName().substring(9)).join(', '))
+                 : bad('No Schedule_<Language> grids', 'run makeSchedule');
+  }
+  if (booking) {
+    ['English Tours', 'German Tours', 'Spanish Tours', 'Done Tours', 'Errors', 'Status']
+      .forEach(t => booking.getSheetByName(t) ? ok('BookingSheet tab "' + t + '"')
+                                              : warn('BookingSheet tab "' + t + '" missing'));
+    booking.getSheetByName('Completed Log') ? ok('Completed Log present')
+      : warn('Completed Log missing', 'created the first time a tour completes');
+  }
+  if (ledger) {
+    Object.values(QUEUE_TABS).forEach(t => {
+      const sh = ledger.getSheetByName(t);
+      if (!sh) { bad('Queue tab "' + t + '" missing', 'run setupLedger'); return; }
+      const btn = String(sh.getRange(QUEUE_BUTTON_ROW, 1).getValue() || '');
+      /^CLEAR/.test(btn) ? ok('Queue tab "' + t + '" has its CLEAR button')
+                         : bad('Queue tab "' + t + '" missing CLEAR button', 'run setupLedger');
+    });
+  }
+
+  /* --- 3. Booking system heartbeat --- */
+  try {
+    const st = booking && booking.getSheetByName('Status');
+    const hb = st ? readStampCell_(st.getRange(1, 2).getValue()) : { date: null, text: '' };
+    if (!hb.text) { warn('No booking heartbeat yet', 'has runBookingSystem run?'); }
+    else if (!hb.date) { warn('Booking heartbeat unreadable', hb.text); }
+    else {
+      const mins = Math.round((Date.now() - hb.date.getTime()) / 60000);
+      mins <= 15 ? ok('Booking system ran ' + mins + ' min ago')
+                 : bad('Booking system last ran ' + mins + ' min ago (' + hb.text + ')',
+                       'check its 5-minute trigger / Executions');
+    }
+  } catch (e) { warn('Heartbeat check failed', e); }
+
+  /* --- 4. Guides + language coverage --- */
+  try {
+    const raw = readGuidesRaw_();
+    const cols = guideColumns_(raw.header);
+    const guides = raw.rows.map(r => parseGuideRow_(r, cols)).filter(g => g.name);
+    const active = guides.filter(g => g.active);
+    active.length ? ok(active.length + ' active guides', active.map(g => g.name).join(', '))
+                  : bad('No active guides in the Guides tab');
+    guides.filter(g => g.manager).length ? ok('Manager account(s) present')
+                                         : warn('No guide flagged as Manager', 'portal assign/move needs one');
+    guides.filter(g => g.active && !g.email).forEach(g => warn(g.name + ' has no portal email'));
+    cols.languages.forEach(l => {
+      const n = active.filter(g => g.languages[l.name] === true).length;
+      n ? ok('Language ' + l.name + ': ' + n + ' guide(s)')
+        : warn('Language ' + l.name + ': NO active guide');
+    });
+  } catch (e) { bad('Guides tab unreadable', e); }
+
+  /* --- 5. Schedule integrity --- */
+  let schedule = [];
+  try {
+    schedule = readSchedule_();
+    ok('Portal reads ' + schedule.length + ' upcoming shift(s)');
+    const dupes = {};
+    schedule.forEach(s => { const k = shiftKeyFull_(s); dupes[k] = (dupes[k] || 0) + 1; });
+    const dup = Object.keys(dupes).filter(k => dupes[k] > 1);
+    dup.length ? bad(dup.length + ' duplicate shift(s) in the grids', dup.join(' | '))
+               : ok('No duplicate shifts');
+
+    // Overlaps and language eligibility across the whole live schedule.
+    const busy = buildBusyMap_(schedule);
+    const sep = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
+    let overlaps = 0;
+    Object.keys(busy).forEach(g => {
+      const list = busy[g].slice().sort((a, b) => a.ms - b.ms);
+      for (let i = 1; i < list.length; i++) {
+        if (list[i].ms - list[i - 1].ms < sep) overlaps++;
+      }
+    });
+    overlaps ? bad(overlaps + ' overlapping assignment(s) (<' + ASSIGN_CFG.MIN_SEPARATION_HOURS + 'h)',
+                   'run validateScheduleGrids for detail')
+             : ok('No overlapping guide assignments');
+
+    let wrongLang = 0;
+    schedule.forEach(s => (s.assigned || []).forEach(n => {
+      const g = findGuideByName_(n);
+      if (g && g.languages[s.language] !== true) {
+        wrongLang++;
+        bad(n + ' assigned to ' + s.language + ' on ' + s.dateKey, 'does not speak it');
+      }
+    }));
+    if (!wrongLang) ok('Every assigned guide speaks the tour language');
+
+    // Only the CURRENT scheduling window is actionable — tours further out
+    // are staffed by the Friday run as the window rolls forward.
+    const horizon = formatDate_(endOfScheduleRange_());
+    const unassigned = schedule.filter(s => !(s.assigned || []).length && s.dateKey <= horizon);
+    const laterUn = schedule.filter(s => !(s.assigned || []).length && s.dateKey > horizon).length;
+    unassigned.length ? warn(unassigned.length + ' tour(s) unassigned INSIDE the scheduling window (to ' + horizon + ')',
+                             unassigned.slice(0, 5).map(s => s.dateKey + ' ' + s.timeLabel + ' ' + s.language).join(' | '))
+                      : ok('All tours in the scheduling window have a guide');
+    if (laterUn) ok(laterUn + ' unassigned tour(s) beyond ' + horizon + ' (normal — scheduled on Friday)');
+  } catch (e) { bad('Schedule read failed', e); }
+
+  /* --- 6. Bookings vs schedule --- */
+  try {
+    const idx = readBookingsIndex_();
+    const keys = Object.keys(idx);
+    const total = keys.reduce((n, k) => n + idx[k].length, 0);
+    ok(total + ' active booking(s) across ' + keys.length + ' shift(s)');
+
+    const ids = {};
+    let dupes = 0;
+    keys.forEach(k => idx[k].forEach(b => {
+      if (!b.bookingId) return;
+      if (ids[b.bookingId]) { dupes++; bad('Duplicate booking id ' + b.bookingId); }
+      ids[b.bookingId] = true;
+    }));
+    if (!dupes) ok('No duplicate booking ids');
+
+    const schedKeys = {};
+    schedule.forEach(s => { schedKeys[shiftKey_(s.dateKey, s.minutes, s.language)] = true; });
+    // A booking beyond the scheduling window has no grid row YET, by design.
+    const horizon2 = formatDate_(endOfScheduleRange_());
+    const orphans = keys.filter(k => !schedKeys[k] && k.split('|')[0] <= horizon2);
+    const later = keys.filter(k => !schedKeys[k] && k.split('|')[0] > horizon2).length;
+    orphans.length ? warn(orphans.length + ' booked shift(s) INSIDE the window with no schedule row',
+                          'run makeSchedule — they should appear as extra tour columns')
+                   : ok('Every booked shift inside the scheduling window is in the grids');
+    if (later) ok(later + ' booked shift(s) beyond ' + horizon2 + ' (normal — not scheduled yet)');
+  } catch (e) { bad('Booking index failed', e); }
+
+  /* --- 7. Ledger + queues --- */
+  try {
+    const ck = readAllCheckins_();
+    ok(Object.keys(ck).length + ' check-in record(s) in the ledger');
+    const rates = readRates_();
+    ok('Rates: paid ' + rates.paid + '€, free ' + rates.free + '€, private ' + rates.privatePay + '€');
+    const u = ledger && ledger.getSheetByName('Unassigned');
+    const n = u ? Math.max(0, lastDataRow_(u) - 2) : 0;
+    n ? warn(n + ' tour(s) RAN with no guide assigned', 'see the Unassigned tab')
+      : ok('No tours ran unassigned');
+  } catch (e) { bad('Ledger check failed', e); }
+
+  /* --- 8. Triggers --- */
+  try {
+    const fns = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
+    ['runWeeklyScheduling', 'updateManagementQueues', 'archiveLedgerMonthly',
+     'handleMobileControlsEdit', 'handleScheduleEdit', 'handleLedgerEdit'].forEach(f => {
+      fns.indexOf(f) !== -1 ? ok('Trigger installed: ' + f)
+                            : bad('Trigger MISSING: ' + f, 'see the deployment checklist');
+    });
+    ['dailyScheduleSelfTest', 'sendGuruwalkCheckinReminder'].forEach(f => {
+      if (fns.indexOf(f) !== -1) bad('Obsolete trigger still installed: ' + f, 'delete it');
+    });
+  } catch (e) { warn('Trigger check failed', e); }
+
+  /* --- report --- */
+  try { updateControlHealth_(); } catch (e) { /* best effort */ }
+  const fails = R.filter(r => r[0] === 'FAIL');
+  const warns = R.filter(r => r[0] === 'WARN');
+  console.log('================ FULL SYSTEM TEST ================');
+  R.forEach(r => console.log(r[0].padEnd(5) + ' ' + r[1] + (r[2] ? '  — ' + r[2] : '')));
+  console.log('=================================================');
+  console.log('PASS ' + R.filter(r => r[0] === 'PASS').length +
+              ' | WARN ' + warns.length + ' | FAIL ' + fails.length);
+  console.log(fails.length ? 'ACTION NEEDED — fix the FAIL lines above.'
+                           : (warns.length ? 'Healthy. WARNs are informational.' : 'All green.'));
+  return { pass: R.filter(r => r[0] === 'PASS').length, warn: warns.length, fail: fails.length };
 }

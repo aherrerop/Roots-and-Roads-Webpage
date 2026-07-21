@@ -1,66 +1,120 @@
 # Roots & Roads — Deployment Checklist
 
 Follow in order. Steps marked (once) are one-time.
-Verified against the code on 2026-07-20 (post-audit).
+Verified against the code on 2026-07-21 (clasp migration).
 
-## 0. Before you start
+Code now deploys from source with [clasp](https://github.com/google/clasp).
+No more copy-paste into the Apps Script editor. The two projects live in:
 
-- Both Apps Script projects must have **Project Settings → Time zone =
-  Europe/Madrid**. `systemStatus` and the portal health endpoint check this
-  and will warn you if it is wrong.
+- `apps-script/booking/` — **BookingSheet** project ("RootsRoadsBookings"):
+  `bookingList_v2.gs`, `websiteAvailabilityUpdate.gs`
+- `apps-script/control/` — **Control** project ("mobBoss", bound to
+  Roots_Roads_Control_v1): `guidePortal.gs`, `assignShifts.gs`,
+  `mobileControls.gs`
 
-## 1. BookingSheet project ("RootsRoadsBookings")
+Each folder has its own `.clasp.json` (which project to push to) and
+`appsscript.json` (manifest — time zone `Europe/Madrid`, web-app access).
 
-1. Paste `apps-script/bookingList_v2.gs` over the existing booking file. Save.
-2. Paste `apps-script/websiteAvailabilityUpdate.gs` (adds the admin remote-run
-   hook used by the phone controls). Save.
-3. (once) Project Settings → Script Properties:
+## 0. One-time machine setup (once, per computer)
+
+1. Install [Node.js](https://nodejs.org) 18+ (includes `npm`) and make sure
+   `node` and `npm` work in a terminal. `bash` is also required to run the
+   test suite (Git Bash on Windows, or WSL/macOS/Linux).
+2. From the repo root: `npm install` (installs clasp locally into
+   `node_modules`; all `npm run …` commands below use it automatically).
+3. `npm run login` — runs `clasp login`. **This opens a browser and asks for
+   your Google account.** Do this yourself; it stores a token in
+   `~/.clasprc.json` (git-ignored, never commit it).
+4. Fill in the four IDs (they are placeholders in the repo until you do):
+   - **Script IDs** → `apps-script/booking/.clasp.json` and
+     `apps-script/control/.clasp.json`. Get each from the Apps Script editor:
+     **Project Settings → IDs → Script ID**. Replace `PASTE_…_SCRIPT_ID_HERE`.
+   - **Deployment IDs** → `package.json`, in the `deploy:booking` and
+     `deploy:control` scripts. Get them by `cd`-ing into the folder and running
+     `npx clasp deployments` — copy the ID of the **active web-app deployment**
+     (the one whose `/exec` URL is referenced by `guide/index.html` and the
+     `BOOKING_WEBAPP_URL` script property). Replace `PASTE_…_DEPLOYMENT_ID_HERE`.
+
+   > Why deployment IDs matter: `deploy:*` runs `clasp deploy -i <id>`, which
+   > publishes a **new version of the existing deployment** so the `/exec` URL
+   > never changes. Deploying **without** `-i` would mint a brand-new URL and
+   > silently break the portal and the booking hook.
+5. (once, recommended) Run `npx clasp pull` inside each folder and diff the
+   result against the committed files. This confirms the `scriptId` is right
+   and lets you reconcile the `appsscript.json` manifest (time zone, web-app
+   access, and OAuth scopes) against what each live project currently has.
+   The manifests here omit `oauthScopes` on purpose so Apps Script
+   auto-detects them — the first deploy may prompt you to re-authorize.
+
+## 1. Push / deploy the code
+
+All commands run from the **repo root**. Every `push`/`deploy` first runs the
+gate (`npm test` → reference check + Sheets-logic suite) and **aborts if it
+fails** — a broken build never reaches Apps Script.
+
+- Push code only (updates the editor, does **not** publish a new version):
+  - `npm run push:booking`
+  - `npm run push:control`
+- Push **and** publish a new version of the existing web-app deployment:
+  - `npm run deploy:booking`
+  - `npm run deploy:control`
+
+Use `push:*` while iterating and running editor-side setup functions; use
+`deploy:*` when you want the live `/exec` URL to serve the new code.
+
+## 2. BookingSheet project — first-time editor setup (once)
+
+After `npm run push:booking`, in the Apps Script editor / Project Settings:
+
+1. (once) Project Settings → Script Properties:
    `ADMIN_KEY` = a long random string. Keep `BREVO_API_KEY`,
    `BREVO_TEMPLATE_ID`.
-4. (once) Run `setupBookingSystem` → authorize when prompted.
-5. Run `testBookingParsers` → expect **41 passed, 0 failed**.
-6. Triggers (delete any trigger pointing at a function that no longer exists):
+2. (once) Run `setupBookingSystem` → authorize when prompted.
+3. Run `testBookingParsers` → expect **41 passed, 0 failed**.
+4. Triggers (delete any trigger pointing at a function that no longer exists):
    - `runBookingSystem` — time-driven, every 5 minutes
    - `runBookingAudit` — time-driven, every 8 hours
    There is **no daily self-test trigger** — the system does not email you.
-7. Deploy → Manage deployments → pencil on the ACTIVE deployment →
-   Version: **New version** → Deploy. Copy the `/exec` URL.
+5. `npm run deploy:booking` to publish. The `/exec` URL is unchanged; if this
+   is the very first clasp deploy, copy the `/exec` URL for step 3 below.
 
-## 2. Control project ("mobBoss", bound to Roots_Roads_Control_v1)
+## 3. Control project — first-time editor setup (once)
 
-1. Paste `apps-script/assignShifts.gs`, `apps-script/guidePortal.gs`,
-   `apps-script/mobileControls.gs`. Save.
-2. (once) Script Properties: `BOOKING_WEBAPP_URL` = the `/exec` URL from 1.7;
-   `ADMIN_KEY` = the same string as 1.3. Keep `LEDGER_ID`. Replace
+After `npm run push:control`, in the editor / Project Settings:
+
+1. (once) Script Properties: `BOOKING_WEBAPP_URL` = the BookingSheet `/exec`
+   URL; `ADMIN_KEY` = the same string as 2.1. Keep `LEDGER_ID`. Replace
    `TOKEN_SECRET` in guidePortal.gs if it is still the placeholder.
-3. (once) Run, in this order:
+2. (once) Run, in this order:
    - `setupLedger` — creates/migrates ledger tabs, adds the queue tabs with
      their CLEAR buttons, installs the ledger edit trigger.
    - `setupMobileControls` — Control!N2:P12 block + edit trigger.
    - `setupScheduleEditValidation` — auto-lock + validate manual grid edits.
    - `validateMobileControls` — must report no problems.
-4. Offer + schedule refresh, in this order:
+3. Offer + schedule refresh, in this order:
    `updateWeeklyScheduleToCurrentOffer` → `syncAvailabilityFile` →
    `makeSchedule`. Then check Schedule_English has 11:00 columns and the
    Control sheet Errors tab for flagged conflicts.
-5. Triggers:
+4. Triggers:
    - `runWeeklyScheduling` — time-driven, Friday 18:00–19:00
    - `updateManagementQueues` — time-driven, hourly
    - `archiveLedgerMonthly` — time-driven, monthly, day 1, 02:00–03:00
-   (The three onEdit triggers were created by the setup functions in 2.3 —
+   (The three onEdit triggers were created by the setup functions in 3.2 —
    do not add them by hand.)
-6. Deploy → Manage deployments → pencil on the ACTIVE deployment →
-   **New version** → Deploy. Confirm **Execute as: Me** and
-   **Who has access: Anyone** (not "Anyone with Google account").
+5. `npm run deploy:control` to publish. The manifest sets **Execute as: Me**
+   and **Who has access: Anyone** (anonymous). Confirm this on the deployment
+   if it is the first clasp deploy.
 
-## 3. Website repository
+## 4. Website repository
 
 1. Commit and push: `guide/index.html`, `index.html`, `css/main_css.css`,
-   `apps-script/`, `docs/`, `test/`.
-2. Only if the portal deployment URL changed: update `PORTAL_URL` near the top
-   of `guide/index.html`'s script block first.
+   `apps-script/`, `docs/`, `test/`, `package.json`, `.github/`.
+2. Only if a portal deployment URL changed (it should **not**, since deploys
+   reuse the existing deployment ID): update `PORTAL_URL` near the top of
+   `guide/index.html`'s script block, and `BOOKING_WEBAPP_URL` in the Control
+   script properties.
 
-## 4. Verification (do these, in order)
+## 5. Verification (do these, in order)
 
 - Phone browser: `<portal /exec URL>?action=health` → `"ok":true`,
   `"timezoneOk":true`, `deployment":"portal-v4"`.
@@ -77,18 +131,29 @@ Verified against the code on 2026-07-20 (post-audit).
 - Editor: `testQueueIdempotency` → PASS; `validateScheduleGrids` → no
   violations.
 
-## 5. Local test suite (optional, on a computer with node)
+## 6. Local test gate (runs automatically before every push/deploy)
+
+`npm run push:*` and `npm run deploy:*` run this first and block on failure.
+To run it by hand:
 
 ```
-bash test/run-tests.sh
+npm test
 ```
-Expect: 17 + 13 + 17 + 17 Sheets-logic assertions, all passing.
-Parser suite runs inside Apps Script via `testBookingParsers` (41 checks).
 
-## 6. Rollback
+This runs `node test/check-references.js` (every internal call resolves, no
+duplicate definitions — the class of bug that shipped a ReferenceError to
+production) followed by `bash test/run-tests.sh` (Sheets-logic assertions).
+Expect: reference check PASS for both projects, then the Sheets-logic suites
+all passing. The parser suite runs inside Apps Script via `testBookingParsers`
+(41 checks). The same two checks run in CI on every push — see
+`.github/workflows/checks.yml`.
 
-- Apps Script: Deploy → Manage deployments → Edit → select the previous
-  version. Code: File → See version history.
+## 7. Rollback
+
+- Apps Script code: `git revert` the offending commit, then
+  `npm run deploy:booking` / `npm run deploy:control` to republish the previous
+  code to the same deployment. Or, in the editor: Deploy → Manage deployments →
+  Edit → select a previous version; File → See version history for code.
 - Website: `git revert` the deploy commit and push.
 - Spreadsheets: no destructive migrations. The only schema changes are
   additive (ledger `Children` column; queue tabs gained a button row above
