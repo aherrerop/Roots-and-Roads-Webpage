@@ -5,14 +5,16 @@
 1. On your phone, open **rootsandroadsbcn.com/guide** (link also at the bottom
    of the main website).
 2. Sign in with the email and password management gave you.
-3. You stay signed in for the day; log in again if it asks.
+3. You stay signed in for about a month — you should not need to type your
+   password again. If the app closes or you minimise it, your tours reappear
+   instantly and your check-ins are never lost.
 
 ## Finding your tours
 
 - **My tours**: every upcoming tour assigned to you, grouped by day. TODAY and
   TOMORROW are badged.
-- **All guides / All tours**: the full schedule — you can see which guide runs
-  which tour this week. Reservation details (names, phones) are only visible
+- **All guides / All tours**: this week's schedule (today to Sunday) — you can
+  see which guide runs which tour. Reservation details (names, phones) are only visible
   for YOUR tours. Managers see and can edit everything.
 
 ## Reading a tour card
@@ -38,13 +40,18 @@ the check-in controls.
 2. Tap **Check in**. The button turns grey ✓ In and locks — done. Tapping
    twice or refreshing cannot double-save.
 3. Walk-ins: use the Walk-in row (+ / −) at the bottom of the tour.
-4. No signal? The app will tell you exactly whether it's your connection or
-   the server, with a Retry button.
+4. No signal? The app tells you whether it's your connection or the server,
+   with a Retry button and a "Test server connection" link. Your check-in is
+   saved the moment you tap it — reopening the app never loses it, and tapping
+   twice can never double-count anyone.
 
 **If you do not check a reservation in, it counts as a no-show** after the
 tour — for GuruWalk that means management won't pay commission for them, and
 for Viator/GetYourGuide management reports them as no-shows. So check in
 everyone who actually shows up, during or right after the tour.
+
+A tour disappears from the app 2 hours after it starts, so check people in
+during or right after the tour.
 
 ## What you must NOT do
 

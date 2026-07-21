@@ -116,11 +116,15 @@ const RNR = {
     'Comments'
   ],
 
+  // Structured + deduplicated: a repeating unresolved error updates its
+  // existing row's Count/Last seen instead of adding a row every 5 minutes.
   ERROR_HEADERS: [
     'Timestamp',
     'Type',
     'Details',
-    'Raw data'
+    'Raw data',
+    'Count',
+    'Last seen'
   ],
 
   /**
@@ -443,16 +447,25 @@ function runBookingCore_(skipProcessed) {
     if (runHasTimeLeft_()) removeActiveBookingsThatHaveCancellationEmails_();
     if (runHasTimeLeft_()) processCancellations_();
 
-    // 4. Finished tours -> Done (sheet rows + their Gmail threads, fully
-    //    unlabelled except for Done). This is what keeps the active labels
-    //    showing only upcoming tours.
-    if (runHasTimeLeft_()) moveCompletedBookingRowsToDone_();
-    if (runHasTimeLeft_()) moveCompletedGmailThreadsToDone_();
+    // 4. Finished tours -> Done. Sheet rows move every run (cheap, Sheets
+    //    only). The Gmail side (archive + relabel to Done) runs every run too
+    //    but only inspects the small "still in inbox" candidate set on fast
+    //    runs (see getThreadsForCompletionSweep_).
+    let completedNow = [];
+    if (runHasTimeLeft_()) completedNow = moveCompletedBookingRowsToDone_() || [];
+    if (runHasTimeLeft_()) moveCompletedGmailThreadsToDone_(completedNow);
 
-    // 5. Tidy the sheets.
-    if (runHasTimeLeft_()) dedupeActiveSheets_();
-    if (runHasTimeLeft_()) sortActiveSheets_();
-    if (runHasTimeLeft_()) sortDoneSheet_();
+    // 4b. INVARIANT CHECKS (audits only): duplicates, cancelled-still-active,
+    //     completed-still-active, invalid rows. Findings land in Errors
+    //     (deduped) — the daily self-test email surfaces them.
+    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) checkInvariants_();
+
+    // 5. Tidy the sheets — a full rewrite of every tab, so only when
+    //    something actually changed this run, or on audits.
+    const dirty = RNR_RUN_STATS_.upserts > 0 || !RNR_SKIP_PROCESSED_;
+    if (dirty && runHasTimeLeft_()) dedupeActiveSheets_();
+    if (dirty && runHasTimeLeft_()) sortActiveSheets_();
+    if (dirty && runHasTimeLeft_()) sortDoneSheet_();
 
   } catch (err) {
     // Errors are logged, never rethrown, so Google does not email failure alerts.
@@ -533,7 +546,7 @@ function doPost(e) {
   resetRunCaches_();
 
   try {
-    setupBookingSystem();
+    ensureSheets_();   // cheap; full setup/formatting belongs to the audit run
 
     const params = e && e.parameter ? e.parameter : {};
     const booking = websiteParamsToBooking_(params);
@@ -542,10 +555,7 @@ function doPost(e) {
       throw new Error('Invalid website booking');
     }
 
-    upsertActiveBooking_(booking);
-
-    sortActiveSheets_();
-    formatSheets_();
+    upsertActiveBooking_(booking);   // inserts in sorted position
 
     sendWebsiteReservationAlert_(booking, params);       // internal alert
     sendWebsiteConfirmationViaBrevo_(booking, params);   // customer confirmation
@@ -906,15 +916,6 @@ function websiteParamsToBooking_(p) {
 }
 
 
-function websiteDefaultTime_(date) {
-  const d = normalizeDate_(date);
-  if (!d) return RNR.WEBSITE_WEEKDAY_TIME;
-
-  const day = d.getDay();
-  return (day === 0 || day === 6)
-    ? RNR.WEBSITE_WEEKEND_TIME
-    : RNR.WEBSITE_WEEKDAY_TIME;
-}
 
 
 function generateWebsiteBookingId_(date, name, phone, guests) {
@@ -1144,13 +1145,6 @@ function processCancellationLabel_(labelName, source) {
  * No new tabs, no new labels, no unread dependency, no manual review queue.
  ******************************************************/
 
-function resetCancellationCache_() { RNR_CANCEL_CACHE_ = null; }
-
-
-/** Sources that have a cancellation label. */
-function cancellationConfigs_() {
-  return sourceConfigs_().filter(cfg => cfg.cancel);
-}
 
 
 /**
@@ -1802,10 +1796,6 @@ function findActiveBookingRowRef_(source, bookingId) {
  * 10. MOVE COMPLETED TO DONE
  ******************************************************/
 
-function moveCompletedBookingsToDone_() {
-  moveCompletedBookingRowsToDone_();
-  moveCompletedGmailThreadsToDone_();
-}
 
 
 function moveCompletedBookingRowsToDone_() {
@@ -1834,6 +1824,7 @@ function moveCompletedBookingRowsToDone_() {
     appendCompletedLog_(completed);   // full detail FIRST (Done Tours aggregates)
     mergeCompletedIntoDone_(completed);
   }
+  return completed;                   // drives the targeted Gmail archive
 }
 
 
@@ -1981,10 +1972,71 @@ function readDoneMap_() {
 }
 
 
-function moveCompletedGmailThreadsToDone_() {
-  moveCompletedPlatformThreadsToDone_();
-  moveCompletedWebsiteThreadsToDone_();
-  moveCompletedViatorConversationThreads_();
+/**
+ * QUOTA-CRITICAL. Archive the Gmail threads of tours that are over.
+ *
+ * WHY THIS CHANGED (the "Service invoked too many times for one day: gmail"
+ * loop): the inbox policy keeps every UPCOMING booking in the inbox, so the
+ * old "scan label:x in:inbox and parse each thread" sweep read ~200 message
+ * bodies EVERY five minutes — 288 runs/day blew the daily Gmail read quota
+ * by mid-morning. The Processed label cannot fix that, because those inbox
+ * threads are all legitimately Processed already.
+ *
+ * Now: we already KNOW which bookings just completed (they were moved to
+ * Done Tours this very run). We look their threads up by booking id with a
+ * Gmail SEARCH — which does not read message bodies — and archive only
+ * those. A run with no completions costs ZERO Gmail calls here.
+ *
+ * The exhaustive body-reading sweep still exists as a safety net for
+ * threads whose id could not be matched, but it runs on the AUDIT only
+ * (a few times a day, where the cost is affordable).
+ */
+function moveCompletedGmailThreadsToDone_(completedBookings) {
+  archiveCompletedThreadsByIds_(completedBookings || []);
+
+  if (!RNR_SKIP_PROCESSED_) {          // audit only
+    moveCompletedPlatformThreadsToDone_();
+    moveCompletedWebsiteThreadsToDone_();
+    moveCompletedViatorConversationThreads_();
+  }
+}
+
+/**
+ * Targeted archive: for each just-completed booking, find its thread(s) by
+ * booking id (Gmail search, no body reads), strip the working labels, apply
+ * <Source>/Done and archive. Idempotent: a thread already carrying Done is
+ * skipped by the search filter.
+ */
+function archiveCompletedThreadsByIds_(completedBookings) {
+  if (!completedBookings.length) return;
+
+  const byId = {};
+  completedBookings.forEach(b => {
+    const id = normalizeId_(b.bookingId);
+    if (id && b.source) byId[b.source + '|' + id] = b;
+  });
+
+  Object.keys(byId).forEach(k => {
+    if (!runHasTimeLeft_()) return;
+    const parts = k.split('|');
+    const source = parts[0], id = parts[1];
+    const cfg = sourceConfigs_().find(c => c.source === source);
+    if (!cfg || !cfg.done) return;
+
+    try {
+      // Search the working labels for this id; exclude anything already Done.
+      const labels = [cfg.confirm, cfg.modify].filter(Boolean)
+        .map(l => searchTokenForLabel_(l)).join(' OR ');
+      const q = '(' + labels + ') -' + searchTokenForLabel_(cfg.done) + ' "' + id + '"';
+      const threads = GmailApp.search(q, 0, 5) || [];
+      threads.forEach(t => {
+        stripSourceLabelsExcept_(t, cfg, [cfg.done]);
+        moveThreadOutOfInbox_(t);
+      });
+    } catch (e) {
+      logError_('archiveCompletedThreadsByIds_ ' + source, e, id);
+    }
+  });
 }
 
 
@@ -2061,38 +2113,6 @@ function completedThreadShouldMoveToDone_(thread, source) {
 }
 
 
-function resetConfirmationCache_() { RNR_CONFIRMATION_CACHE_ = null; }
-
-
-/**
- * Confirmation bookings indexed by "source|id" (built once per run).
- */
-function getConfirmationCache_() {
-  if (RNR_CONFIRMATION_CACHE_) return RNR_CONFIRMATION_CACHE_;
-
-  const cache = new Map();
-
-  sourceConfigs_().forEach(cfg => {
-    if (!runHasTimeLeft_()) return;
-    const threads = getThreadsSafe_(cfg.confirm);
-
-    for (const thread of threads) {
-      if (!runHasTimeLeft_()) break;
-      try {
-        parseThread_(thread, cfg.source, 'confirm').forEach(b => {
-          const n = normalizeBooking_(b);
-          const id = normalizeId_(n.bookingId);
-          if (id) cache.set(cfg.source + '|' + id, n);
-        });
-      } catch (e) {
-        logError_('getConfirmationCache_ ' + cfg.source, e, cfg.confirm);
-      }
-    }
-  });
-
-  RNR_CONFIRMATION_CACHE_ = cache;
-  return RNR_CONFIRMATION_CACHE_;
-}
 
 
 /**
@@ -2596,7 +2616,8 @@ function sortDoneSheet_() {
   const sh = ss.getSheetByName(RNR.SHEETS.DONE);
   if (!sh || sh.getLastRow() < 3) return;
 
-  const range = sh.getRange(2, 1, sh.getLastRow() - 1, 9);
+  // Done Tours is an 8-column tab — reading/writing 9 padded a ghost column.
+  const range = sh.getRange(2, 1, sh.getLastRow() - 1, 8);
   const rows = range.getValues();
   rows.sort((a, b) => combineDateTime_(b[0], b[1]) - combineDateTime_(a[0], a[1]));
   range.setValues(rows);
@@ -3090,7 +3111,12 @@ function findGygBookingInLabelById_(labelName, bookingId) {
   const id = normalizeId_(bookingId);
   if (!id) return null;
 
-  const threads = getThreadsForce_(labelName);
+  // Targeted search (bounded): never scan the whole Done label.
+  let threads = [];
+  try {
+    threads = GmailApp.search(searchTokenForLabel_(labelName) + ' "' + id + '"', 0, 3) || [];
+  } catch (e) { return null; }
+
   for (const thread of threads) {
     try {
       const bookings = parseThread_(thread, RNR.SOURCE.GYG, 'any');
@@ -3625,10 +3651,6 @@ function parseMoney_(x) {
 }
 
 
-function extractGuestCount_(x) {
-  const m = String(x || '').match(/(\d+)/);
-  return m ? Number(m[1]) : 1;
-}
 
 
 /** Guruwalk income = flat commission we charge the guide, 6 €/guest. */
@@ -3856,27 +3878,6 @@ function extractFirst_(text, regexes) {
 
 
 /******************************************************
- * 25. LABEL HELPERS
- ******************************************************/
-
-function getSourceLabels_(source) {
-  const cfg = sourceConfigs_().find(c => c.source === source);
-  if (cfg) {
-    return {
-      confirm: cfg.confirm,
-      cancel: cfg.cancel,
-      modify: cfg.modify,
-      done: cfg.done
-    };
-  }
-  if (source === RNR.SOURCE.WEBSITE) {
-    return { confirm: RNR.LABELS.WEB_CONFIRM, done: RNR.LABELS.WEB_DONE };
-  }
-  return {};
-}
-
-
-/******************************************************
  * 26. RESPONSE AND ERROR HELPERS
  ******************************************************/
 
@@ -3900,12 +3901,30 @@ function logError_(type, err, rawData) {
       sh.getRange(1, 1, 1, RNR.ERROR_HEADERS.length).setValues([RNR.ERROR_HEADERS]);
     }
 
-    sh.appendRow([
-      new Date(),
-      type,
-      String(err && err.stack ? err.stack : err),
-      rawData || ''
-    ]);
+    const details = String(err && err.stack ? err.stack : err);
+    const now = new Date();
+    const nowText = Utilities.formatDate(now, 'Europe/Madrid', 'yyyy-MM-dd HH:mm');
+
+    // DEDUP: same Type + same first 120 chars of Details within the last 24h
+    // -> bump Count + Last seen on the existing row instead of appending.
+    const sig = type + '|' + details.slice(0, 120);
+    const last = sh.getLastRow();
+    if (last >= 2) {
+      const n = Math.min(30, last - 1);
+      const v = sh.getRange(last - n + 1, 1, n, RNR.ERROR_HEADERS.length).getValues();
+      for (let i = v.length - 1; i >= 0; i--) {
+        const ts = v[i][0];
+        if (!(ts instanceof Date) || now - ts > 24 * 3600000) continue;
+        if (String(v[i][1]) + '|' + String(v[i][2]).slice(0, 120) === sig) {
+          const row = last - n + 1 + i;
+          sh.getRange(row, 5).setValue((Number(v[i][4]) || 1) + 1);
+          sh.getRange(row, 6).setValue(nowText);
+          return;
+        }
+      }
+    }
+
+    sh.appendRow([now, type, details, rawData || '', 1, nowText]);
   } catch (e) {
     console.log('logError_ failed: ' + e + ' | original: ' + type + ' ' + err);
   }
@@ -4224,6 +4243,64 @@ function testBookingParsers() {
 
 
 /******************************************************
+ * 28B. INVARIANT CHECKS
+ *
+ * Enforced facts, verified on every audit run:
+ *   I1  one booking id -> at most one active row (across ALL language tabs)
+ *   I2  a booking with a cancellation email is not active
+ *   I3  a completed tour (start + 2h) is not in the active tabs
+ *   I4  every active row has name, date, time, source, booking id
+ * Violations are logged (deduped) — they never throw.
+ ******************************************************/
+
+function checkInvariants_() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const seenIds = {};
+    const problems = [];
+
+    activeSheetNames_().forEach(sheetName => {
+      const sh = ss.getSheetByName(sheetName);
+      if (!sh || sh.getLastRow() < 2) return;
+      const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
+      rows.forEach((row, i) => {
+        const b = rowToBooking_(row, sheetName);
+        const where = sheetName + ' row ' + (i + 2);
+
+        if (!b.name || !b.bookingId || !b.date || !b.time || !b.source) {
+          problems.push('I4 invalid row (' + where + '): missing ' +
+            [!b.name && 'name', !b.bookingId && 'booking id', !b.date && 'date',
+             !b.time && 'time', !b.source && 'source'].filter(Boolean).join(', '));
+          return;
+        }
+        const idKey = b.source + '|' + normalizeId_(b.bookingId);
+        if (seenIds[idKey]) {
+          problems.push('I1 duplicate active booking ' + b.bookingId + ' (' +
+            seenIds[idKey] + ' AND ' + where + ')');
+        } else {
+          seenIds[idKey] = where;
+        }
+        if (isCompleted_(b)) {
+          problems.push('I3 completed tour still active (' + where + '): ' +
+            b.bookingId + ' ' + b.dateKey + ' ' + b.time);
+        }
+        if (isBookingCancelledByEmail_(b)) {
+          problems.push('I2 cancelled booking still active (' + where + '): ' + b.bookingId);
+        }
+      });
+    });
+
+    problems.forEach(p => logError_('INVARIANT ' + p.slice(0, 2), p, ''));
+    if (problems.length) console.log('Invariant violations: ' + problems.length);
+    return problems.length;
+  } catch (e) {
+    console.log('checkInvariants_: ' + e);
+    return -1;
+  }
+}
+
+
+/******************************************************
  * 29. MANAGER DIAGNOSIS + FORCE TOOLS
  *
  * systemStatus()            -> full health report in the execution log
@@ -4251,6 +4328,17 @@ function systemStatus() {
     lines.push('Gmail read access: FAILING -> ' + e +
       '  (usually the daily Gmail quota; it recovers within 24h and unprocessed mail is retried automatically)');
   }
+
+  // 1b. Project timezone (all date math assumes Europe/Madrid)
+  try {
+    const tz = Session.getScriptTimeZone();
+    if (tz !== 'Europe/Madrid') {
+      lines.push('WARNING: script timezone is ' + tz + ' — must be Europe/Madrid ' +
+        '(Apps Script > Project Settings). Dates/cutoffs will be wrong until fixed.');
+    } else {
+      lines.push('Timezone: Europe/Madrid OK');
+    }
+  } catch (e) { /* ignore */ }
 
   // 2. Email quota
   try { lines.push('Emails this script can still send today: ' + MailApp.getRemainingDailyQuota()); }
@@ -4308,6 +4396,35 @@ function forceProcessEverythingNow() {
   runBookingAudit();
   return systemStatus();
 }
+
+/**
+ * RECOVERY: reprocess ONE booking. Set DEBUG_BOOKING_ID (section 31), run
+ * this. It strips the Processed label from every thread of that booking's
+ * source labels that mentions the id (bounded search), then runs one fast
+ * pass so the normal pipeline re-reads exactly those threads. Never touches
+ * unread state, never mass-restores mail.
+ */
+function reprocessBookingById() {
+  const wanted = normalizeId_(DEBUG_BOOKING_ID);
+  if (!wanted) { console.log('Set DEBUG_BOOKING_ID first (section 31).'); return; }
+
+  resetRunCaches_();
+  let stripped = 0;
+  sourceConfigs_().forEach(cfg => {
+    [cfg.confirm, cfg.modify, cfg.cancel].forEach(labelName => {
+      if (!labelName) return;
+      try {
+        const threads = GmailApp.search(searchTokenForLabel_(labelName) + ' "' + wanted + '"', 0, 10) || [];
+        threads.forEach(t => { safeRemoveLabel_(t, RNR.LABELS.PROCESSED); stripped++; });
+      } catch (e) { console.log('reprocess search ' + labelName + ': ' + e); }
+    });
+  });
+  console.log('Processed label removed from ' + stripped + ' thread(s) for ' + wanted +
+              '. Running one fast pass now...');
+  runBookingSystem();
+  console.log('Done. Check the result with debugBooking if needed.');
+}
+
 
 /** Sends a test email to management so you can verify MailApp works. */
 function testInternalAlertEmail() {
@@ -4616,71 +4733,3 @@ function reparseActiveRowsFromEmail() {
 }
 
 
-/******************************************************
- * 32. DAILY SELF-TEST  (silence = healthy)
- *
- * Set a DAILY time trigger (e.g. 08:00-09:00). Emails management ONLY when
- * something needs attention: the 5-minute run has stopped, errors were
- * logged in the last 24h, or labelled mail is sitting unprocessed.
- ******************************************************/
-
-function dailyBookingSelfTest() {
-  const problems = [];
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  // 1. Is the 5-minute run alive? (Status tab heartbeat)
-  try {
-    const sh = ss.getSheetByName('Status');
-    const stamp = sh ? String(sh.getRange(1, 2).getValue() || '') : '';
-    const last = stamp ? new Date(stamp.replace(' ', 'T')) : null;
-    if (!last || isNaN(last)) {
-      problems.push('Status tab has no readable heartbeat — has runBookingSystem ever run?');
-    } else if (Date.now() - last.getTime() > 30 * 60000) {
-      problems.push('runBookingSystem has NOT run since ' + stamp +
-        ' — check Apps Script > Triggers and > Executions.');
-    }
-  } catch (e) { problems.push('Heartbeat check failed: ' + e); }
-
-  // 2. Errors logged in the last 24h?
-  try {
-    const sh = ss.getSheetByName(RNR.SHEETS.ERRORS);
-    if (sh && sh.getLastRow() > 1) {
-      const n = Math.min(50, sh.getLastRow() - 1);
-      const v = sh.getRange(sh.getLastRow() - n + 1, 1, n, 2).getValues();
-      const cutoff = Date.now() - 24 * 3600000;
-      const recent = v.filter(r => r[0] instanceof Date && r[0].getTime() > cutoff);
-      if (recent.length) {
-        problems.push(recent.length + ' error(s) logged in the last 24h — see the Errors tab. Newest: ' +
-          String(recent[recent.length - 1][1] || ''));
-      }
-    }
-  } catch (e) { /* ignore */ }
-
-  // 3. Unprocessed labelled mail (1 cheap search per label).
-  try {
-    const stuck = [];
-    sourceConfigs_().forEach(cfg => {
-      [cfg.confirm, cfg.modify, cfg.cancel].forEach(labelName => {
-        if (!labelName) return;
-        try {
-          const q = searchTokenForLabel_(labelName) + ' -' + searchTokenForLabel_(RNR.LABELS.PROCESSED);
-          const n = GmailApp.search(q, 0, 20).length;
-          if (n) stuck.push(labelName + ': ' + n);
-        } catch (e) { stuck.push(labelName + ': read failed (' + e + ')'); }
-      });
-    });
-    if (stuck.length) {
-      problems.push('Unprocessed mail under labels:\n  ' + stuck.join('\n  ') +
-        '\nIf these persist for hours, run forceProcessEverythingNow and check Errors.');
-    }
-  } catch (e) { /* ignore */ }
-
-  if (problems.length) {
-    MailApp.sendEmail({
-      to: RNR.INTERNAL_ALERT_TO,
-      subject: 'R&R booking check: ' + problems.length + ' issue(s) need attention',
-      body: problems.join('\n\n')
-    });
-  }
-  return problems.length;
-}

@@ -272,6 +272,8 @@ function makeSchedule() {
   let violations = 0;
   try { violations = validateScheduleGrids(); } catch (e) { /* validator must never kill the run */ }
 
+  try { markHealthEvent_('HB_SCHEDULE'); updateControlHealth_(); } catch (e) { /* dashboard is best-effort */ }
+
   return { shifts: assignedShifts.length, conflicts: conflicts.length, violations };
 }
 
@@ -1534,42 +1536,3 @@ function validateCellAssignment_(sh, range, language, namesText) {
 }
 
 
-/* ---------- daily self-test: silence = healthy ---------- */
-
-/**
- * Set a DAILY time trigger (e.g. 08:00-09:00). Emails management ONLY when
- * something needs attention: schedule violations, an unreadable
- * Weekly_Schedule, or unassigned tours in the next 3 days.
- */
-function dailyScheduleSelfTest() {
-  const problems = [];
-
-  try {
-    const v = validateScheduleGrids();
-    if (v) problems.push(v + ' schedule violation(s) — details in the Control sheet Errors tab.');
-  } catch (e) { problems.push('validateScheduleGrids failed: ' + e); }
-
-  try {
-    const rules = readWeeklySchedule_(SpreadsheetApp.getActiveSpreadsheet());
-    if (!rules.length) problems.push('Weekly_Schedule parsed to ZERO rules — the tab is broken or empty.');
-  } catch (e) { problems.push('Weekly_Schedule unreadable: ' + e); }
-
-  try {
-    const soon = addDaysKey_(todayKey_(), 3);
-    const un = readSchedule_().filter(s => s.dateKey <= soon && !(s.assigned && s.assigned.length));
-    if (un.length) {
-      problems.push('UNASSIGNED tours in the next 3 days:\n' + un.map(s =>
-        '  - ' + s.dateKey + ' ' + to12h_(s.time) + ' ' + s.language + (s.private ? ' (private)' : '')
-      ).join('\n') + '\nAssign from the guide portal (All tours) or the Schedule grids.');
-    }
-  } catch (e) { /* portal reader hiccup — booking self-test covers the rest */ }
-
-  if (problems.length) {
-    MailApp.sendEmail({
-      to: 'rootsandroadstours@gmail.com',
-      subject: 'R&R schedule check: ' + problems.length + ' issue(s) need attention',
-      body: problems.join('\n\n')
-    });
-  }
-  return problems.length;
-}

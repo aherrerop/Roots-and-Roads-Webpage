@@ -1,205 +1,140 @@
 # Roots & Roads — Manager Manual (Albert & Carlos)
 
-## Daily workflow
+Updated 2026-07-20 (post-audit). Everything here matches the deployed code.
 
-1. Nothing to do for normal bookings — emails are parsed every 5 minutes into
-   the BookingSheet, and the portal follows automatically.
-2. Glance at the portal or BookingSheet for today's tours.
-3. Afternoon: read the daily queue email ("GuruWalk check-ins / no-shows to
-   process") and act on it:
-   - **GuruWalk Check-ins** tab (Guide_Ledger_v1): open the GuruWalk platform,
-     mark the listed guests as attended, then tick "Reported in GuruWalk".
-     You have **48 h from tour start** — the deadline column shows it.
-   - **Viator No-shows / GYG No-shows** tabs: mark those bookings as no-shows
-     inside Viator / GetYourGuide (this is the required management action in
-     the OTA platform), then tick "OTA action done".
-4. Check **Unassigned** (Guide_Ledger_v1): upcoming bookings whose shift has
-   no guide. Assign someone in the schedule grid (or wait for Friday's run);
-   the entry disappears automatically once assigned.
+## The three places you look
 
-## Weekly scheduling workflow
+1. **Guide portal → All tours** (phone): this week's tours, bookings, check-in
+   state, assign/reassign dropdowns, language moves. Your day-to-day tool.
+2. **Control sheet → Control tab**: health dashboard (A1:B14) + phone controls
+   (N2:P12).
+3. **Gmail inbox**: the live list of upcoming tours. An email stays in the
+   inbox until its tour ends or is cancelled. `Processed` label = it's in the
+   BookingSheet. In inbox WITHOUT `Processed` = not parsed yet (recent, or
+   check Errors).
 
-- Guides tick availability in Roots_Roads_Guide_Availability_v1 ("Week NN"
-  tabs) during the week.
-- **Friday evening the trigger runs `runWeeklyScheduling`**: refreshes week
-  tabs, syncs availability, generates schedules, and emails you the
-  Schedule_<Language> tables ready to forward.
-- Review the grids (Schedule_English / Schedule_German / Schedule_Spanish).
-  Hand-edit any cell — the portal reads the grids directly.
+## Daily
 
-### Locking an assignment (bold)
+- Nothing for normal bookings — automatic every 5 minutes.
+- **The system does not email you.** Check the three queue tabs in
+  Guide_Ledger_v1 whenever it suits you:
+  - **GuruWalk Check-ins** — report those guests on GuruWalk (All / Some (N of
+    M) / None) within **48h of tour start**, then tick the **CLEAR** checkbox
+    in row 1 to empty the tab.
+  - **Viator No-shows** / **GYG No-shows** — mark them as no-shows in the OTA,
+    then tick **CLEAR**.
+  Each tab is: row 1 = CLEAR button, row 2 = headers, row 3+ = entries.
+- Status at a glance: **Control sheet → Control tab, cells A1:B14** (last
+  booking run, last schedule, pending counts, error count).
 
-Write (or keep) a guide's name **in bold** in a Schedule_<Language> cell =
-management lock. `makeSchedule` will never move or overwrite it and assigns
-everyone else around it. Generated names are normal weight.
+## Weekly
 
-If your lock is impossible (guide doesn't speak the language, isn't
-available, or overlaps another tour < 5 h apart), the run KEEPS your lock but
-tints the cell red and writes the reason to the Control sheet's `Errors` tab.
-Fix it or ignore it deliberately — nothing is silently changed.
-`Albert` can never be auto-assigned to German (Guides tab languages rule);
-only a manual bold lock could put him there, and it would be flagged.
+Friday 18:00 the system refreshes week tabs, syncs availability, generates
+schedules, emails you the grids. Review Schedule_<Language>; adjust by typing
+(auto-locks + validates) or from the portal.
 
-### Private tours & children
+## Assigning & changing guides
 
-- Private bookings (Viator private products, GYG "Tour privado"/"Private
-  tour") appear with 🔒 in the grids, "Private" pills in the portal, and run
-  at their REAL booked time (a 10:00 private stays at 10:00).
-- Children show in BookingSheet Notes ("3 children") and in the portal as
-  `2+3` (adults + smaller child count). They never count toward paying
-  headcount, income, or guide pay.
+- **Portal (preferred)**: All tours → dropdown per tour. Only guides who speak
+  the language AND have no tour within 5h are offered. Picking one writes a
+  bold LOCK. If you pick someone conflicted anyway, it asks "Assign anyway?" —
+  confirming enforces it.
+- **Grid**: type a name in Schedule_<Language>. It auto-bolds (= lock, survives
+  regeneration) and validates instantly — a ⚠ note appears on the cell if the
+  guide doesn't speak the language, is unknown/inactive, or overlaps another
+  tour (<5h). Your edit is kept either way; red cells/⚠ notes are your flag.
+- Sick guide: arrange the replacement on WhatsApp, then set it in the portal.
 
-## Phone controls (Google Sheets app)
+## Bookings
 
-Open Roots_Roads_Control_v1 → **Control** tab → block at **N2:P12**:
+- **Your edits to booking rows stick.** Confirmations only insert; audits
+  never overwrite an existing row. Only modification/cancellation emails (the
+  guest changed it on the OTA) update fields.
+- **Language move** (e.g. German guest joins English tour): portal → booking
+  row → language selector → confirm. Traceable "moved from German" note;
+  emails can never move it back.
+- Guest-detail fixes after a phone call (count, date, name): edit the row in
+  the BookingSheet directly.
+- A booking at a time outside the offer still gets a tour: it appears in the
+  grids/portal as its own column, flagged "Extra tour (not in Weekly_Schedule)"
+  in the Schedule tab, assigned from availability or "Not assigned".
 
-| Action | What it runs |
+## Offer changes
+
+English/Spanish: edit `updateWeeklyScheduleToCurrentOffer` in assignShifts.gs
+and run it. German: edit Weekly_Schedule rows directly (Time column is text —
+type 10:00). Private slots: `ASSIGN_CFG.PRIVATE_AVAILABILITY` ("Private" is
+not a language and never goes in Weekly_Schedule). After any offer change:
+Sync availability → Generate schedules (or "Weekly full run" from the phone).
+
+## Phone controls — Control tab N2:P12
+
+Run booking update · Run booking audit · Sync availability · Generate
+schedules · Refresh ledger & queues · Weekly full run · Full operational
+refresh. Tick column O; column P shows Running… → Done/Error; the box resets
+itself. "Busy" = someone else's run; wait a minute. Stuck "Running…" (e.g.
+after a timeout): run `clearStaleControls` (mobileControls.gs).
+
+## Function reference (Apps Script editor)
+
+**Automatic** (see trigger table in the Architecture doc): runBookingSystem,
+runBookingAudit · runWeeklyScheduling, updateManagementQueues,
+archiveLedgerMonthly, and the three installable onEdit handlers
+(handleMobileControlsEdit, handleScheduleEdit, handleLedgerEdit).
+
+**Diagnosis** — safe anytime:
+- `systemStatus` (bookingList_v2.gs): quota, timezone, unprocessed mail,
+  triggers, latest errors.
+- `debugBooking` (bookingList_v2.gs): set `DEBUG_BOOKING_ID` first; full
+  parsing story for one booking.
+- `validateScheduleGrids`, `validateMobileControls` (Control project).
+- `testBookingParsers` (41 checks) and `testQueueIdempotency`.
+- Portal health from any browser: `<portal /exec URL>?action=health`.
+
+**Recovery** — all idempotent, never touch unread state:
+
+| Problem | Run |
 |---|---|
-| Run booking update | runBookingSystem (remote) |
-| Run booking audit | runBookingAudit (remote) |
-| Sync availability | syncAvailabilityFile |
-| Generate schedules | makeSchedule |
-| Refresh ledger & queues | updateManagementQueues |
-| Weekly full run | runWeeklyScheduling |
-| Full operational refresh | booking update + sync + schedule + queues |
+| One booking wrong/missing | `debugBooking`, then `reprocessBookingById` (both use DEBUG_BOOKING_ID) |
+| Many rows wrong after a parser fix | `reparseActiveRowsFromEmail` |
+| Anything possibly stale | `forceProcessEverythingNow` (full audit + report) |
+| Upcoming mail missing from inbox | `restoreUpcomingThreadsToInbox` |
+| Ledger columns misaligned / duplicates | `repairLedgers`, `repairLedgerDuplicates` |
+| Queue tabs weird row counts | `repairQueueTabs` |
+| Stuck phone control | `clearStaleControls` |
+| Queue tab layout wrong / stray boxes | `repairQueueTabs` (also upgrades old layouts) |
+| CLEAR buttons not responding | `setupLedgerControls` (installs the ledger trigger) |
+| Corrupted Weekly_Schedule times (12/30/1899) | `updateWeeklyScheduleToCurrentOffer` |
 
-Tick the checkbox in column O. Column P shows `Running…`, then
-`Done: 2026-07-17 18:04` or `Error: <reason>`. The checkbox resets itself.
-If it says `Busy`, someone else's run is in progress — wait a minute.
+**One-time setup**: setupBookingSystem, setupLedger (also installs the queue
+CLEAR buttons), setupMobileControls, setupScheduleEditValidation,
+setupLedgerControls. **Do not run**: setupWeeklySchedule (obsolete
+defaults), archiveLedgerMonthly mid-month.
 
-One-time setup: run `setupMobileControls()` from the Apps Script editor
-(creates block + installable trigger), and set Script Properties
-`BOOKING_WEBAPP_URL` (BookingSheet web-app /exec URL) and `ADMIN_KEY`
-(same random string in BOTH the Control and BookingSheet projects).
-`validateMobileControls()` reports anything missing.
+## Gmail filters (recreate exactly if lost — never "Skip the Inbox")
 
-## Gmail: filters and labels
+Unchanged from before: Viator (`booking@t1.viator.com`; "New Booking for" /
+"Cancelled Booking:" / "Amended Booking:"→Modifications), GuruWalk
+(`no-reply@guruwalk.com`; "Confirmed booking" / canceled variants /
+modification variants), GetYourGuide
+(`do-not-reply@notification.getyourguide.com`; "Booking -"+"Urgente: nueva
+reserva recibida"+"New booking received" / cancelado-cancelled variants /
+"Booking detail change"+"Cambio en los datos de la reserva"), Website
+(`rootsandroadstours@gmail.com`; "NEW WEBSITE RESERVATION"), Airbnb
+(`inforootsandroads@gmail.com`; "booked your experience"). FreeTour: add only
+after verifying a real email's sender + subject.
 
-Filters (already configured; recreate exactly if lost — all "Never send to
-Spam", never "Skip the Inbox"):
+## Troubleshooting quick table
 
-- Viator: `from:(booking@t1.viator.com)` + subject `"New Booking for"` →
-  Viator/Confirmations · `"Cancelled Booking:"` → Viator/Cancellations ·
-  `"Amended Booking:"` → Viator/Modifications (there is NO Amended label).
-- GuruWalk: `from:(no-reply@guruwalk.com)` + `"Confirmed booking"` →
-  Confirmations · `{"has canceled booking" "has canceled a booking"
-  "has cancelled booking" "has cancelled a booking"}` → Cancellations ·
-  `{"you have a modification on booking" "booking modification"}` →
-  Modifications.
-- GetYourGuide: `from:(do-not-reply@notification.getyourguide.com)` +
-  `{"Booking -" "Urgente: nueva reserva recibida" "New booking received"}` →
-  Confirmations · `{cancelado cancelada cancelled canceled}` → Cancellations ·
-  `{"Booking detail change" "Cambio en los datos de la reserva"}` →
-  Modifications.
-- Website: `from:(rootsandroadstours@gmail.com)` +
-  `"NEW WEBSITE RESERVATION"` → Webpage/Confirmations.
-- Airbnb: `from:(inforootsandroads@gmail.com)` + `"booked your experience"` →
-  Airbnb/Confirmations. FreeTour filters: to be added when the first real
-  freetour.com email arrives (verify sender + subject first; do not guess).
+| Symptom | First look | Fix |
+|---|---|---|
+| Booking missing | `debugBooking` | reprocessBookingById |
+| Wrong guest count | `debugBooking` (shows email vs sheet) | reparseActiveRowsFromEmail |
+| Tour missing from schedule | Weekly_Schedule row exists? Errors tab | updateWeeklySchedule… → sync → makeSchedule |
+| Impossible assignment shown | red cell / ⚠ note / Errors | reassign via portal |
+| Portal error on phone | tap "Test server connection" on the error screen | health JSON tells you server vs network |
+| Quota error in Errors | systemStatus | wait (heals <24h); mail is retried automatically |
+| Duplicate check-ins rows | — | repairLedgerDuplicates |
 
-### The inbox IS the upcoming-tour list
-
-A booking email now STAYS in the inbox after the system processes it, and only
-leaves when the tour is over (start + 2h) or the booking is cancelled. So:
-
-- **In the inbox** = a tour that still has to happen.
-- **Archived + `<Source>/Done`** = tour finished.
-- **Archived + `<Source>/Cancellations`** = cancelled, nothing to run.
-- **`Processed` label** = the algorithm has read it and the booking is in the
-  BookingSheet. A confirmation in the inbox WITHOUT `Processed` is not in the
-  sheet yet.
-
-`restoreUpcomingThreadsToInbox` (bookingList_v2.gs) brings back any
-confirmation/modification for a tour that has not happened yet — use it if the
-inbox ever looks emptier than your upcoming tours.
-
-Label meanings:
-- `Publishing Pages/Processed` = the algorithm has fully handled that thread.
-  A confirmation WITHOUT Processed is not in the BookingSheet yet (or failed
-  to parse — check Errors).
-- `<Source>/Done` = tour completed; all working labels removed. The live
-  Confirmations/Modifications labels therefore contain only upcoming tours —
-  anything old sitting there deserves a look.
-
-## Functions reference
-
-Automatic (time triggers): runBookingSystem, runBookingAudit,
-runWeeklyScheduling, updateManagementQueues, sendGuruwalkCheckinReminder,
-archiveLedgerMonthly.
-
-Safe to run manually any time (all idempotent): everything above plus
-makeSchedule, syncAvailabilityFile, setupBookingSystem, setupLedger,
-validateScheduleGrids, validateMobileControls, testBookingParsers,
-testQueueIdempotency, debugWhereIsBooking (edit the id inside),
-debugGygParsingOnly, debugFreetourParsingOnly.
-
-Do NOT run: archiveLedgerMonthly mid-month (it's guarded, but don't),
-setupWeeklySchedule (overwrites the tour offer with defaults).
-
-## Portal deployment & health
-
-After changing guidePortal.gs: Apps Script → Deploy → **Manage deployments →
-Edit → New version** (keep the SAME deployment so the URL doesn't change).
-If you create a NEW deployment, update `PORTAL_URL` in `guide/index.html` and
-push to GitHub.
-
-Health check from any phone browser:
-`<portal /exec URL>?action=health` → shows server time, deployment id, and
-whether the Control sheet / BookingSheet / ledger are reachable. `ok: true`
-means the backend is fine — a portal problem is then front-end or network.
-
-## Gmail quota — why it used to break, and how it's prevented now
-
-The old script listed every thread under every label and inspected each one on
-every 5-minute run — hundreds of Gmail calls per run, which hit Google's
-"Service invoked too many times for one day: gmail" limit by the afternoon.
-
-The current fast run uses **the Processed label as a Gmail search filter**: it
-asks Gmail directly for "mail under this label that is NOT yet Processed", so
-an idle run costs about 20 Gmail calls instead of 400. It stays comfortably
-under quota at 5-minute frequency — you do NOT need to slow it down.
-
-The twice-daily **audit** deliberately re-reads everything (Processed
-included) to repair drift; that's the heavier run, and twice a day is fine.
-
-If you ever see the quota error again in the BookingSheet **Errors** tab:
-it self-heals within ~24h (Google's window is rolling), and nothing is lost
-because mail without the Processed label is retried automatically. To watch
-recovery, open the **Status** tab (BookingSheet) — it refreshes after every
-run.
-
-## Repair & audit functions (run from the editor when needed)
-
-- `systemStatus` (bookingList_v2.gs) — full diagnosis in the log: Gmail quota
-  state, email quota, unprocessed mail per label, triggers, latest errors.
-- `forceProcessEverythingNow` (bookingList_v2.gs) — force a full re-read and
-  repair now; safe, idempotent.
-- `testInternalAlertEmail` (bookingList_v2.gs) — confirms the script can email.
-- `repairLedgers` (guidePortal.gs) — fixes guide-tab columns if headers look
-  misaligned (e.g. "R&R makes" missing / Children column).
-- `repairQueueTabs` (guidePortal.gs) — clears stray checkboxes that could
-  inflate a queue tab's row count.
-- `restoreUpcomingThreadsToInbox` (bookingList_v2.gs) — re-adds to the inbox
-  every confirmation/modification whose tour is still upcoming. Skips
-  cancelled and finished ones. Idempotent.
-- `repairLedgers` + `repairQueueTabs` also run automatically inside
-  `setupLedger`.
-
-## Troubleshooting
-
-- **Booking missing**: is the email under the right label? No label → fix the
-  Gmail filter. Labelled but no Processed → check BookingSheet Errors tab;
-  run "Run booking update"; the audit retries failed parses automatically.
-  Use debugWhereIsBooking with the booking id to locate the thread.
-- **Duplicate booking**: run "Run booking audit" (dedupe pass). If it
-  persists, the two rows differ in booking id — delete the wrong one.
-- **Stale schedule in portal**: the portal reads the grids live; refresh the
-  page. If a grid cell is wrong, edit it (bold if you want it locked).
-- **Portal "network error"**: open the health URL. `ok:true` → front-end;
-  hard-refresh, check PORTAL_URL. Unreachable → redeploy the web app
-  (Anyone, execute as you).
-- **Check-in failed**: guide should retry (saves are idempotent — a repeated
-  save overwrites, never duplicates). Managers can check in on any guide's
-  behalf from All tours.
-- **Recovery**: never mark mail unread. Run "Run booking audit" — it re-reads
-  every labelled thread (Processed included) and repairs sheet state.
+Never mark mail unread; never mass-remove Processed. Every recovery above is
+targeted and safe to re-run.

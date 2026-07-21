@@ -1,64 +1,95 @@
 # Roots & Roads — Deployment Checklist
 
-Follow in order. Steps you run once are marked (once).
+Follow in order. Steps marked (once) are one-time.
+Verified against the code on 2026-07-20 (post-audit).
 
-## 1. BookingSheet project (Extensions → Apps Script inside BookingSheet)
+## 0. Before you start
 
-1. Replace the booking script contents with `apps-script/bookingList_v2.gs`.
-2. Replace/keep `websiteAvailabilityUpdate.gs` with the repo version (adds the
-   admin remote-run hook).
-3. Script Properties: add `ADMIN_KEY` = a long random string. Keep existing
-   `BREVO_API_KEY`, `BREVO_TEMPLATE_ID`.
-4. Run `setupBookingSystem` (once) → authorize.
-5. Run `testBookingParsers` → expect "29 passed, 0 failed".
-6. Triggers: `runBookingSystem` every 5 min · `runBookingAudit` 2-3x/day.
-   (Delete any old trigger pointing at removed functions.)
-7. Web app: Deploy → Manage deployments → Edit → **New version** on the
-   EXISTING deployment (the website's booking form + calendar use this URL).
-   Copy the /exec URL.
+- Both Apps Script projects must have **Project Settings → Time zone =
+  Europe/Madrid**. `systemStatus` and the portal health endpoint check this
+  and will warn you if it is wrong.
 
-## 2. Control project (Extensions → Apps Script inside Roots_Roads_Control_v1)
+## 1. BookingSheet project ("RootsRoadsBookings")
 
-1. Replace `assignShifts.gs` and `guidePortal.gs` with the repo versions; add
-   `mobileControls.gs`.
-2. Script Properties: `BOOKING_WEBAPP_URL` = the /exec URL from step 1.7;
-   `ADMIN_KEY` = same string as step 1.3. Keep `LEDGER_ID`. Change
-   `TOKEN_SECRET` in guidePortal.gs if still the placeholder.
-3. Run `setupLedger` (once) → creates/migrates ledger tabs (adds Children
-   column) + queue tabs.
-4. Run `setupMobileControls` (once) → Control tab block N2:P12 + installable
-   onEdit trigger.
-5. Run `validateMobileControls` and `validateScheduleGrids` → fix anything
-   reported.
-6. Triggers: `runWeeklyScheduling` Friday 18:00-19:00 ·
-   `updateManagementQueues` hourly · `sendGuruwalkCheckinReminder` daily
-   16:00-17:00 · `archiveLedgerMonthly` monthly day 1, 02:00-03:00.
-7. Portal web app: Deploy → Manage deployments → Edit → **New version** on the
-   existing deployment (URL must stay `AKfycbxzl4...` or update the front
-   end). Execute as: Me. Access: Anyone.
+1. Paste `apps-script/bookingList_v2.gs` over the existing booking file. Save.
+2. Paste `apps-script/websiteAvailabilityUpdate.gs` (adds the admin remote-run
+   hook used by the phone controls). Save.
+3. (once) Project Settings → Script Properties:
+   `ADMIN_KEY` = a long random string. Keep `BREVO_API_KEY`,
+   `BREVO_TEMPLATE_ID`.
+4. (once) Run `setupBookingSystem` → authorize when prompted.
+5. Run `testBookingParsers` → expect **41 passed, 0 failed**.
+6. Triggers (delete any trigger pointing at a function that no longer exists):
+   - `runBookingSystem` — time-driven, every 5 minutes
+   - `runBookingAudit` — time-driven, every 8 hours
+   There is **no daily self-test trigger** — the system does not email you.
+7. Deploy → Manage deployments → pencil on the ACTIVE deployment →
+   Version: **New version** → Deploy. Copy the `/exec` URL.
 
-## 3. Website repository (GitHub Pages)
+## 2. Control project ("mobBoss", bound to Roots_Roads_Control_v1)
 
-1. Commit and push the changed files: `guide/index.html`, `index.html`,
-   `css/main_css.css`, `docs/*`, `apps-script/*`.
-2. If the portal deployment URL changed, update `PORTAL_URL` in
-   `guide/index.html` first.
+1. Paste `apps-script/assignShifts.gs`, `apps-script/guidePortal.gs`,
+   `apps-script/mobileControls.gs`. Save.
+2. (once) Script Properties: `BOOKING_WEBAPP_URL` = the `/exec` URL from 1.7;
+   `ADMIN_KEY` = the same string as 1.3. Keep `LEDGER_ID`. Replace
+   `TOKEN_SECRET` in guidePortal.gs if it is still the placeholder.
+3. (once) Run, in this order:
+   - `setupLedger` — creates/migrates ledger tabs, adds the queue tabs with
+     their CLEAR buttons, installs the ledger edit trigger.
+   - `setupMobileControls` — Control!N2:P12 block + edit trigger.
+   - `setupScheduleEditValidation` — auto-lock + validate manual grid edits.
+   - `validateMobileControls` — must report no problems.
+4. Offer + schedule refresh, in this order:
+   `updateWeeklyScheduleToCurrentOffer` → `syncAvailabilityFile` →
+   `makeSchedule`. Then check Schedule_English has 11:00 columns and the
+   Control sheet Errors tab for flagged conflicts.
+5. Triggers:
+   - `runWeeklyScheduling` — time-driven, Friday 18:00–19:00
+   - `updateManagementQueues` — time-driven, hourly
+   - `archiveLedgerMonthly` — time-driven, monthly, day 1, 02:00–03:00
+   (The three onEdit triggers were created by the setup functions in 2.3 —
+   do not add them by hand.)
+6. Deploy → Manage deployments → pencil on the ACTIVE deployment →
+   **New version** → Deploy. Confirm **Execute as: Me** and
+   **Who has access: Anyone** (not "Anyone with Google account").
 
-## 4. Tests after deployment
+## 3. Website repository
 
-- Phone browser → `<portal>/exec?action=health` → `ok: true`.
-- Portal login on a phone; confirm tours load, `2+3` shows on a booking with
-  children, Private pill on a private tour, check-in greys out.
-- BookingSheet: `testBookingParsers` (29/29), send yourself a test website
-  booking, confirm it appears.
-- Control: tick "Run booking update" on the phone → status Running… → Done.
-- Ledger: `testQueueIdempotency` → PASS.
-- Grids: `validateScheduleGrids` → "no violations found".
+1. Commit and push: `guide/index.html`, `index.html`, `css/main_css.css`,
+   `apps-script/`, `docs/`, `test/`.
+2. Only if the portal deployment URL changed: update `PORTAL_URL` near the top
+   of `guide/index.html`'s script block first.
 
-## 5. Rollback
+## 4. Verification (do these, in order)
 
-- Apps Script: Deploy → Manage deployments → Edit → select the PREVIOUS
-  version. Code editor: File → See version history.
+- Phone browser: `<portal /exec URL>?action=health` → `"ok":true`,
+  `"timezoneOk":true`, `deployment":"portal-v4"`.
+- Portal on a phone: log in; tours load; a booking with children shows `2+3`;
+  a private tour shows the Private pill; tapping **Check in** greys the button;
+  minimise and reopen → tours still there, check-in still recorded.
+- Manager view: All tours shows only this week; the assign dropdown offers
+  only compatible guides; assigning a conflicted guide asks "Assign anyway?".
+- Control sheet → Control tab: health block A1:B14 populated; tick
+  "Run booking update" (O3) → Running… → Done.
+- Guide_Ledger_v1: each queue tab has row 1 CLEAR button, row 2 headers.
+  Tick CLEAR on an empty tab → status says "Cleared 0 entries".
+- BookingSheet → Status tab: "Last run finished" within the last 5 minutes.
+- Editor: `testQueueIdempotency` → PASS; `validateScheduleGrids` → no
+  violations.
+
+## 5. Local test suite (optional, on a computer with node)
+
+```
+bash test/run-tests.sh
+```
+Expect: 17 + 13 + 17 + 17 Sheets-logic assertions, all passing.
+Parser suite runs inside Apps Script via `testBookingParsers` (41 checks).
+
+## 6. Rollback
+
+- Apps Script: Deploy → Manage deployments → Edit → select the previous
+  version. Code: File → See version history.
 - Website: `git revert` the deploy commit and push.
-- Sheets are never destructively migrated; the only schema change (ledger
-  Children column) is additive and can be left in place.
+- Spreadsheets: no destructive migrations. The only schema changes are
+  additive (ledger `Children` column; queue tabs gained a button row above
+  the headers) and both are re-runnable via `repairLedgers` / `repairQueueTabs`.

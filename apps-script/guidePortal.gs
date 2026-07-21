@@ -523,7 +523,7 @@ function apiHealth_() {
     ok: true,
     time: Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'),
     tz: 'Europe/Madrid',
-    deployment: 'portal-v3'
+    deployment: 'portal-v4'
   };
   try {
     const control = control_();
@@ -542,6 +542,11 @@ function apiHealth_() {
   try {
     out.ledgerOk = !!ledgerSS_();
   } catch (e) { out.ledgerOk = false; }
+  try {
+    const scriptTz = Session.getScriptTimeZone();
+    out.timezoneOk = scriptTz === 'Europe/Madrid';
+    if (!out.timezoneOk) { out.ok = false; out.error = 'Script timezone is ' + scriptTz + ', must be Europe/Madrid'; }
+  } catch (e) { /* ignore */ }
   return out;
 }
 
@@ -1089,9 +1094,6 @@ function shiftKey_(dateKey, minutes, language) {
   return dateKey + '|' + minutes + '|' + String(language || '').trim().toLowerCase();
 }
 
-function prop_(obj, key, dflt) {
-  return Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : dflt;
-}
 
 function round2_(n) { return Math.round(Number(n || 0) * 100) / 100; }
 
@@ -1315,6 +1317,7 @@ function setupLedger() {
   ensureGuideTabs_(ss);
   ensureQueueTabs_(ss);
   repairQueueTabs();
+  setupLedgerControls();
   Logger.log('Ledger ready: ' + ss.getUrl());
 }
 
@@ -1362,9 +1365,13 @@ function debugPortal() {
  * including the manager's "Done" checkbox and timestamp — are never
  * recreated or overwritten. Set a time trigger:
  *   updateManagementQueues  — every hour
- *   sendGuruwalkCheckinReminder — daily, 16:00-17:00
  *   archiveLedgerMonthly    — monthly, 1st, 02:00-03:00
  ******************************************************/
+
+// Queue tab layout: row 1 = clear button, row 2 = headers, row 3+ = entries.
+const QUEUE_BUTTON_ROW = 1;
+const QUEUE_HEADER_ROW = 2;
+const QUEUE_FIRST_DATA_ROW = 3;
 
 const QUEUE_TABS = {
   VIATOR_NOSHOW: 'Viator No-shows',
@@ -1393,13 +1400,21 @@ function attendanceLabel_(booked, checkedIn) {
   return 'Some (' + checkedIn + ' of ' + booked + ')';
 }
 
-/** Last row that actually holds data (column A), ignoring stray checkboxes. */
+/** Last row that actually holds DATA in column A (ignores stray checkboxes).
+ *  For queue tabs, data starts at QUEUE_FIRST_DATA_ROW; anything above is the
+ *  clear button + header. */
 function lastDataRow_(sh) {
   const vals = sh.getRange(1, 1, sh.getMaxRows(), 1).getValues();
   for (let i = vals.length - 1; i >= 0; i--) {
     if (String(vals[i][0]).trim() !== '') return i + 1;
   }
   return 0;
+}
+
+/** Last data row of a QUEUE tab (never less than the header row). */
+function lastQueueRow_(sh) {
+  const last = lastDataRow_(sh);
+  return Math.max(last, QUEUE_HEADER_ROW);
 }
 
 /**
@@ -1453,12 +1468,14 @@ function repairLedgers() {
 
 function repairQueueTabs() {
   const ss = ledgerSS_();
+  ensureQueueTabs_(ss);
   [QUEUE_TABS.VIATOR_NOSHOW, QUEUE_TABS.GYG_NOSHOW, QUEUE_TABS.GURUWALK].forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
-    const last = Math.max(1, lastDataRow_(sh));
+    const last = Math.max(QUEUE_HEADER_ROW, lastQueueRow_(sh));
     const max = sh.getMaxRows();
     if (max > last) {
+      // Wipe stray checkboxes/content below the real entries.
       sh.getRange(last + 1, 1, max - last, sh.getMaxColumns())
         .clearContent().clearDataValidations();
     }
@@ -1466,23 +1483,97 @@ function repairQueueTabs() {
   Logger.log('Queue tabs repaired.');
 }
 
+/**
+ * Queue tabs use a 3-part layout, mirroring the Control sheet's phone
+ * controls:
+ *   row 1  [ Clear button label | checkbox | status ]
+ *   row 2  headers
+ *   row 3+ entries
+ * Ticking the row-1 checkbox clears every entry (used once the information
+ * has been entered on GuruWalk / Viator / GetYourGuide). Safe to re-run:
+ * an existing tab is upgraded to this layout without losing entries.
+ */
 function ensureQueueTabs_(ss) {
   ss = ss || ledgerSS_();
-  const mk = (name, headers) => {
+  const mk = (name, headers, label) => {
     let sh = ss.getSheetByName(name);
     if (!sh) {
       sh = ss.insertSheet(name);
-      sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
-      sh.setFrozenRows(1);
-      // NOTE: checkboxes are inserted per appended row, never for the whole
-      // column — a full-column checkbox makes getLastRow() = max rows and
-      // breaks appends.
+    } else if (String(sh.getRange(QUEUE_HEADER_ROW, 1).getValue() || '') !== headers[0]) {
+      // Old layout (headers on row 1): push everything down one row.
+      sh.insertRowBefore(1);
     }
+    // Button row (always rewritten; cheap and self-healing).
+    sh.getRange(QUEUE_BUTTON_ROW, 1, 1, 3)
+      .setValues([[label, false, 'Tick the box after entering these on the platform']]);
+    sh.getRange(QUEUE_BUTTON_ROW, 2).insertCheckboxes();
+    sh.getRange(QUEUE_BUTTON_ROW, 1, 1, 3)
+      .setFontWeight('bold').setBackground('#fde68a').setFontColor('#7c2d12');
+    sh.getRange(QUEUE_HEADER_ROW, 1, 1, headers.length).setValues([headers])
+      .setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+    sh.setFrozenRows(QUEUE_HEADER_ROW);
+    // NOTE: checkboxes are inserted per appended row, never for a whole
+    // column — a full-column checkbox makes getLastRow() = max rows.
     return sh;
   };
-  mk(QUEUE_TABS.VIATOR_NOSHOW, NOSHOW_HEADERS);
-  mk(QUEUE_TABS.GYG_NOSHOW, NOSHOW_HEADERS);
-  mk(QUEUE_TABS.GURUWALK, GURUWALK_HEADERS);
+  mk(QUEUE_TABS.VIATOR_NOSHOW, NOSHOW_HEADERS, 'CLEAR — after marking these no-shows in Viator');
+  mk(QUEUE_TABS.GYG_NOSHOW, NOSHOW_HEADERS, 'CLEAR — after marking these no-shows in GetYourGuide');
+  mk(QUEUE_TABS.GURUWALK, GURUWALK_HEADERS, 'CLEAR — after reporting these check-ins in GuruWalk');
+}
+
+
+/**
+ * RUN ONCE: installs the on-edit trigger on the LEDGER spreadsheet so the
+ * row-1 "CLEAR" checkboxes work. (Triggers are per-spreadsheet, and the
+ * ledger is a different file from the Control sheet.)
+ */
+function setupLedgerControls() {
+  const ss = ledgerSS_();
+  ensureQueueTabs_(ss);
+  const exists = ScriptApp.getProjectTriggers().some(t =>
+    t.getHandlerFunction() === 'handleLedgerEdit');
+  if (!exists) {
+    ScriptApp.newTrigger('handleLedgerEdit').forSpreadsheet(ss).onEdit().create();
+  }
+  Logger.log('Ledger queue controls ready: ' + ss.getUrl());
+}
+
+/** Installable on-edit handler for the ledger's queue-tab CLEAR buttons. */
+function handleLedgerEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    const sh = e.range.getSheet();
+    const name = sh.getName();
+    if (Object.values(QUEUE_TABS).indexOf(name) === -1) return;
+    if (e.range.getRow() !== QUEUE_BUTTON_ROW || e.range.getColumn() !== 2) return;
+    if (e.range.getValue() !== true) return;
+
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(5000)) {
+      sh.getRange(QUEUE_BUTTON_ROW, 3).setValue('Busy — try again in a moment');
+      e.range.setValue(false);
+      return;
+    }
+    try {
+      const last = lastQueueRow_(sh);
+      const n = Math.max(0, last - QUEUE_HEADER_ROW);
+      if (n > 0) {
+        sh.getRange(QUEUE_FIRST_DATA_ROW, 1, n, sh.getMaxColumns())
+          .clearContent().clearDataValidations();
+      }
+      sh.getRange(QUEUE_BUTTON_ROW, 3).setValue(
+        'Cleared ' + n + ' entr' + (n === 1 ? 'y' : 'ies') + ' — ' +
+        Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm'));
+    } catch (err) {
+      sh.getRange(QUEUE_BUTTON_ROW, 3).setValue('Error: ' + String(err).slice(0, 80));
+      console.error('handleLedgerEdit: ' + err);
+    } finally {
+      e.range.setValue(false);      // script writes never re-fire onEdit
+      lock.releaseLock();
+    }
+  } catch (outer) {
+    console.error('handleLedgerEdit outer: ' + outer);
+  }
 }
 
 /** Main entry point — run on a time trigger (hourly). */
@@ -1494,6 +1585,8 @@ function updateManagementQueues() {
     updateNoShowQueues_();
     updateGuruwalkCheckinQueue_();
     rebuildUnassignedLedger_();
+    markHealthEvent_('HB_QUEUES');
+    updateControlHealth_();
   } finally {
     lock.releaseLock();
   }
@@ -1581,9 +1674,9 @@ function updateNoShowQueues_() {
     const sh = targets[k];
     existing[k] = new Set();
     if (!sh) return;
-    const last = lastDataRow_(sh);
-    if (last < 2) return;
-    const v = sh.getRange(2, 1, last - 1, NOSHOW_HEADERS.length).getValues();
+    const last = lastQueueRow_(sh);
+    if (last < QUEUE_FIRST_DATA_ROW) return;
+    const v = sh.getRange(QUEUE_FIRST_DATA_ROW, 1, last - QUEUE_HEADER_ROW, NOSHOW_HEADERS.length).getValues();
     v.forEach(r => {
       if (String(r[4] || '').trim()) existing[k].add(String(r[4] || '') + '|' + toDateKey_(r[0]));
     });
@@ -1609,7 +1702,7 @@ function updateNoShowQueues_() {
   Object.keys(newRows).forEach(k => {
     const rows = newRows[k], sh = targets[k];
     if (!sh || !rows.length) return;
-    const start = Math.max(2, lastDataRow_(sh) + 1);
+    const start = Math.max(QUEUE_FIRST_DATA_ROW, lastQueueRow_(sh) + 1);
     sh.getRange(start, 1, rows.length, NOSHOW_HEADERS.length).setValues(rows);
     sh.getRange(start, 12, rows.length, 1).insertCheckboxes();
   });
@@ -1624,9 +1717,9 @@ function updateGuruwalkCheckinQueue_() {
 
   // Already-queued keys (skip blanks / phantom rows).
   const existing = new Set();
-  const lastG = lastDataRow_(sh);
-  if (lastG >= 2) {
-    const v = sh.getRange(2, 1, lastG - 1, GURUWALK_HEADERS.length).getValues();
+  const lastG = lastQueueRow_(sh);
+  if (lastG >= QUEUE_FIRST_DATA_ROW) {
+    const v = sh.getRange(QUEUE_FIRST_DATA_ROW, 1, lastG - QUEUE_HEADER_ROW, GURUWALK_HEADERS.length).getValues();
     v.forEach(r => {
       if (String(r[GW_BOOKINGID] || '').trim()) existing.add(String(r[GW_BOOKINGID]) + '|' + toDateKey_(r[0]));
     });
@@ -1665,7 +1758,7 @@ function updateGuruwalkCheckinQueue_() {
   });
 
   if (rows.length) {
-    const start = Math.max(2, lastDataRow_(sh) + 1);
+    const start = Math.max(QUEUE_FIRST_DATA_ROW, lastQueueRow_(sh) + 1);
     sh.getRange(start, 1, rows.length, GURUWALK_HEADERS.length).setValues(rows);
     sh.getRange(start, GW_REPORTED + 1, rows.length, 1).insertCheckboxes();
   }
@@ -1681,72 +1774,93 @@ function guruwalkDeadline_(dateKey, timeLabel) {
   return Utilities.formatDate(deadline, 'Europe/Madrid', 'yyyy-MM-dd HH:mm');
 }
 
-/**
- * Daily afternoon reminder (time trigger 16:00-17:00): tells management which
- * GuruWalk check-ins still need to be reported (48 h window) and how many
- * OTA no-shows are pending.
- */
-function sendGuruwalkCheckinReminder() {
-  const ss = ledgerSS_();
-  ensureQueueTabs_(ss);
-  const pendingGuru = [];
-  const sh = ss.getSheetByName(QUEUE_TABS.GURUWALK);
-  const lastR = sh ? lastDataRow_(sh) : 0;
-  if (sh && lastR >= 2) {
-    const v = sh.getRange(2, 1, lastR - 1, GURUWALK_HEADERS.length).getValues();
-    v.forEach(r => {
-      if (String(r[GW_BOOKINGID] || '').trim() && r[GW_REPORTED] !== true) pendingGuru.push(r);
-    });
-  }
+/******************************************************
+ * 10B. MANAGER HEALTH DASHBOARD  (Control tab, A1:B14)
+ *
+ * A phone-glanceable status block. Refreshed by updateManagementQueues
+ * (hourly) and by makeSchedule. Timestamps come from script
+ * properties written by the functions themselves; counters are recomputed
+ * live. The Mobile Controls block lives at N2:P12 on the same tab.
+ ******************************************************/
 
-  const pendingNoShows = { Viator: [], GetYourGuide: [] };
-  [[QUEUE_TABS.VIATOR_NOSHOW, 'Viator'], [QUEUE_TABS.GYG_NOSHOW, 'GetYourGuide']].forEach(pair => {
-    const q = ss.getSheetByName(pair[0]);
-    if (!q) return;
-    const lastQ = lastDataRow_(q);
-    if (lastQ < 2) return;
-    const v = q.getRange(2, 1, lastQ - 1, NOSHOW_HEADERS.length).getValues();
-    v.forEach(r => { if (String(r[4] || '').trim() && r[11] !== true) pendingNoShows[pair[1]].push(r); });
-  });
-
-  const totalNoShows = pendingNoShows.Viator.length + pendingNoShows.GetYourGuide.length;
-  if (!pendingGuru.length && !totalNoShows) return;   // nothing to do -> no email
-
-  let body = 'Management queue — actions needed today.\n\n';
-
-  if (pendingGuru.length) {
-    body += 'GURUWALK — report these on the GuruWalk platform (48h from tour start):\n';
-    // group by tour for readability
-    pendingGuru.forEach(r => {
-      const attend = String(r[GW_ATTEND] || '');
-      body += `  • ${r[4] || '(no name)'} — ${attend}` +
-              (Number(r[GW_CHILDREN]) ? ` (+${r[GW_CHILDREN]} children)` : '') +
-              `  [${toDateKey_(r[0])} ${r[1]} ${r[2]}, guide ${r[GW_GUIDE] || '?'}, deadline ${r[GW_DEADLINE]}]\n`;
-    });
-    body += '\n  Meaning: All = everyone came · Some (N of M) = guide checked in fewer · None = no-show.\n\n';
-  }
-
-  if (totalNoShows) {
-    body += 'OTA NO-SHOWS — mark as no-show inside the platform so they cannot review/refund:\n';
-    ['Viator', 'GetYourGuide'].forEach(src => {
-      pendingNoShows[src].forEach(r => {
-        body += `  • [${src}] ${r[5] || '(no name)'} — ${r[6]} adults` +
-                (Number(r[7]) ? `, ${r[7]} children` : '') +
-                `  [${toDateKey_(r[0])} ${r[1]} ${r[2]}, booking ${r[4]}, guide ${r[8] || '?'}]\n`;
-      });
-    });
-    body += '\n';
-  }
-
-  body += 'Tick the checkbox on each row in Guide_Ledger_v1 once done, so it drops off tomorrow\'s list.';
-
-  MailApp.sendEmail({
-    to: 'rootsandroadstours@gmail.com',
-    subject: 'R&R: ' + pendingGuru.length + ' GuruWalk + ' + totalNoShows + ' OTA no-shows to process',
-    body
-  });
+function markHealthEvent_(key) {
+  try {
+    PropertiesService.getScriptProperties().setProperty(
+      key, Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm'));
+  } catch (e) { /* ignore */ }
 }
 
+function updateControlHealth_() {
+  try {
+    const control = control_();
+    let sh = control.getSheetByName('Control');
+    if (!sh) sh = control.insertSheet('Control');
+    const props = PropertiesService.getScriptProperties();
+
+    // Booking heartbeat straight from the BookingSheet's Status tab.
+    let bookingBeat = '(no Status tab)';
+    try {
+      const st = bookingSS_().getSheetByName('Status');
+      if (st) bookingBeat = String(st.getRange(1, 2).getValue() || '(empty)');
+    } catch (e) { bookingBeat = 'BookingSheet unreachable'; }
+
+    // Live counters.
+    let unassigned = 0, pendingGuru = 0, pendingNoShows = 0, openErrors = 0;
+    try {
+      const weekEnd = addDaysKey_(todayKey_(), 7);
+      unassigned = readSchedule_().filter(s => s.dateKey <= weekEnd && !(s.assigned || []).length).length;
+    } catch (e) { /* leave 0 */ }
+    try {
+      const ss = ledgerSS_();
+      const g = ss.getSheetByName(QUEUE_TABS.GURUWALK);
+      if (g) {
+        const lastG = lastQueueRow_(g);
+        if (lastG >= QUEUE_FIRST_DATA_ROW) {
+          g.getRange(QUEUE_FIRST_DATA_ROW, 1, lastG - QUEUE_HEADER_ROW, GURUWALK_HEADERS.length).getValues()
+            .forEach(r => { if (String(r[GW_BOOKINGID] || '').trim() && r[GW_REPORTED] !== true) pendingGuru++; });
+        }
+      }
+      [QUEUE_TABS.VIATOR_NOSHOW, QUEUE_TABS.GYG_NOSHOW].forEach(name => {
+        const q = ss.getSheetByName(name);
+        if (!q) return;
+        const lastQ = lastQueueRow_(q);
+        if (lastQ < QUEUE_FIRST_DATA_ROW) return;
+        q.getRange(QUEUE_FIRST_DATA_ROW, 1, lastQ - QUEUE_HEADER_ROW, NOSHOW_HEADERS.length).getValues()
+          .forEach(r => { if (String(r[4] || '').trim() && r[11] !== true) pendingNoShows++; });
+      });
+    } catch (e) { /* leave 0 */ }
+    try {
+      const errSh = control.getSheetByName('Errors');
+      if (errSh && errSh.getLastRow() > 1) {
+        const n = Math.min(50, errSh.getLastRow() - 1);
+        const cutoff = Date.now() - 48 * 3600000;
+        errSh.getRange(errSh.getLastRow() - n + 1, 1, n, 1).getValues()
+          .forEach(r => { if (r[0] instanceof Date && r[0].getTime() > cutoff) openErrors++; });
+      }
+    } catch (e) { /* leave 0 */ }
+
+    const rows = [
+      ['SYSTEM HEALTH', 'Updated ' + Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm')],
+      ['Booking system last run', bookingBeat],
+      ['Last schedule generation', props.getProperty('HB_SCHEDULE') || '(never)'],
+      ['Last queue/ledger refresh', props.getProperty('HB_QUEUES') || '(never)'],
+      ['Last daily self-test', props.getProperty('HB_SELFTEST') || '(never)'],
+      ['Unassigned tours (next 7 days)', unassigned],
+      ['Pending GuruWalk check-ins', pendingGuru],
+      ['Pending OTA no-shows', pendingNoShows],
+      ['Schedule errors (last 48h)', openErrors],
+      ['', ''],
+      ['How to read this', 'All timestamps should be recent. Non-zero pending ' +
+        'counts = open the Guide_Ledger_v1 queue tabs. Errors = Control sheet ' +
+        'Errors tab. Full diagnosis: systemStatus (BookingSheet editor).']
+    ];
+    sh.getRange(1, 1, rows.length, 2).setValues(rows);
+    sh.getRange(1, 1, 1, 2).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+    sh.getRange(2, 1, rows.length - 1, 1).setFontWeight('bold');
+    sh.setColumnWidth(1, 240);
+    sh.setColumnWidth(2, 340);
+  } catch (e) { console.log('updateControlHealth_: ' + e); }
+}
 
 
 /******************************************************
@@ -1775,19 +1889,19 @@ function archiveLedgerMonthly() {
 
   // Clear data rows (keep headers) everywhere except Rates.
   ss.getSheets().forEach(sh => {
-    if (sh.getName() === 'Rates') return;
-    if (sh.getLastRow() >= 2) {
-      sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).clearContent();
+    const nm = sh.getName();
+    if (nm === 'Rates') return;
+    // Queue tabs keep their button row + headers; guide tabs keep headers.
+    const firstData = Object.values(QUEUE_TABS).indexOf(nm) !== -1 ? QUEUE_FIRST_DATA_ROW : 2;
+    if (sh.getLastRow() >= firstData) {
+      sh.getRange(firstData, 1, sh.getLastRow() - firstData + 1, sh.getMaxColumns()).clearContent();
     }
   });
 
   props.setProperty('LAST_LEDGER_ARCHIVE', stamp);
-  MailApp.sendEmail({
-    to: 'rootsandroadstours@gmail.com',
-    subject: 'R&R: ledger archived — ' + name,
-    body: 'The guide ledger for ' + stamp.replace('_', '-') +
-          ' was copied to "' + name + '" and the live ledger was cleared for the new month.'
-  });
+  // No email: the Control health dashboard shows the last archive instead.
+  markHealthEvent_('HB_ARCHIVE');
+  Logger.log('Ledger archived to "' + name + '" and cleared for the new month.');
 }
 
 
@@ -1801,7 +1915,7 @@ function testQueueIdempotency() {
   const ss = ledgerSS_();
   ensureQueueTabs_(ss);
   const count = () => [QUEUE_TABS.VIATOR_NOSHOW, QUEUE_TABS.GYG_NOSHOW, QUEUE_TABS.GURUWALK, 'Unassigned']
-    .map(n => { const s = ss.getSheetByName(n); return s ? lastDataRow_(s) : 0; });
+    .map(n => { const s = ss.getSheetByName(n); return s ? (n === 'Unassigned' ? lastDataRow_(s) : lastQueueRow_(s)) : 0; });
 
   updateManagementQueues();
   const first = count();
