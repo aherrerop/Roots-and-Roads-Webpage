@@ -3223,7 +3223,7 @@ function debugWhereIsBooking() {
 function gygFields_(text) {
   return {
     bookingId: extractFirst_(text, [/\b(GYG[A-Z0-9]{5,})\b/i, /\b(S\d{5,})\b/i]),
-    name: cleanGygName_(valueAfterLabel_(text, [/^Cliente principal\b/i, /^Lead customer\b/i, /^Main customer\b/i])),
+    name: cleanPersonName_(valueAfterLabel_(text, [/^Cliente principal\b/i, /^Lead customer\b/i, /^Main customer\b/i])),
     phone: extractFirst_(text, [
       /Tel[eé]fono:\s*([+\d][+\d\s().-]*)/i,
       /Phone(?:\s*number)?:\s*([+\d][+\d\s().-]*)/i,
@@ -3240,16 +3240,18 @@ function gygFields_(text) {
 
 
 /**
- * Keep only the human name from the "Cliente principal / Lead customer" value.
- * GYG anonymises the customer address as customer-xxxx@reply.getyourguide.com,
- * and some emails render that address (plus "Teléfono:" / "Idioma:" labels) on
- * the same line as the name, e.g.
+ * Keep only the human name from a value an OTA gave us. Some templates render
+ * an email address and/or field labels on the SAME line as the name — e.g. GYG
+ * anonymises the customer as customer-xxxx@reply.getyourguide.com:
  *   "Daleska Miclos customer-raawfecnv52myobv@reply.getyourguide.com Teléfono: +34632276997 Idioma: English"
  * Everything from the email (or a trailing field label) onward is dropped, so
- * only "Daleska Miclos" is stored. A clean name line is returned unchanged.
+ * only "Daleska Miclos" survives. A clean name is returned unchanged.
+ *
+ * Applied centrally in normalizeBooking_, so EVERY source (GYG, Viator,
+ * Website, Free Tour, …) is protected against this class of contamination.
  */
-function cleanGygName_(raw) {
-  let s = String(raw || '').trim();
+function cleanPersonName_(raw) {
+  let s = String(raw || '').replace(/\s+/g, ' ').trim();
   s = s.replace(/\s*\S*@\S+.*$/i, '');                               // email + anything after it
   s = s.replace(/\s*(?:Tel[eé]fono|Phone|M[oó]vil|Idioma|Language|Lengua)\s*:.*$/i, ''); // trailing labels
   return s.replace(/[\s,;:_-]+$/, '').trim();
@@ -3605,9 +3607,10 @@ function normalizeBooking_(x) {
   const time = normalizeTime_(x && x.time);
   const language = normalizeLanguage_(x && x.language);
   const phone = cleanPhone_(x && x.phone);
+  const name = cleanPersonName_(x && x.name);
 
   return {
-    name: cleanText_(x && x.name),
+    name,
     phone,
     guests: Number((x && x.guests) || 1),
     date,
@@ -3625,7 +3628,7 @@ function normalizeBooking_(x) {
     hasExplicitDate: Boolean(x && x.hasExplicitDate),
     hasExplicitTime: Boolean(x && x.hasExplicitTime),
     hasExplicitIncome: Boolean(x && x.hasExplicitIncome),
-    nameKey: normalizeNameKey_(x && x.name),
+    nameKey: normalizeNameKey_(name),
     phoneKey: cleanPhoneKey_(phone),
     dateKey: dateKey_(date)
   };
@@ -4344,6 +4347,17 @@ function testBookingParsers() {
   const bc = parseViatorMessage_(makeFakeMsg_('Cancelled Booking: Mon, Aug 3, 2026', cancelTxt), 'confirm');
   check('Viator: cancel text rejected in confirm mode', bc === null, bc);
 
+  // cleanPersonName_ unit checks — the shared cleaner used by every parser.
+  check('cleanName: strips GYG inline email',
+    cleanPersonName_('Georgi Nikolov Gitsov customer-zft@reply.getyourguide.com Teléfono: +359 Idioma: English') === 'Georgi Nikolov Gitsov',
+    cleanPersonName_('Georgi Nikolov Gitsov customer-zft@reply.getyourguide.com Teléfono: +359 Idioma: English'));
+  check('cleanName: strips trailing labels without email',
+    cleanPersonName_('Jean-Pierre Dupont Phone: +33 1') === 'Jean-Pierre Dupont',
+    cleanPersonName_('Jean-Pierre Dupont Phone: +33 1'));
+  check('cleanName: leaves a clean name untouched',
+    cleanPersonName_('Katarzyna Świstak') === 'Katarzyna Świstak',
+    cleanPersonName_('Katarzyna Świstak'));
+
   console.log('---------------------------------');
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   return fail === 0;
@@ -4380,6 +4394,14 @@ function checkInvariants_() {
             [!b.name && 'name', !b.bookingId && 'booking id', !b.date && 'date',
              !b.time && 'time', !b.source && 'source'].filter(Boolean).join(', '));
           return;
+        }
+        // I5: a name that still holds an email / "customer-" token / URL means a
+        // parser let contamination through (checked on the RAW cell, since
+        // rowToBooking_ cleans on read). Catches the class of bug regardless of
+        // which OTA template caused it.
+        const rawName = String(row[0] || '');
+        if (/@|customer-|https?:\/\//i.test(rawName)) {
+          problems.push('I5 contaminated name (' + where + '): ' + rawName.slice(0, 60));
         }
         const idKey = b.source + '|' + normalizeId_(b.bookingId);
         if (seenIds[idKey]) {
