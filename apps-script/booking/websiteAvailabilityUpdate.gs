@@ -12,7 +12,9 @@ const WEBSITE_CUTOFF_HOUR = 21;
 const WEBSITE_ACTIVE_BOOKING_SHEETS = [
   'English Tours',
   'German Tours',
-  'Spanish Tours'
+  'Spanish Tours',
+  'Italian Tours',
+  'French Tours'
 ];
 
 const WEBSITE_CONTROL_WEEKLY_TAB = 'Weekly_Schedule';
@@ -248,7 +250,8 @@ function websiteNormalizeLanguage_(v) {
 
   if (s.includes('german') || s.includes('deutsch') || s.includes('aleman') || s.includes('alemán')) return 'German';
   if (s.includes('spanish') || s.includes('espanol') || s.includes('español') || s.includes('castellano')) return 'Spanish';
-  if (s.includes('french') || s.includes('français') || s.includes('frances')) return 'French';
+  if (s.includes('italian') || s.includes('italiano') || s.includes('italiana') || s.includes('italien')) return 'Italian';
+  if (s.includes('french') || s.includes('français') || s.includes('francais') || s.includes('francese') || s.includes('frances')) return 'French';
 
   return 'English';
 }
@@ -334,6 +337,8 @@ function websiteDateKey_(dateObj) {
 function websiteSheetToLanguage_(sheetName) {
   if (sheetName === 'German Tours') return 'German';
   if (sheetName === 'Spanish Tours') return 'Spanish';
+  if (sheetName === 'Italian Tours') return 'Italian';
+  if (sheetName === 'French Tours') return 'French';
   return 'English';
 }
 

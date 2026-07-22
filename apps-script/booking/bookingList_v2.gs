@@ -11,7 +11,7 @@
  *   Viator, Guruwalk, Airbnb, Website, GetYourGuide, Free Tour
  *
  * SHEET TABS
- *   English Tours / German Tours / Spanish Tours  -> active bookings
+ *   English / German / Spanish / Italian / French Tours  -> active bookings
  *   Done Tours                                     -> aggregated past tours
  *   Errors                                         -> run-time error log
  *
@@ -89,6 +89,8 @@ const RNR = {
     ENGLISH: 'English Tours',
     GERMAN: 'German Tours',
     SPANISH: 'Spanish Tours',
+    ITALIAN: 'Italian Tours',
+    FRENCH: 'French Tours',
     DONE: 'Done Tours',
     ERRORS: 'Errors'
   },
@@ -195,7 +197,9 @@ const RNR = {
   LANGUAGE: {
     ENGLISH: 'English',
     GERMAN: 'German',
-    SPANISH: 'Spanish'
+    SPANISH: 'Spanish',
+    ITALIAN: 'Italian',
+    FRENCH: 'French'
   },
 
   DEFAULT_TIME: '11:00 AM',
@@ -385,6 +389,8 @@ function ensureSheets_() {
   ensureSheet_(ss, RNR.SHEETS.ENGLISH, RNR.ACTIVE_HEADERS);
   ensureSheet_(ss, RNR.SHEETS.GERMAN, RNR.ACTIVE_HEADERS);
   ensureSheet_(ss, RNR.SHEETS.SPANISH, RNR.ACTIVE_HEADERS);
+  ensureSheet_(ss, RNR.SHEETS.ITALIAN, RNR.ACTIVE_HEADERS);
+  ensureSheet_(ss, RNR.SHEETS.FRENCH, RNR.ACTIVE_HEADERS);
   ensureSheet_(ss, RNR.SHEETS.DONE, RNR.DONE_HEADERS);
   ensureSheet_(ss, RNR.SHEETS.ERRORS, RNR.ERROR_HEADERS);
 }
@@ -586,7 +592,8 @@ function doPost(e) {
  ******************************************************/
 
 function activeSheetNames_() {
-  return [RNR.SHEETS.ENGLISH, RNR.SHEETS.GERMAN, RNR.SHEETS.SPANISH];
+  return [RNR.SHEETS.ENGLISH, RNR.SHEETS.GERMAN, RNR.SHEETS.SPANISH,
+          RNR.SHEETS.ITALIAN, RNR.SHEETS.FRENCH];
 }
 
 
@@ -3703,11 +3710,21 @@ function normalizeLanguage_(x) {
       s.includes('aleman') || s.includes('alemao') || s.includes('allemand')) {
     return RNR.LANGUAGE.GERMAN;
   }
+  if (s.includes('italian') || s.includes('italiano') || s.includes('italiana') ||
+      s.includes('italien') || s.includes('italienisch')) {
+    return RNR.LANGUAGE.ITALIAN;
+  }
+  if (s.includes('french') || s.includes('français') || s.includes('francais') ||
+      s.includes('francese') || s.includes('francés') || s.includes('frances') ||
+      s.includes('französisch') || s.includes('franzosisch')) {
+    return RNR.LANGUAGE.FRENCH;
+  }
   // Includes GYG Spanish wording: "Inglés (Live tour guide)".
   if (s.includes('english') || s.includes('inglés') || s.includes('ingles') ||
       s.includes('anglais') || s.includes('englisch')) {
     return RNR.LANGUAGE.ENGLISH;
   }
+  // Genuinely unknown languages default to English (unchanged legacy behaviour).
   return RNR.LANGUAGE.ENGLISH;
 }
 
@@ -3716,6 +3733,8 @@ function languageToSheet_(language) {
   const lang = normalizeLanguage_(language);
   if (lang === RNR.LANGUAGE.SPANISH) return RNR.SHEETS.SPANISH;
   if (lang === RNR.LANGUAGE.GERMAN) return RNR.SHEETS.GERMAN;
+  if (lang === RNR.LANGUAGE.ITALIAN) return RNR.SHEETS.ITALIAN;
+  if (lang === RNR.LANGUAGE.FRENCH) return RNR.SHEETS.FRENCH;
   return RNR.SHEETS.ENGLISH;
 }
 
@@ -3723,6 +3742,8 @@ function languageToSheet_(language) {
 function sheetToLanguage_(sheetName) {
   if (sheetName === RNR.SHEETS.SPANISH) return RNR.LANGUAGE.SPANISH;
   if (sheetName === RNR.SHEETS.GERMAN) return RNR.LANGUAGE.GERMAN;
+  if (sheetName === RNR.SHEETS.ITALIAN) return RNR.LANGUAGE.ITALIAN;
+  if (sheetName === RNR.SHEETS.FRENCH) return RNR.LANGUAGE.FRENCH;
   return RNR.LANGUAGE.ENGLISH;
 }
 
@@ -4240,6 +4261,46 @@ const RNR_FIXTURES_ = {
       'Idioma del tour', 'Inglés (Live tour guide)',
       'Precio', '18,30 €'
     ].join('\n')
+  },
+  // GYG Italian-language tour confirmation.
+  gygItalian: {
+    subject: 'Booking - S779080 - GYGITALIAN1',
+    body: [
+      '¡Hola! Buenas noticias.', 'Se ha reservado tu producto',
+      'Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town',
+      'Número de referencia', 'GYGITALIAN1',
+      'Fecha', 'July 20, 2026 11:00 AM',
+      'Número de participantes', '2 x Adults (Edad 14 - 99)',
+      'Cliente principal', 'Marco Rossi',
+      'Teléfono: +390612345678', 'Idioma: Italian',
+      'Idioma del tour', 'Italiano (Live tour guide)',
+      'Precio', '54,90 €'
+    ].join('\n')
+  },
+  // GYG Italian cancellation (must override / be rejected in confirm mode).
+  gygItalianCancel: {
+    subject: 'Reserva cancelada - S779080 - GYGITALIAN1',
+    body: [
+      'Tu reserva ha sido cancelada.',
+      'Número de referencia', 'GYGITALIAN1',
+      'Idioma del tour', 'Italiano (Live tour guide)'
+    ].join('\n')
+  },
+  // Viator French-language tour confirmation.
+  viatorFrench: {
+    subject: 'New Booking for Fri, Jul 24, 2026 (#BR-1422956850)',
+    body: [
+      'You have a new reservation for Complete Barcelona Walking Tour.',
+      'Booking Reference: BR-1422956850',
+      'Travel Date: Fri, Jul 24, 2026',
+      'Lead Traveler Name: Pierre Dupont',
+      'Travelers: 3 Adults',
+      'Tour Grade: French Tour 17:00',
+      'Tour Grade Code: TG3~17:00',
+      'Tour Language: French - Guide',
+      'Net Rate: EUR €70,00',
+      'Phone: +33612345678'
+    ].join('\n')
   }
 };
 
@@ -4335,6 +4396,41 @@ function testBookingParsers() {
     check('GYG inline email: name carries no @ or customer-', !/@|customer-/i.test(b.name), b.name);
     check('GYG inline email: booking id', b.bookingId === 'GYG996ZAK7R7', b.bookingId);
   }
+
+  // Italian tour: parses, routes to Italian Tours, does NOT fall back to English.
+  f = RNR_FIXTURES_.gygItalian;
+  b = parseGygMessage_(makeFakeMsg_(f.subject, f.body), 'confirm');
+  check('GYG Italian: parses', !!b, b);
+  if (b) {
+    check('GYG Italian: language Italian (not English)', b.language === 'Italian', b.language);
+    check('GYG Italian: routes to Italian Tours', languageToSheet_(b.language) === RNR.SHEETS.ITALIAN, languageToSheet_(b.language));
+    check('GYG Italian: 2 adults', b.guests === 2, b.guests);
+  }
+  // Italian cancellation overrides / is rejected in confirm mode.
+  f = RNR_FIXTURES_.gygItalianCancel;
+  check('GYG Italian cancel: rejected in confirm mode',
+    parseGygMessage_(makeFakeMsg_(f.subject, f.body), 'confirm') === null, 'not null');
+  const bItCancel = parseGygMessage_(makeFakeMsg_(f.subject, f.body), 'cancel');
+  check('GYG Italian cancel: parsed in cancel mode with isCancellation', !!bItCancel && bItCancel.isCancellation === true, bItCancel);
+
+  // French tour (Viator): parses, routes to French Tours, no English fallback.
+  f = RNR_FIXTURES_.viatorFrench;
+  b = parseViatorMessage_(makeFakeMsg_(f.subject, f.body), 'confirm');
+  check('Viator French: parses', !!b, b);
+  if (b) {
+    check('Viator French: language French (not English)', b.language === 'French', b.language);
+    check('Viator French: routes to French Tours', languageToSheet_(b.language) === RNR.SHEETS.FRENCH, languageToSheet_(b.language));
+    check('Viator French: 3 adults', b.guests === 3, b.guests);
+  }
+
+  // Language routing units (recognition, regression, unsupported, no fallback).
+  check('lang: normalizeLanguage_ Italiano -> Italian', normalizeLanguage_('Italiano (Live tour guide)') === 'Italian', normalizeLanguage_('Italiano (Live tour guide)'));
+  check('lang: normalizeLanguage_ Français -> French', normalizeLanguage_('Français') === 'French', normalizeLanguage_('Français'));
+  check('lang: normalizeLanguage_ Italian NOT English (no fallback)', normalizeLanguage_('Italian') !== 'English', normalizeLanguage_('Italian'));
+  check('lang: normalizeLanguage_ French NOT English (no fallback)', normalizeLanguage_('French') !== 'English', normalizeLanguage_('French'));
+  check('lang: regression EN/DE/ES', normalizeLanguage_('Inglés') === 'English' && normalizeLanguage_('Deutsch') === 'German' && normalizeLanguage_('Español') === 'Spanish', 'regression');
+  check('lang: unsupported -> English (documented default)', normalizeLanguage_('Klingon') === 'English', normalizeLanguage_('Klingon'));
+  check('lang: sheetToLanguage_ round-trips IT/FR', sheetToLanguage_(RNR.SHEETS.ITALIAN) === 'Italian' && sheetToLanguage_(RNR.SHEETS.FRENCH) === 'French', 'roundtrip');
 
   // Footer noise ("actualizaciones") must NOT flip a confirmation to modify
   f = RNR_FIXTURES_.gygEsChildren;

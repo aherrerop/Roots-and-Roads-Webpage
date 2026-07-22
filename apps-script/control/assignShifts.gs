@@ -22,7 +22,7 @@
 const GUIDE_FILE_ID = "1ZkF0yDVE5Q7V2XUO5051ojJdTXtsvb8FA2sh15rqf-0";
 const BOOKING_SHEET_ID = "1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw";
 
-const LANGUAGES = ["English", "German", "Spanish", "French"];
+const LANGUAGES = ["English", "German", "Spanish", "French", "Italian"];
 const AVAILABILITY_FIRST_ROW = 5;
 const AVAILABILITY_MIN_GUIDE_ROWS = 20;
 
@@ -999,17 +999,28 @@ function readGuides_(ss) {
   const sheet = ss.getSheetByName("Guides");
   if (!sheet) throw new Error("Guides tab not found.");
   const values = sheet.getDataRange().getValues();
+  // Language columns are resolved BY HEADER NAME, not fixed positions, so adding
+  // a language column to the Guides tab needs no code change and never shifts
+  // the others. Mirrors guidePortal.gs (guideColumns_).
+  const header = (values[0] || []).map(h => String(h).trim());
+  const langCol = {};
+  LANGUAGES.forEach(l => {
+    const c = header.findIndex(h => h.toLowerCase() === l.toLowerCase());
+    if (c !== -1) langCol[l] = c;
+  });
   const guides = [];
   for (let r = 1; r < values.length; r++) {
     const row = values[r];
     const name = row[0];
     if (!name) continue;
+    const languages = {};
+    LANGUAGES.forEach(l => { languages[l] = langCol[l] !== undefined && row[langCol[l]] === true; });
     guides.push({
       name: String(name).trim(),
       active: row[1] === true,
       seniority: Number(row[2]) || 999,
       order: r,
-      languages: { English: row[3] === true, German: row[4] === true, Spanish: row[5] === true, French: row[6] === true }
+      languages
     });
   }
   return guides;

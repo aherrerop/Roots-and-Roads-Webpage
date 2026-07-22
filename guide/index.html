@@ -371,7 +371,7 @@ function bookingRow(tourId,b,i,canAssign,lang){
   const note = b.note ? '<div class="bnote">'+esc(b.note)+'</div>' : '';
   const mv = (canAssign&&b.bookingId) ?
     '<select class="mvsel" data-move=\''+esc(JSON.stringify({bookingId:b.bookingId,from:lang,name:b.name||b.bookingId}))+'\'>'+
-    ['English','German','Spanish'].map(L=>'<option'+(L===lang?' selected':'')+'>'+L+'</option>').join('')+'</select>' : '';
+    ['English','German','Spanish','French','Italian'].map(L=>'<option'+(L===lang?' selected':'')+'>'+L+'</option>').join('')+'</select>' : '';
   return '<div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
     '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mv+'</div>'+
     wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
