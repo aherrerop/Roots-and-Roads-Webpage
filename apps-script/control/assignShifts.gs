@@ -299,8 +299,6 @@ function updateWeeklyScheduleToCurrentOffer() {
   const sh = ss.getSheetByName('Weekly_Schedule');
   if (!sh) throw new Error('Weekly_Schedule tab not found');
 
-  const today = formatDate_(dateOnly_(new Date()));
-
   // Preserve rows for languages this function does not manage (e.g. German),
   // normalising the Time cell whether it is a string or a coerced Date.
   const preserved = [];
@@ -323,7 +321,11 @@ function updateWeeklyScheduleToCurrentOffer() {
   }
 
   const rows = [];
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, today, '']));
+  // Blank "Active from" = always active. The standard weekly offer must show in
+  // EVERY availability week. (Stamping today's date here made the offer look
+  // like it started on the run date, hiding tours such as 11:00 from earlier
+  // weeks and — on any mid-week re-run — from the current week's early days.)
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '']));
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
 
   add(MTThF, '11:00', 'English');
@@ -700,10 +702,10 @@ function runWeeklyScheduling() {
 function setupWeeklySchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('Weekly_Schedule') || ss.insertSheet('Weekly_Schedule');
-  const today = formatDate_(dateOnly_(new Date()));
 
   const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until']];
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, today, '']));
+  // Blank "Active from" = always active (see updateWeeklyScheduleToCurrentOffer).
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '']));
 
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
   add(MTThF, '11:00', 'English');

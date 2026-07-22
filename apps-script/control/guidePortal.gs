@@ -1960,11 +1960,17 @@ function updateControlHealth_() {
         'counts = open the Guide_Ledger_v1 queue tabs. Errors = Control sheet ' +
         'Errors tab. Full diagnosis: systemStatus (BookingSheet editor).']
     ];
-    sh.getRange(1, 1, rows.length, 2).setValues(rows);
-    sh.getRange(1, 1, 1, 2).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
-    sh.getRange(2, 1, rows.length - 1, 1).setFontWeight('bold');
-    sh.setColumnWidth(1, 240);
-    sh.setColumnWidth(2, 340);
+    // Health block sits BELOW the functions block (which is top-left at A1),
+    // separated by one gap row. Position tracks the functions block size.
+    const healthFirstRow = MC.FIRST_ACTION_ROW + mcActions_().length + 1;
+    // Clear the gap + health area first (removes remnants from the old top-left
+    // health layout); rows above (the functions block) are never touched.
+    sh.getRange(healthFirstRow - 1, 1, rows.length + 2, 3).clearContent();
+    sh.getRange(healthFirstRow, 1, rows.length, 2).setValues(rows);
+    sh.getRange(healthFirstRow, 1, 1, 2).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+    sh.getRange(healthFirstRow + 1, 1, rows.length - 1, 1).setFontWeight('bold');
+    sh.setColumnWidth(1, 300);
+    sh.setColumnWidth(2, 150);
   } catch (e) { console.log('updateControlHealth_: ' + e); }
 }
 
