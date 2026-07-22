@@ -14,7 +14,7 @@ Last updated: 2026-07-20 (post-audit)
                    websiteAvailabilityUpdate.gs (doGet: calendar + admin hook)
                                |
                  BookingSheet (1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw)
-                 English/German/Spanish Tours · Done Tours · Errors · Status
+                 English/German/Spanish/Italian/French Tours · Done Tours · Errors · Status
                  · Completed Log (hidden)
                                |
       +------------------------+---------------------------+

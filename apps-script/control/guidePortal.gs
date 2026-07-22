@@ -2093,7 +2093,7 @@ function fullSystemTest() {
                  : bad('No Schedule_<Language> grids', 'run makeSchedule');
   }
   if (booking) {
-    ['English Tours', 'German Tours', 'Spanish Tours', 'Done Tours', 'Errors', 'Status']
+    ['English Tours', 'German Tours', 'Spanish Tours', 'Italian Tours', 'French Tours', 'Done Tours', 'Errors', 'Status']
       .forEach(t => booking.getSheetByName(t) ? ok('BookingSheet tab "' + t + '"')
                                               : warn('BookingSheet tab "' + t + '" missing'));
     booking.getSheetByName('Completed Log') ? ok('Completed Log present')

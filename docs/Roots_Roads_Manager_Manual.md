@@ -62,10 +62,14 @@ schedules, emails you the grids. Review Schedule_<Language>; adjust by typing
 ## Offer changes
 
 English/Spanish: edit `updateWeeklyScheduleToCurrentOffer` in assignShifts.gs
-and run it. German: edit Weekly_Schedule rows directly (Time column is text —
-type 10:00). Private slots: `ASSIGN_CFG.PRIVATE_AVAILABILITY` ("Private" is
-not a language and never goes in Weekly_Schedule). After any offer change:
-Sync availability → Generate schedules (or "Weekly full run" from the phone).
+and run it. German/Italian/French: edit Weekly_Schedule rows directly (Day,
+Time, Language=Italian/French, Guides needed; Time column is text — type 10:00).
+These languages are "preserved" — the offer refresh keeps their rows untouched.
+A booking in any supported language (incl. Italian/French) is always routed to
+its own tour tab and scheduled even with no Weekly_Schedule row. Private slots:
+`ASSIGN_CFG.PRIVATE_AVAILABILITY` ("Private" is not a language and never goes in
+Weekly_Schedule). After any offer change: Sync availability → Generate schedules
+(or "Weekly full run" from the phone).
 
 ## Phone controls — Control tab N2:P12
 

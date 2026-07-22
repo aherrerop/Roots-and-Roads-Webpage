@@ -1,9 +1,9 @@
 /**
  * Cross-platform test runner (no bash/WSL needed — runs on plain Windows too).
  *
- * Mirrors run-tests.sh: the reference check, then each Sheets-logic suite run
- * in a fresh Node process over one shared global scope (mocks + the Control
- * project sources + the suite), exactly like Apps Script loads a project.
+ * Mirrors the Apps Script model: each suite runs in a fresh Node process over
+ * one shared global scope (mocks + a project's sources + the suite), exactly
+ * like Apps Script loads a project.
  *
  * Usage: node test/run-tests.js
  */
@@ -24,16 +24,30 @@ try {
   process.exit(1);
 }
 
-// 2. Sheets-logic suites.
-const control = [
+// Sources per Apps Script project (shared global scope, as on the server).
+const CONTROL = [
   path.join(AS, 'control', 'assignShifts.gs'),
   path.join(AS, 'control', 'guidePortal.gs')
 ];
-const suites = ['tests.js', 'tests2.js', 'tests3.js', 'tests4.js', 'tests5.js'];
+const BOOKING = [
+  path.join(AS, 'booking', 'bookingList_v2.gs'),
+  path.join(AS, 'booking', 'websiteAvailabilityUpdate.gs')
+];
+
+// Each suite = [project sources, suite file].
+const SUITES = [
+  [CONTROL, 'tests.js'],
+  [CONTROL, 'tests2.js'],
+  [CONTROL, 'tests3.js'],
+  [CONTROL, 'tests4.js'],
+  [CONTROL, 'tests5.js'],
+  [CONTROL, 'tests6.js'],          // Italian + French: control side
+  [BOOKING, 'booking-tests.js']    // Italian + French: booking side
+];
 
 let failed = 0;
-for (const suite of suites) {
-  const bundle = [path.join(testDir, 'mock.js'), ...control, path.join(testDir, suite)]
+for (const [sources, suite] of SUITES) {
+  const bundle = [path.join(testDir, 'mock.js'), ...sources, path.join(testDir, suite)]
     .map(read).join('\n');
   const tmp = path.join(os.tmpdir(), 'rr_' + suite.replace(/\W/g, '_') + '.js');
   fs.writeFileSync(tmp, bundle);

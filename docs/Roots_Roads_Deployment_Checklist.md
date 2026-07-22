@@ -69,8 +69,11 @@ After `npm run push:booking`, in the Apps Script editor / Project Settings:
 1. (once) Project Settings → Script Properties:
    `ADMIN_KEY` = a long random string. Keep `BREVO_API_KEY`,
    `BREVO_TEMPLATE_ID`.
-2. (once) Run `setupBookingSystem` → authorize when prompted.
-3. Run `testBookingParsers` → expect **41 passed, 0 failed**.
+2. (once) Run `setupBookingSystem` → authorize when prompted. This creates the
+   per-language tabs — **English / German / Spanish / Italian / French Tours** —
+   plus Done Tours / Errors / Status (idempotent: re-running never duplicates).
+3. Run `testBookingParsers` → expect **0 failed** (includes the Italian/French
+   routing + parser checks).
 4. Triggers (delete any trigger pointing at a function that no longer exists):
    - `runBookingSystem` — time-driven, every 5 minutes
    - `runBookingAudit` — time-driven, every 8 hours
@@ -88,9 +91,14 @@ After `npm run push:control`, in the editor / Project Settings:
 2. (once) Run, in this order:
    - `setupLedger` — creates/migrates ledger tabs, adds the queue tabs with
      their CLEAR buttons, installs the ledger edit trigger.
-   - `setupMobileControls` — Control!N2:P12 block + edit trigger.
+   - `setupMobileControls` — Control!A1 functions block (top-left, run buttons)
+     with the SYSTEM HEALTH block written below it, + edit trigger.
    - `setupScheduleEditValidation` — auto-lock + validate manual grid edits.
    - `validateMobileControls` — must report no problems.
+   - Guides tab: language columns (English, German, Spanish, **Italian**,
+     **French**, …) are read **by header name**, so adding a language column
+     needs no code change — a guide with TRUE in the Italian/French column is
+     recognised and offered for those tours automatically.
 3. Offer + schedule refresh, in this order:
    `updateWeeklyScheduleToCurrentOffer` → `syncAvailabilityFile` →
    `makeSchedule`. Then check Schedule_English has 11:00 columns and the
