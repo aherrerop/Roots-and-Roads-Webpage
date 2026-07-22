@@ -59,6 +59,27 @@ const mvFr=moveBookingRowBetweenTabs_('BRFR1','English','French');
 check('move to French ok', mvFr.ok===true && mvFr.moved===true, mvFr);
 check('row now in French Tours', fr.getLastRow()===2 && String(fr.getRange(2,8).getValue())==='BRFR1', fr.getRange(2,1,1,9).getValues());
 
+console.log('--- Live orphan surfacing: bookings show even without a grid slot ---');
+const tomorrow=Utilities.formatDate(day(1),null,'yyyy-MM-dd');
+let sched=[];
+const bbk={};
+bbk[shiftKey_(tomorrow,660,'Italian')]=[{name:'Testy',guests:1,note:'Test'}];      // Italian, no grid
+bbk[shiftKey_(tomorrow,16*60+30,'English')]=[{name:'Polina guest',guests:2,note:''}]; // English 16:30 orphan
+appendOrphanBookingShifts_(sched,bbk);
+const itLive=sched.find(s=>s.language==='Italian'&&s.minutes===660);
+check('Italian orphan surfaced as a live shift', !!itLive && itLive.status==='Not assigned', sched);
+check('surfaced Italian shift has correct time/label', itLive&&itLive.time==='11:00'&&itLive.timeLabel==='11:00 AM', itLive);
+check('English orphan surfaced too (regression)', sched.some(s=>s.language==='English'&&s.minutes===16*60+30), sched);
+// No duplicate when the grid already has the shift.
+let sched2=[{dateKey:tomorrow,minutes:660,language:'Italian',time:'11:00',private:false,assigned:['Giulia'],status:'OK'}];
+appendOrphanBookingShifts_(sched2,bbk);
+check('no duplicate when grid already has that shift', sched2.filter(s=>s.language==='Italian'&&s.minutes===660).length===1, sched2);
+// Past bookings are not surfaced.
+const longAgo=Utilities.formatDate(day(-5),null,'yyyy-MM-dd');
+let sched3=[]; const bbk3={}; bbk3[shiftKey_(longAgo,660,'Italian')]=[{name:'x',guests:1,note:''}];
+appendOrphanBookingShifts_(sched3,bbk3);
+check('past booking not surfaced', sched3.length===0, sched3);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

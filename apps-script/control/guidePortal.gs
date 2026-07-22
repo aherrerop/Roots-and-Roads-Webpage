@@ -143,10 +143,11 @@ function apiTours_(p) {
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
 
   const rates = readRates_();
-  const schedule = readSchedule_();                 // all upcoming shifts
+  const schedule = readSchedule_();                 // all upcoming shifts (from the grids)
+  const bookingsByKey = readBookingsIndex_();       // "yyyy-mm-dd|minutes|Language" -> [bookings]
+  appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
-  const bookingsByKey = readBookingsIndex_();       // "yyyy-mm-dd|minutes|Language" -> [bookings]
   const priorCheckins = readGuideCheckins_(name);   // key|bookingId -> checkedIn
 
   const tours = mine.map(shift => {
@@ -804,6 +805,49 @@ function readBookingsIndex_() {
   });
 
   return index;
+}
+
+
+/**
+ * Surface bookings that have no matching schedule shift yet as live "extra"
+ * shifts, so a reservation shows in the portal IMMEDIATELY — before the weekly
+ * makeSchedule run materialises it into a Schedule_<Language> grid. Read-only
+ * and language-agnostic; mirrors the scheduler's expandOrphanShifts_ so a tour
+ * in any language (incl. Italian/French, which may have no grid yet) appears
+ * the moment its booking lands. Never duplicates a shift the grid already has.
+ */
+function appendOrphanBookingShifts_(schedule, bookingsByKey) {
+  const today = todayKey_();
+  const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
+  const haveReg = new Set(schedule.filter(s => !s.private).map(s => shiftKey_(s.dateKey, s.minutes, s.language)));
+  const havePriv = new Set(schedule.filter(s => s.private).map(s => shiftKey_(s.dateKey, s.minutes, s.language)));
+
+  Object.keys(bookingsByKey).forEach(key => {
+    const parts = key.split('|');
+    const dateKey = parts[0];
+    const minutes = Number(parts[1]);
+    const langLower = parts[2] || '';
+    if (!dateKey || !Number.isFinite(minutes)) return;
+    if (dateKey < today || dateKey > maxKey) return;   // only the upcoming window
+    if (shiftIsOver_(dateKey, minutes)) return;        // not tours that already ran
+
+    const language = LANGUAGES.find(l => l.toLowerCase() === langLower) ||
+                     (langLower.charAt(0).toUpperCase() + langLower.slice(1));
+    const time = Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0');
+    const base = {
+      dateKey, dateText: prettyDate_(dateKey), day: dayNameFromKey_(dateKey),
+      time, timeLabel: to12h_(time), minutes, language
+    };
+    const bs = bookingsByKey[key] || [];
+    if (bs.some(b => !/privat/i.test(b.note || '')) && !haveReg.has(key)) {
+      haveReg.add(key);
+      schedule.push(Object.assign({}, base, { private: false, assigned: [], status: 'Not assigned', extra: true }));
+    }
+    if (bs.some(b => /privat/i.test(b.note || '')) && !havePriv.has(key)) {
+      havePriv.add(key);
+      schedule.push(Object.assign({}, base, { private: true, privIndex: 1, assigned: [], status: 'Not assigned', extra: true }));
+    }
+  });
 }
 
 
