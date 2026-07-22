@@ -28,14 +28,14 @@
 
 const MC = {
   TAB: 'Control',
-  // Exact block (documented in the manager manual — do not move without
-  // updating both):
-  RANGE: 'N2:P12',
-  HEADER_ROW: 2,     // N2:P2 = header
-  FIRST_ACTION_ROW: 3,
-  COL_ACTION: 14,    // N
-  COL_RUN: 15,       // O (checkbox)
-  COL_STATUS: 16     // P
+  // Functions block sits at the TOP-LEFT for easy access; the SYSTEM HEALTH
+  // block is written below it (see updateControlHealth_ / HEALTH_FIRST_ROW).
+  RANGE: 'A1:C12',
+  HEADER_ROW: 1,     // A1:C1 = header
+  FIRST_ACTION_ROW: 2,
+  COL_ACTION: 1,     // A
+  COL_RUN: 2,        // B (checkbox)
+  COL_STATUS: 3      // C
 };
 
 /**
@@ -72,6 +72,10 @@ function setupMobileControls() {
   let sh = ss.getSheetByName(MC.TAB);
   if (!sh) sh = ss.insertSheet(MC.TAB);
 
+  // Migration: the functions block used to live at N2:P12. Clear that old
+  // location (values + leftover checkboxes) now that it lives top-left at A1.
+  sh.getRange(1, 14, 13, 3).clearContent().clearDataValidations();
+
   const actions = mcActions_();
   sh.getRange(MC.HEADER_ROW, MC.COL_ACTION, 1, 3)
     .setValues([['Action', 'Run', 'Status / last result']])
@@ -84,9 +88,10 @@ function setupMobileControls() {
   rows.forEach((r, i) => { if (existing[i] && existing[i][2]) r[2] = existing[i][2]; });
   block.setValues(rows);
   sh.getRange(MC.FIRST_ACTION_ROW, MC.COL_RUN, rows.length, 1).insertCheckboxes();
-  sh.setColumnWidth(MC.COL_ACTION, 280);
-  sh.setColumnWidth(MC.COL_RUN, 60);
-  sh.setColumnWidth(MC.COL_STATUS, 220);
+  // Widths shared with the health block below (same columns A/B/C).
+  sh.setColumnWidth(MC.COL_ACTION, 300);
+  sh.setColumnWidth(MC.COL_RUN, 150);
+  sh.setColumnWidth(MC.COL_STATUS, 240);
 
   // Installable ON EDIT trigger (a simple onEdit cannot call other services).
   const exists = ScriptApp.getProjectTriggers().some(t =>
@@ -172,7 +177,7 @@ function validateMobileControls() {
   if (!sh) problems.push('Tab "' + MC.TAB + '" missing — run setupMobileControls()');
   else {
     const header = sh.getRange(MC.HEADER_ROW, MC.COL_ACTION, 1, 3).getValues()[0];
-    if (header[0] !== 'Action') problems.push('Header not found at N2 — run setupMobileControls()');
+    if (header[0] !== 'Action') problems.push('Header not found at A1 — run setupMobileControls()');
     const n = mcActions_().length;
     const checks = sh.getRange(MC.FIRST_ACTION_ROW, MC.COL_RUN, n, 1).getValues();
     if (checks.some(r => typeof r[0] !== 'boolean')) problems.push('Run column is missing checkboxes');
