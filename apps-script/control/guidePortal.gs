@@ -204,11 +204,22 @@ function apiTours_(p) {
     };
   });
 
-  // "Schedule of other guides" (shown to every guide): only THIS WEEK
-  // (today .. Sunday), so the compact list stays scannable. The manager
-  // "All tours" tab below uses the full upcoming window instead.
+  // Who is asking — decides what the shared tour list may show.
+  const me = findGuideByName_(name);
+  const isManager = !!(me && me.manager);
+
+  // Shared tour list (shown to every guide): only THIS WEEK (today .. Sunday),
+  // so the compact list stays scannable. The manager "All tours" tab below uses
+  // the full upcoming window instead.
   const weekEnd = weekEndKey_();
-  const thisWeek = schedule.filter(s => s.dateKey <= weekEnd);
+  let thisWeek = schedule.filter(s => s.dateKey <= weekEnd);
+
+  // A guide sees every ASSIGNED tour (so they know who is working), plus the
+  // UNASSIGNED ones they could actually take: their own language, and no clash
+  // with their own shifts (same 5h separation rule the assigner uses). That way
+  // they can offer to cover an open tour without being shown ones they can't do.
+  // Managers keep seeing everything.
+  thisWeek = visibleShiftsForGuide_(thisWeek, mine, me, isManager);
 
   const scheduleView = thisWeek.map(s => ({
     dateKey: s.dateKey, dateText: s.dateText, day: s.day,
@@ -218,8 +229,6 @@ function apiTours_(p) {
 
   // Managers get the full My-tours-style view of EVERY tour (with bookings +
   // check-ins), and can save on a guide's behalf.
-  const me = findGuideByName_(name);
-  const isManager = !!(me && me.manager);
   let allTours = [];
   let guidesByLanguage = null;
   let busyMap = null;
@@ -822,6 +831,26 @@ function readBookingsIndex_() {
  * in any language (incl. Italian/French, which may have no grid yet) appears
  * the moment its booking lands. Never duplicates a shift the grid already has.
  */
+/**
+ * What a guide may see in the shared tour list: every ASSIGNED tour (so they
+ * know who is working), plus the UNASSIGNED ones they could actually take —
+ * their own language, and no clash with their own shifts (same separation rule
+ * the assigner uses). Managers see everything unfiltered.
+ */
+function visibleShiftsForGuide_(shifts, myShifts, guide, isManager) {
+  if (isManager) return shifts;
+  const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
+  const myShiftMs = (myShifts || []).map(s => shiftStartMs_(s.dateKey, s.minutes));
+  const speaks = (guide && guide.languages) || {};
+  return (shifts || []).filter(s => {
+    if (s.assigned && s.assigned.length) return true;          // someone is on it
+    if (speaks[s.language] !== true) return false;             // not a language I run
+    const st = shiftStartMs_(s.dateKey, s.minutes);
+    return !myShiftMs.some(ms => Math.abs(ms - st) < sepMs);   // no clash with my own
+  });
+}
+
+
 function appendOrphanBookingShifts_(schedule, bookingsByKey) {
   const today = todayKey_();
   const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
@@ -1731,6 +1760,10 @@ function handleLedgerEdit(e) {
 
 /** Main entry point — run on a time trigger (hourly). */
 function updateManagementQueues() {
+  safeTriggerRun_('updateManagementQueues', updateManagementQueuesCore_);
+}
+
+function updateManagementQueuesCore_() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) return;
   try {
@@ -2037,6 +2070,10 @@ function updateControlHealth_() {
  ******************************************************/
 
 function archiveLedgerMonthly() {
+  safeTriggerRun_('archiveLedgerMonthly', archiveLedgerMonthlyCore_);
+}
+
+function archiveLedgerMonthlyCore_() {
   const props = PropertiesService.getScriptProperties();
   const now = new Date();
   const prev = new Date(now.getFullYear(), now.getMonth() - 1, 15);

@@ -65,6 +65,25 @@ check('Italian capacity 20-5=15',           itSlot&&itSlot.spotsLeft===15, itSlo
 check('French slot present on Mon 2026-09-07', !!frSlot, mon);
 check('French capacity 20-4=16',            frSlot&&frSlot.spotsLeft===16, frSlot);
 
+console.log('--- Trigger guard: a failing run must never reach Apps Script ---');
+SpreadsheetApp._active=new __mock.MockSS('booking-guard');
+let threw=false;
+try { safeTriggerRun_('unitTest', function(){ throw new Error('Service Spreadsheets timed out while accessing document'); }); }
+catch(e){ threw=true; }
+check('safeTriggerRun_ swallows a Spreadsheets timeout (no failure email)', threw===false, threw);
+let ran=false;
+safeTriggerRun_('unitTest2', function(){ ran=true; });
+check('safeTriggerRun_ still runs the work normally', ran===true, ran);
+
+console.log('--- Modification threads must not log a bogus parse failure ---');
+const mkThread=(subj,body)=>({getMessages:()=>[makeFakeMsg_(subj,body)],getFirstMessageSubject:()=>subj});
+check('"Booking detail change" thread is owned by the modify pass',
+  threadIsModifyOrCancel_(mkThread('Booking detail change: - S779080 - GYGMX4FWXAZY','Fecha 20 de julio de 2026'))===true, null);
+check('cancellation thread is owned elsewhere too',
+  threadIsModifyOrCancel_(mkThread('Reserva cancelada - GYG123','Tu reserva ha sido cancelada.'))===true, null);
+check('a plain confirmation is NOT treated as modify/cancel (still logged if it fails)',
+  threadIsModifyOrCancel_(mkThread('Booking - S779080 - GYG996ZAK7R7','Se ha reservado tu producto'))===false, null);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
