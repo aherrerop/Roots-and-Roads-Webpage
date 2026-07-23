@@ -80,6 +80,21 @@ let sched3=[]; const bbk3={}; bbk3[shiftKey_(longAgo,660,'Italian')]=[{name:'x',
 appendOrphanBookingShifts_(sched3,bbk3);
 check('past booking not surfaced', sched3.length===0, sched3);
 
+// Ordering: a surfaced 11:00 orphan must sort ABOVE an existing 17:00 grid shift
+// (same comparator apiTours_ applies after appending).
+const byTime=(a,b)=>(a.dateKey<b.dateKey?-1:a.dateKey>b.dateKey?1:0)||(a.minutes-b.minutes)||
+  String(a.language).localeCompare(String(b.language));
+let sched4=[
+  {dateKey:tomorrow,minutes:17*60,language:'English',time:'17:00',private:false,assigned:['Carlos'],status:'OK'},
+  {dateKey:tomorrow,minutes:17*60,language:'German',time:'17:00',private:false,assigned:[],status:'Not assigned'}];
+const bbk4={};
+bbk4[shiftKey_(tomorrow,660,'Italian')]=[{name:'Testy',guests:1,note:'Test'}];
+bbk4[shiftKey_(tomorrow,660,'French')]=[{name:'Fr guest',guests:1,note:''}];
+appendOrphanBookingShifts_(sched4,bbk4);
+sched4.sort(byTime);
+check('surfaced orphans carry minutes (sort key)', sched4.every(s=>Number.isFinite(s.minutes)), sched4.map(s=>s.minutes));
+check('11:00 IT/FR sort ABOVE 17:00 EN/DE', sched4.map(s=>s.language).join(',')==='French,Italian,English,German', sched4.map(s=>s.timeLabel+' '+s.language));
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

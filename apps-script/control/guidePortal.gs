@@ -146,6 +146,12 @@ function apiTours_(p) {
   const schedule = readSchedule_();                 // all upcoming shifts (from the grids)
   const bookingsByKey = readBookingsIndex_();       // "yyyy-mm-dd|minutes|Language" -> [bookings]
   appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
+  // Order every shift by date then start time (so appended orphans slot into
+  // their real time position, not at the end of the list).
+  schedule.sort((a, b) =>
+    (a.dateKey < b.dateKey ? -1 : a.dateKey > b.dateKey ? 1 : 0) ||
+    (a.minutes - b.minutes) ||
+    String(a.language).localeCompare(String(b.language)));
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
   const priorCheckins = readGuideCheckins_(name);   // key|bookingId -> checkedIn
@@ -2007,9 +2013,11 @@ function updateControlHealth_() {
     // Health block sits BELOW the functions block (which is top-left at A1),
     // separated by one gap row. Position tracks the functions block size.
     const healthFirstRow = MC.FIRST_ACTION_ROW + mcActions_().length + 1;
-    // Clear the gap + health area first (removes remnants from the old top-left
-    // health layout); rows above (the functions block) are never touched.
-    sh.getRange(healthFirstRow - 1, 1, rows.length + 2, 3).clearContent();
+    // Clear everything from the gap row down to the last used row (A:C), so any
+    // stray/duplicate health block left below by an earlier layout is removed.
+    // Rows above (the functions block) are never touched.
+    const clearTo = Math.max(sh.getLastRow(), healthFirstRow + rows.length + 2);
+    sh.getRange(healthFirstRow - 1, 1, clearTo - healthFirstRow + 2, 3).clearContent();
     sh.getRange(healthFirstRow, 1, rows.length, 2).setValues(rows);
     sh.getRange(healthFirstRow, 1, 1, 2).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
     sh.getRange(healthFirstRow + 1, 1, rows.length - 1, 1).setFontWeight('bold');

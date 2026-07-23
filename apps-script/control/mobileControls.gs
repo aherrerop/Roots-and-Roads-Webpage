@@ -72,22 +72,22 @@ function setupMobileControls() {
   let sh = ss.getSheetByName(MC.TAB);
   if (!sh) sh = ss.insertSheet(MC.TAB);
 
-  // Migration: the functions block used to live at N2:P12. Clear that old
-  // location (values + leftover checkboxes) now that it lives top-left at A1.
-  sh.getRange(1, 14, 13, 3).clearContent().clearDataValidations();
+  // CLEAN SLATE so re-running never leaves duplicate or stale blocks: wipe the
+  // old N:P functions location AND the whole A:C region (functions + health)
+  // before rewriting. Fixes tabs left with two functions blocks (old N:P + new
+  // A1) or two SYSTEM HEALTH blocks by earlier layouts.
+  const lastRow = Math.max(sh.getLastRow(), 40);
+  sh.getRange(1, 14, lastRow, 6).clearContent().clearDataValidations();   // old N..S area
+  sh.getRange(1, 1, lastRow, 3).clearContent().clearDataValidations();    // A:C (functions + health)
 
   const actions = mcActions_();
   sh.getRange(MC.HEADER_ROW, MC.COL_ACTION, 1, 3)
     .setValues([['Action', 'Run', 'Status / last result']])
     .setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
 
-  const rows = actions.map(a => [a.label, false, '']);
-  const block = sh.getRange(MC.FIRST_ACTION_ROW, MC.COL_ACTION, rows.length, 3);
-  // Preserve existing status text if the block already exists.
-  const existing = block.getValues();
-  rows.forEach((r, i) => { if (existing[i] && existing[i][2]) r[2] = existing[i][2]; });
-  block.setValues(rows);
-  sh.getRange(MC.FIRST_ACTION_ROW, MC.COL_RUN, rows.length, 1).insertCheckboxes();
+  sh.getRange(MC.FIRST_ACTION_ROW, MC.COL_ACTION, actions.length, 3)
+    .setValues(actions.map(a => [a.label, false, '']));
+  sh.getRange(MC.FIRST_ACTION_ROW, MC.COL_RUN, actions.length, 1).insertCheckboxes();
   // Widths shared with the health block below (same columns A/B/C).
   sh.setColumnWidth(MC.COL_ACTION, 300);
   sh.setColumnWidth(MC.COL_RUN, 150);
@@ -99,7 +99,9 @@ function setupMobileControls() {
   if (!exists) {
     ScriptApp.newTrigger('handleMobileControlsEdit').forSpreadsheet(ss).onEdit().create();
   }
-  SpreadsheetApp.getActiveSpreadsheet().toast('Mobile Controls ready at ' + MC.TAB + '!' + MC.RANGE);
+  // Write the SYSTEM HEALTH block cleanly BELOW the functions block.
+  try { updateControlHealth_(); } catch (e) { /* health is best-effort */ }
+  ss.toast('Mobile Controls ready at ' + MC.TAB + '!' + MC.RANGE);
 }
 
 /** Installable On-edit handler. Only reacts to the Run checkboxes. */
