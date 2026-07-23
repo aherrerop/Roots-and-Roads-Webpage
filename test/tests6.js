@@ -126,6 +126,25 @@ const hdr=wk.getRange(4,2,1,2).getValues()[0];
 check('time header written as text "10:00" (not a Date)', hdr[0]==='10:00' && !(hdr[0] instanceof Date), hdr);
 check('second time header text too', hdr[1]==='17:00' && !(hdr[1] instanceof Date), hdr);
 
+console.log('--- Availability is IDENTICAL week to week (no vanishing 10:00) ---');
+// Weekly_Schedule holds only real tours; private slots come from ASSIGN_CFG.
+const offer=[{day:'Monday',time:'11:00',language:'English',guidesNeeded:1,activeFrom:null,activeUntil:null}];
+const allRules=offer.concat(privateAvailabilityRules_());
+const mkWeek=(name,mondayOffset)=>{
+  const d=day(mondayOffset); const sh=gss.insertSheet(name);
+  rebuildAvailabilityWeekSheet_(sh,[{dateKey:key(d),dateObj:d,dayName:'Monday',shortLabel:shortDateLabel_(d)}],
+    allRules,['Giulia'],{});
+  return sh.getRange(4,2,1,sh.getLastColumn()-1).getValues()[0].filter(String);
+};
+const wA=mkWeek('Week A',7), wB=mkWeek('Week B',14), wC=mkWeek('Week C',21);
+check('Monday offers 10:00 (private slot) in week A', wA.indexOf('10:00')!==-1, wA);
+check('Monday offers 10:00 in week B TOO (was disappearing)', wB.indexOf('10:00')!==-1, wB);
+check('Monday offers 10:00 in week C as well', wC.indexOf('10:00')!==-1, wC);
+check('same weekday = identical columns across all three weeks',
+  wA.join()===wB.join() && wB.join()===wC.join(), {wA,wB,wC});
+check('private slots present without any Weekly_Schedule "Private" row',
+  wA.indexOf('10:30')!==-1 && wA.indexOf('17:00')!==-1, wA);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

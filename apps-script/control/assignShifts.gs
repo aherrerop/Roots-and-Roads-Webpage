@@ -76,12 +76,18 @@ const ASSIGN_CFG = {
   // is NOT a language and never appears in Weekly_Schedule). Actual private
   // shifts are booking-driven at the booking's real time, in the booking's
   // language.
+  // THE single source of the private availability columns. These have no date
+  // window, so every week tab must show exactly these slots. 10:00 belongs here
+  // (it has no regular tour): it used to come from "Private" rows written into
+  // Weekly_Schedule by setupWeeklySchedule, which updateWeeklyScheduleToCurrentOffer
+  // then deleted — so 10:00 survived in week tabs built before that refresh and
+  // vanished from every week tab rebuilt after it.
   PRIVATE_AVAILABILITY: {
-    Monday:    ['10:30', '17:00'],
-    Tuesday:   ['10:30', '17:00'],
-    Wednesday: ['10:30', '17:00'],
-    Thursday:  ['10:30', '17:00'],
-    Friday:    ['10:30', '17:00'],
+    Monday:    ['10:00', '10:30', '17:00'],
+    Tuesday:   ['10:00', '10:30', '17:00'],
+    Wednesday: ['10:00', '10:30', '17:00'],
+    Thursday:  ['10:00', '10:30', '17:00'],
+    Friday:    ['10:00', '10:30', '17:00'],
     Saturday:  ['17:00'],
     Sunday:    []
   }
@@ -765,14 +771,11 @@ function setupWeeklySchedule() {
   add(['Saturday'], '17:00', 'English');
   add(['Saturday'], '17:00', 'Spanish');
 
-  // Private slots: language "Private" so the availability tab exposes their times
-  // (notably 10:00, which has no regular tour). These rows create availability
-  // columns only; actual private tours are built from bookings in makeSchedule.
-  add(MTThF, '10:00', 'Private');
-  add(MTThF, '17:00', 'Private');
-  add(['Wednesday'], '10:00', 'Private');
-  add(['Wednesday'], '17:00', 'Private');
-  add(['Saturday'], '17:00', 'Private');
+  // NO "Private" rows here. Private availability slots (10:00 / 10:30 / 17:00)
+  // live in ASSIGN_CFG.PRIVATE_AVAILABILITY and are added by
+  // privateAvailabilityRules_ for every week. Writing them into Weekly_Schedule
+  // was the bug: updateWeeklyScheduleToCurrentOffer deletes every "private" row,
+  // so those slots disappeared from any week tab rebuilt afterwards.
 
   sh.clear();
   sh.getRange(1, 1, rows.length, 6).setValues(rows);

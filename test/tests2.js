@@ -54,8 +54,14 @@ check('round-trip: all repaired rules parse', reparsed.length===after.length-1, 
 
 /* --- private availability pseudo-rules --- */
 const priv=privateAvailabilityRules_();
-check('private slots exposed for availability (Mon 10:30+17:00)',
-  priv.filter(r=>r.day==='Monday').map(r=>r.time).sort().join()==='10:30,17:00', priv.filter(r=>r.day==='Monday'));
+// 10:00 is a private slot (no regular tour runs then). It MUST come from
+// ASSIGN_CFG.PRIVATE_AVAILABILITY, never from a Weekly_Schedule "Private" row —
+// those get wiped by updateWeeklyScheduleToCurrentOffer, which is what made
+// 10:00 vanish from later week tabs.
+check('private slots exposed for availability (Mon 10:00+10:30+17:00)',
+  priv.filter(r=>r.day==='Monday').map(r=>r.time).sort().join()==='10:00,10:30,17:00', priv.filter(r=>r.day==='Monday'));
+check('private slots carry no date window (identical every week)',
+  priv.every(r=>r.activeFrom===null && r.activeUntil===null), priv.filter(r=>r.activeFrom||r.activeUntil));
 check('Saturday only 17:00 private slot', priv.filter(r=>r.day==='Saturday').map(r=>r.time).join()==='17:00', null);
 
 console.log('=================================');
