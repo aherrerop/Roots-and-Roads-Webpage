@@ -396,12 +396,29 @@ function ensureSheets_() {
 }
 
 
+/**
+ * Trigger entry points must NEVER throw. Apps Script emails the owner a
+ * "Summary of failures" for every trigger run that ends in an exception, and a
+ * transient "Service Spreadsheets timed out while accessing document" is normal
+ * under contention (someone editing the sheet, or the Control project reading
+ * it at the same moment). Those are logged to the Errors tab and swallowed —
+ * the next run, 5 minutes later, simply picks the work up again.
+ */
+function safeTriggerRun_(label, fn) {
+  try {
+    fn();
+  } catch (err) {
+    try { logError_(label + ' failed (transient; swallowed so the trigger does not email)', err, ''); } catch (e) { /* logging must never throw either */ }
+    console.log(label + ' error: ' + (err && err.stack ? err.stack : err));
+  }
+}
+
 // Frequent trigger (every 5 min): skips already-processed threads.
-function runBookingSystem() { runBookingCore_(true); }
+function runBookingSystem() { safeTriggerRun_('runBookingSystem', function () { runBookingCore_(true); }); }
 
 // Twice-daily audit trigger: identical pipeline, ignores PROCESSED so every
 // labelled thread is re-read for full consistency.
-function runBookingAudit() { runBookingCore_(false); }
+function runBookingAudit() { safeTriggerRun_('runBookingAudit', function () { runBookingCore_(false); }); }
 
 
 function runBookingCore_(skipProcessed) {
@@ -599,8 +616,17 @@ function activeSheetNames_() {
 
 function ensureSheet_(ss, name, headers) {
   let sh = ss.getSheetByName(name);
-  if (!sh) sh = ss.insertSheet(name);
+  const isNew = !sh;
+  if (isNew) sh = ss.insertSheet(name);
 
+  // Only touch the header row when it is actually wrong. This runs for EVERY
+  // active tab on EVERY 5-minute run; rewriting headers unconditionally was
+  // pure Spreadsheets load (and load is what triggers "Service Spreadsheets
+  // timed out" under contention).
+  if (!isNew) {
+    const current = sh.getRange(1, 1, 1, headers.length).getValues()[0];
+    if (headers.every((h, i) => String(current[i]) === String(h))) return;
+  }
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
   sh.setFrozenRows(1);
 }
@@ -1048,6 +1074,29 @@ function processConfirmations_() {
 }
 
 
+/**
+ * True when a thread filed under Confirmations is really a modification or a
+ * cancellation. Gmail groups a booking's confirmation, modification and
+ * cancellation into ONE conversation, and OTA subjects overlap ("Booking detail
+ * change: - S779080 - GYG…" also matches the broad "Booking -" filter).
+ *
+ * Classified from the TEXT, so it still works when the message alone cannot
+ * produce a complete booking — resolving it is the modification pass's job, not
+ * the confirmation pass's. Same wording the parsers route on.
+ */
+function threadIsModifyOrCancel_(thread) {
+  try {
+    return thread.getMessages().some(m => {
+      const s = (m.getSubject() || '') + '\n' + getBestMessageText_(m);
+      return /booking detail change|cambio en los datos|reprogramad|rebooked|ha vuelto a reservar|se ha modificado|modificad|amend|updated booking/i.test(s) ||
+             /cancel(?:led|ed|lation)?|cancelad|cancelaci[oó]n|anulad/i.test(s);
+    });
+  } catch (e) {
+    return false;   // unreadable thread -> fall back to the parse-based check
+  }
+}
+
+
 function processConfirmationLabel_(labelName, source) {
   const threads = getThreadsSafe_(labelName);
 
@@ -1070,7 +1119,13 @@ function processConfirmationLabel_(labelName, source) {
         // — those passes run after this one and select threads with the same
         // "not yet Processed" search, so finalising now would make them skip
         // the thread entirely.
-        const ownedElsewhere = parseThread_(thread, source, 'any').length > 0;
+        // Ownership is decided by CLASSIFICATION as well as by a full parse: a
+        // "Booking detail change" carries only the reference + the new date, so
+        // it can never yield a complete booking on its own (the modification
+        // pass looks the original up by id). Without this it was logged as a
+        // bogus "Confirmation parse failed".
+        const ownedElsewhere = parseThread_(thread, source, 'any').length > 0 ||
+                               threadIsModifyOrCancel_(thread);
         if (ownedElsewhere) continue;
 
         // Nothing parsed in ANY mode -> a genuine parser/misfile problem.
@@ -2486,19 +2541,29 @@ function writeBookingRowsBulk_(sh, startRow, bookings) {
 }
 
 
+/** Per-column formats of an active booking row (matches ACTIVE_HEADERS). */
+const RNR_ROW_FORMATS_ = [['@', '@', '0', 'ddd, mmm d', '@', '@', '0.##', '@', '@']];
+
 function writeBookingRow_(sh, rowNumber, booking) {
   const b = normalizeBooking_(booking);
   const phone = cleanPhone_(b.phone);
 
-  sh.getRange(rowNumber, 1).setValue(b.name);
-  sh.getRange(rowNumber, 2).setNumberFormat('@').setValue(phone ? "'" + phone : "");
-  sh.getRange(rowNumber, 3).setNumberFormat('0').setValue(Number(b.guests || 0));
-  sh.getRange(rowNumber, 4).setNumberFormat('ddd, mmm d').setValue(stripTime_(b.date));
-  sh.getRange(rowNumber, 5).setNumberFormat('@').setValue(normalizeTime_(b.time));
-  sh.getRange(rowNumber, 6).setValue(b.source);
-  sh.getRange(rowNumber, 7).setNumberFormat('0.##').setValue(Number(b.income || 0));
-  sh.getRange(rowNumber, 8).setNumberFormat('@').setValue(b.bookingId);
-  sh.getRange(rowNumber, 9).setValue(b.notes || '');
+  // ONE format call + ONE value call instead of ~24 per-cell calls. The
+  // per-cell writer was the single biggest Spreadsheets cost on every run and
+  // is what made the 5-minute trigger hit "Service Spreadsheets timed out".
+  const r = sh.getRange(rowNumber, 1, 1, 9);
+  withRetry_(() => r.setNumberFormats(RNR_ROW_FORMATS_));
+  withRetry_(() => r.setValues([[
+    b.name,
+    phone ? "'" + phone : "",
+    Number(b.guests || 0),
+    stripTime_(b.date),
+    normalizeTime_(b.time),
+    b.source,
+    Number(b.income || 0),
+    b.bookingId,
+    b.notes || ''
+  ]]));
 }
 
 

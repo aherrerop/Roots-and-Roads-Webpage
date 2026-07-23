@@ -44,6 +44,10 @@ function coerce(v,fmt){
     const m=v.trim().match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
     if(m){ let h=+m[1]; if(/pm/i.test(m[3])&&h!==12)h+=12; if(/am/i.test(m[3])&&h===12)h=0;
       return new Date(1899,11,30,h,+m[2]); }
+    // Sheets also turns a bare 24h "10:00" into a time value (epoch 1899) unless
+    // the cell is TEXT — this is the 12/30/1899 trap the code guards against.
+    const h24=v.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if(h24) return new Date(1899,11,30,+h24[1],+h24[2]);
   }
   return v;
 }
@@ -75,7 +79,17 @@ class MockSheet{
   autoResizeColumns(){return this;}
   getDataRange(){const lr=Math.max(1,this.getLastRow()),lc=Math.max(1,this.getLastColumn());return this.getRange(1,1,lr,lc);}
   getRange(a,b,c,d){
-    if(typeof a==='string'){ // 'B:B' style — format-only ops in our code paths
+    if(typeof a==='string'){ // A1 notation: 'A3:A4', 'B:B', 'A1'
+      const s=a.replace(/\$/g,'').toUpperCase();
+      const m=s.match(/^([A-Z]+)?(\d+)?(?::([A-Z]+)?(\d+)?)?$/);
+      if(m && (m[1]||m[2])){
+        const colNum=t=>{let n=0;for(const ch of t)n=n*26+(ch.charCodeAt(0)-64);return n;};
+        const c1=m[1]?colNum(m[1]):1;
+        const r1=m[2]?Number(m[2]):1;
+        const c2=m[3]?colNum(m[3]):(m[1]?colNum(m[1]):this.getMaxColumns());
+        const r2=m[4]?Number(m[4]):(m[2]?Number(m[2]):this.getMaxRows());
+        return new MockRange(this,r1,c1,Math.max(1,r2-r1+1),Math.max(1,c2-c1+1),!m[2]);
+      }
       return new MockRange(this,1,1,this.getMaxRows(),1,true);
     }
     return new MockRange(this,a,b,c||1,d||1,false);
@@ -89,13 +103,16 @@ class MockRange{
       this.sh.rows[this.r-1+i][this.c-1+j]=coerce(vals[i][j],fmt);
       this.sh.rich[this.r-1+i][this.c-1+j]=null;}
     return this;}
-  setValue(v){return this.setValues([[v]]);}
+  /* Real Sheets fills EVERY cell of the range with the value. */
+  setValue(v){const vals=[];for(let i=0;i<this.nr;i++){const row=[];for(let j=0;j<this.nc;j++)row.push(v);vals.push(row);}return this.setValues(vals);}
   getValues(){this.sh._ensure(this.r+this.nr-1,this.c+this.nc-1);
     const out=[];for(let i=0;i<this.nr;i++){const row=[];for(let j=0;j<this.nc;j++)row.push(this.sh.rows[this.r-1+i][this.c-1+j]);out.push(row);}return out;}
   getValue(){return this.getValues()[0][0];}
   getDisplayValues(){return this.getValues().map(r=>r.map(disp));}
   setNumberFormat(f){this.sh._ensure(this.r+this.nr-1,this.c+this.nc-1);
     for(let i=0;i<this.nr;i++)for(let j=0;j<this.nc;j++)this.sh.fmts[this.r-1+i][this.c-1+j]=f;return this;}
+  setNumberFormats(f){this.sh._ensure(this.r+this.nr-1,this.c+this.nc-1);
+    for(let i=0;i<this.nr;i++)for(let j=0;j<this.nc;j++)this.sh.fmts[this.r-1+i][this.c-1+j]=(f[i]&&f[i][j])||'';return this;}
   setRichTextValue(rt){this.sh._ensure(this.r,this.c);
     this.sh.rows[this.r-1][this.c-1]=rt.text;this.sh.rich[this.r-1][this.c-1]=rt;return this;}
   getRichTextValues(){this.sh._ensure(this.r+this.nr-1,this.c+this.nc-1);
@@ -114,6 +131,7 @@ class MockRange{
   setNote(n){(this.sh.notes=this.sh.notes||{})[this.r+'|'+this.c]=n;return this;}
   getNote(){return (this.sh.notes||{})[this.r+'|'+this.c]||'';}
   clearDataValidations(){return this;}
+  setDataValidation(){return this;} setDataValidations(){return this;}
 }
 function rtObj(rt){
   const text=rt.text||'';
@@ -145,5 +163,6 @@ global.SpreadsheetApp={
       build(){return o;} }; },
   newTextStyle(){ const s={__bold:false};
     return { setBold(b){s.__bold=b;return this;}, build(){return s;} }; },
-  newDataValidation(){ return { requireValueInList(){return this;}, setAllowInvalid(){return this;}, build(){return {};} }; }
+  newDataValidation(){ return { requireValueInList(){return this;}, setAllowInvalid(){return this;}, build(){return {};} }; },
+  BorderStyle:{SOLID:'SOLID',SOLID_THICK:'SOLID_THICK',DASHED:'DASHED',DOTTED:'DOTTED',DOUBLE:'DOUBLE'}
 };

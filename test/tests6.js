@@ -95,6 +95,37 @@ sched4.sort(byTime);
 check('surfaced orphans carry minutes (sort key)', sched4.every(s=>Number.isFinite(s.minutes)), sched4.map(s=>s.minutes));
 check('11:00 IT/FR sort ABOVE 17:00 EN/DE', sched4.map(s=>s.language).join(',')==='French,Italian,English,German', sched4.map(s=>s.timeLabel+' '+s.language));
 
+console.log('--- Guide visibility: assigned + takeable unassigned only ---');
+const giulia={name:'Giulia',languages:{English:false,German:false,Spanish:false,French:false,Italian:true}};
+const mineG=[{dateKey:tomorrow,minutes:11*60,language:'Italian',assigned:['Giulia']}];
+const pool=[
+  {dateKey:tomorrow,minutes:11*60,language:'Italian',assigned:['Giulia'],status:'OK'},      // mine
+  {dateKey:tomorrow,minutes:17*60,language:'English',assigned:['Carlos'],status:'OK'},      // assigned, other lang
+  {dateKey:tomorrow,minutes:17*60,language:'Italian',assigned:[],status:'Not assigned'},    // open, my lang, no clash
+  {dateKey:tomorrow,minutes:12*60,language:'Italian',assigned:[],status:'Not assigned'},    // open, my lang, CLASHES (1h)
+  {dateKey:tomorrow,minutes:17*60,language:'German',assigned:[],status:'Not assigned'}];    // open, not my lang
+const seenG=visibleShiftsForGuide_(pool,mineG,giulia,false);
+check('guide sees assigned tours (any language)', seenG.filter(s=>s.assigned.length).length===2, seenG);
+check('guide sees open tour in THEIR language with no clash',
+  seenG.some(s=>s.language==='Italian'&&s.minutes===17*60&&!s.assigned.length), seenG);
+check('guide does NOT see open tour clashing with their own shift',
+  !seenG.some(s=>s.minutes===12*60), seenG.map(s=>s.minutes));
+check('guide does NOT see open tour in a language they do not run',
+  !seenG.some(s=>s.language==='German'), seenG.map(s=>s.language));
+check('manager sees everything unfiltered', visibleShiftsForGuide_(pool,mineG,giulia,true).length===pool.length, null);
+
+console.log('--- Availability grid: times stay TEXT (no 12/30/1899) ---');
+const gss=new __mock.MockSS('guides'); __mock.SS_BY_ID['GUIDEFILE']=gss;
+const wk=gss.insertSheet('Week 99');
+const monday=day(1);
+const rules=[{day:fullDayName_(monday),time:'10:00',language:'English',guidesNeeded:1,activeFrom:null,activeUntil:null},
+             {day:fullDayName_(monday),time:'17:00',language:'Italian',guidesNeeded:1,activeFrom:null,activeUntil:null}];
+const weekDates=[{dateKey:key(monday),dateObj:monday,dayName:fullDayName_(monday),shortLabel:shortDateLabel_(monday)}];
+rebuildAvailabilityWeekSheet_(wk,weekDates,rules,['Giulia'],{});
+const hdr=wk.getRange(4,2,1,2).getValues()[0];
+check('time header written as text "10:00" (not a Date)', hdr[0]==='10:00' && !(hdr[0] instanceof Date), hdr);
+check('second time header text too', hdr[1]==='17:00' && !(hdr[1] instanceof Date), hdr);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

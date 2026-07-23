@@ -41,6 +41,16 @@ const AVAILABILITY_MIN_GUIDE_ROWS = 20;
  *   5. sheet order      ascending  (final deterministic tiebreak)
  * ============================================================ */
 const ASSIGN_CFG = {
+  // ---- PLANNING HORIZONS (the two knobs to change how far ahead we plan) ----
+  // AVAILABILITY_WEEKS_AHEAD: how many weeks BEYOND the current one the
+  //   Guide_Availability file keeps tabs for. Guides tick availability there,
+  //   and an offer change is applied to EVERY one of these week tabs.
+  // SCHEDULE_WEEKS_AHEAD: how many weeks BEYOND the current one the guide
+  //   SCHEDULE (Schedule_<Language> grids) is generated for. 1 = this week +
+  //   next week, which is what guides are used to seeing.
+  AVAILABILITY_WEEKS_AHEAD: 4,
+  SCHEDULE_WEEKS_AHEAD: 1,
+
   // A guide's two tours must start at least this many hours apart.
   MIN_SEPARATION_HOURS: 5,
 
@@ -467,17 +477,23 @@ function endOfScheduleRange_() {
   const today = dateOnly_(new Date());
   const dow = (today.getDay() + 6) % 7;                 // 0=Mon..6=Sun
   const mondayThis = new Date(today); mondayThis.setDate(today.getDate() - dow);
-  const sundayNext = new Date(mondayThis); sundayNext.setDate(mondayThis.getDate() + 13);
-  return dateOnly_(sundayNext);
+  // Last day of the scheduling window = Sunday of the last scheduled week.
+  const lastSunday = new Date(mondayThis);
+  lastSunday.setDate(mondayThis.getDate() + 7 * (1 + ASSIGN_CFG.SCHEDULE_WEEKS_AHEAD) - 1);
+  return dateOnly_(lastSunday);
 }
 
 function weekTabsToSchedule_(guideSS) {
   const today = dateOnly_(new Date());
   const dow = (today.getDay() + 6) % 7;
   const mondayThis = new Date(today); mondayThis.setDate(today.getDate() - dow);
-  const mondayNext = new Date(mondayThis); mondayNext.setDate(mondayThis.getDate() + 7);
 
-  const wanted = [formatDate_(mondayThis), formatDate_(mondayNext)];
+  // Every week the schedule covers (current + SCHEDULE_WEEKS_AHEAD).
+  const wanted = [];
+  for (let i = 0; i <= ASSIGN_CFG.SCHEDULE_WEEKS_AHEAD; i++) {
+    const m = new Date(mondayThis); m.setDate(mondayThis.getDate() + 7 * i);
+    wanted.push(formatDate_(m));
+  }
   const names = [];
 
   guideSS.getSheets().forEach(sheet => {
@@ -492,7 +508,8 @@ function weekTabsToSchedule_(guideSS) {
     }
   });
 
-  if (!names.length) throw new Error("No availability Week tab found for this week or next week.");
+  if (!names.length) throw new Error("No availability Week tab found for the scheduling window (current + " +
+    ASSIGN_CFG.SCHEDULE_WEEKS_AHEAD + " week(s) ahead). Run Sync availability first.");
   return names;
 }
 
@@ -688,11 +705,42 @@ function syncAvailabilityFile() {
   });
 }
 
+/**
+ * Trigger entry points must NEVER throw: Apps Script emails the owner a
+ * "Summary of failures" for any trigger run that ends in an exception, and a
+ * transient "Service Spreadsheets timed out" is normal under contention.
+ * Errors are logged to the Control Errors tab and swallowed; the next scheduled
+ * run picks the work up again.
+ */
+function safeTriggerRun_(label, fn) {
+  try {
+    fn();
+  } catch (err) {
+    try {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      let sh = ss.getSheetByName(ASSIGN_CFG.ERRORS_TAB);
+      if (!sh) {
+        sh = ss.insertSheet(ASSIGN_CFG.ERRORS_TAB);
+        sh.getRange(1, 1, 1, 4).setValues([["Timestamp", "Type", "Details", "Raw data"]]).setFontWeight("bold");
+        sh.setFrozenRows(1);
+      }
+      sh.getRange(sh.getLastRow() + 1, 1, 1, 4).setValues([[
+        Utilities.formatDate(new Date(), "Europe/Madrid", "yyyy-MM-dd HH:mm"),
+        label + " failed (transient; swallowed so the trigger does not email)",
+        String(err && err.stack ? err.stack : err).slice(0, 500), ""
+      ]]);
+    } catch (e) { /* logging must never throw either */ }
+    console.error(label + ' error: ' + (err && err.stack ? err.stack : err));
+  }
+}
+
 function runWeeklyScheduling() {
-  ensureWeekTabs_();      // delete past weeks, create the upcoming ones
-  syncAvailabilityFile();
-  makeSchedule();
-  emailWeeklySchedule();  // send the language tables to management
+  safeTriggerRun_('runWeeklyScheduling', function () {
+    ensureWeekTabs_();      // delete past weeks, create the upcoming ones
+    syncAvailabilityFile();
+    makeSchedule();
+    emailWeeklySchedule();  // send the language tables to management
+  });
 }
 
 /**
@@ -767,8 +815,8 @@ function emailWeeklySchedule() {
   });
 }
 
-/** Weeks to keep visible ahead of the current one. */
-const WEEKS_AHEAD = 4;
+/** Weeks to keep visible ahead of the current one (see ASSIGN_CFG). */
+const WEEKS_AHEAD = ASSIGN_CFG.AVAILABILITY_WEEKS_AHEAD;
 
 /**
  * Auto-manage the availability Week tabs: delete any week fully in the past,
@@ -1253,7 +1301,13 @@ function rebuildAvailabilityWeekSheet_(sheet, weekDates, scheduleRules, guideNam
 
   const times = slots.map(slot => slot.time);
   if (times.length > 0) {
-    sheet.getRange(4, 2, 1, times.length).setValues([times])
+    const timeRange = sheet.getRange(4, 2, 1, times.length);
+    // TEXT format FIRST: otherwise Sheets coerces "10:00" into a Date and the
+    // header renders as 12/30/1899 (and readAvailability_ can no longer parse
+    // it). Newly created week tabs start on General format, which is why the
+    // later weeks were the ones showing 1899.
+    timeRange.setNumberFormat('@');
+    timeRange.setValues([times])
       .setBackground("#bfdbfe").setFontWeight("bold").setHorizontalAlignment("center");
   }
 
