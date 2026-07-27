@@ -145,6 +145,37 @@ check('same weekday = identical columns across all three weeks',
 check('private slots present without any Weekly_Schedule "Private" row',
   wA.indexOf('10:30')!==-1 && wA.indexOf('17:00')!==-1, wA);
 
+console.log('--- Ledger: free-tour commission is per-person, per-platform ---');
+const rates={paid:10, free:6, privatePay:75,
+  freeCommissions:{guruwalk:4.7, 'free tour':2, website:0, '':0}, paidSources:['Viator','GetYourGuide','Airbnb']};
+PORTAL._paidSources=rates.paidSources;
+const gw=computeMoney_('Guruwalk',4,false,0,rates);
+check('Guruwalk free: guide owes 6x4=24', gw.theyOwe===24, gw);
+check('Guruwalk free: R&R makes (6-4.7)x4 = 5.2 (was 19.3)', Math.abs(gw.rrMakes-5.2)<0.001, gw.rrMakes);
+const ft=computeMoney_('Free Tour',3,false,0,rates);
+check('Free Tour commission 2/person: R&R makes (6-2)x3=12', Math.abs(ft.rrMakes-12)<0.001, ft.rrMakes);
+const web=computeMoney_('Website',2,false,0,rates);
+check('Website 0 commission: R&R makes 6x2=12', Math.abs(web.rrMakes-12)<0.001, web.rrMakes);
+const gyg=computeMoney_('GetYourGuide',2,false,27,rates);
+check('Paid tour unchanged: R&R makes income-weOwe = 27-20 = 7', Math.abs(gyg.rrMakes-7)<0.001, gyg);
+
+console.log('--- Assignment always works: grid grows (tab/column/row created) ---');
+const ac=new __mock.MockSS('control-assign'); SpreadsheetApp._active=ac;
+const d1=key(day(2));
+let res=writeAssignmentToGrid_('Italian',d1,'10:00',false,1,'Giulia');   // no Schedule_Italian yet
+check('assign to a brand-new language/slot succeeds', res.ok===true && res.assigned==='Giulia', res);
+check('Schedule_Italian tab was created', !!ac.getSheetByName('Schedule_Italian'), null);
+let res2=writeAssignmentToGrid_('Italian',d1,'17:00',false,1,'Marco');   // new time column, same date
+check('assigning a new TIME adds a column, still ok', res2.ok===true, res2);
+const itSched=readSchedule_().filter(s=>s.language==='Italian');
+check('both created slots read back from the grid', itSched.length===2 &&
+  itSched.some(s=>s.time==='10:00'&&s.assigned.join()==='Giulia') &&
+  itSched.some(s=>s.time==='17:00'&&s.assigned.join()==='Marco'), itSched);
+
+console.log('--- Portal keeps a tour until the evening of its day ---');
+check('same-day morning tour is NOT over', shiftIsOver_(key(new Date()),10*60)===false, null);
+check('a tour on a past day IS over', shiftIsOver_(key(day(-1)),10*60)===true, null);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

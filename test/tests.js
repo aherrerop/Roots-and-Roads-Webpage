@@ -79,7 +79,7 @@ const sched2=readSchedule_();
 check('portal now shows Mario on 17:00', (sched2.find(s=>!s.private&&s.time==='17:00')||{}).assigned.join()==='Mario', null);
 
 /* ============ TEST GROUP 3: the 2h cutoff ============ */
-console.log('\n--- 2h tour cutoff ---');
+console.log('\n--- Tours stay on the portal until the evening of their day ---');
 const now=new Date();
 const past=new Date(now.getTime()-3*3600000);   // started 3h ago today
 const soon=new Date(now.getTime()+3600000);     // starts in 1h today
@@ -90,7 +90,7 @@ const shifts3=[
 ];
 makeOneLanguageScheduleTab_(control,'English',shifts3);
 const sched3=readSchedule_().filter(s=>s.dateKey===key(now));
-check('tour that started 3h ago is gone from the portal', !sched3.some(s=>s.time===t24(past)), sched3.map(s=>s.time));
+check('tour that started 3h ago is STILL shown (visible until evening)', sched3.some(s=>s.time===t24(past)), sched3.map(s=>s.time));
 check('tour starting in 1h is still shown', sched3.some(s=>s.time===t24(soon)), sched3.map(s=>s.time));
 
 /* ============ TEST GROUP 4: stale grid purge ============ */
