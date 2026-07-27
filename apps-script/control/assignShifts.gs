@@ -460,7 +460,11 @@ function readLockedAssignments_(controlSS) {
 
 /** Write lock conflicts to the Control sheet's Errors tab (visible flag). */
 function logScheduleConflicts_(controlSS, conflicts) {
-  if (!conflicts.length) return;
+  // Only HARD conflicts are errors. "not marked available" alone is a normal
+  // management decision (they assign someone after talking to them) — logging
+  // those every run just filled the Errors tab with noise.
+  const hard = conflicts.filter(c => c.hard !== false);
+  if (!hard.length) return;
   let sh = controlSS.getSheetByName(ASSIGN_CFG.ERRORS_TAB);
   if (!sh) {
     sh = controlSS.insertSheet(ASSIGN_CFG.ERRORS_TAB);
@@ -468,8 +472,8 @@ function logScheduleConflicts_(controlSS, conflicts) {
     sh.setFrozenRows(1);
   }
   const ts = Utilities.formatDate(new Date(), "Europe/Madrid", "yyyy-MM-dd HH:mm");
-  const rows = conflicts.map(c => [
-    ts, c.hard === false ? "Schedule note" : "Schedule lock conflict",
+  const rows = hard.map(c => [
+    ts, "Schedule lock conflict",
     `${c.guide} locked on ${c.dateText} ${c.time} ${c.language}${c.isPrivate ? " (private)" : ""}: ${c.problems.join("; ")}`,
     ""
   ]);

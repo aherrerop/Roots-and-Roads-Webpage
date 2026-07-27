@@ -2139,6 +2139,54 @@ function archiveCompletedThreadsByIds_(completedBookings) {
  * looks "stuck" there but is missing from the sheet is genuinely lost, not
  * just old and completed.
  */
+/**
+ * MANUAL CLEANUP — run from the editor whenever old tour emails pile up in the
+ * inbox. Moves EVERY Confirmation/Modification thread whose tour has already
+ * finished to its <Source>/Done label and out of the inbox, regardless of when
+ * the sheet row was completed (the normal archive only touches threads whose
+ * booking finished on that same run, so a backlog can build up). Idempotent and
+ * safe to re-run; NOT on a trigger. Returns how many threads it moved; if it
+ * runs low on time it stops gracefully — just run it again.
+ */
+function archivePastTourEmails() {
+  RNR_RUN_STARTED_AT_ = Date.now();
+  RNR_SKIP_PROCESSED_ = false;         // read every labelled thread, not just inbox
+  resetRunCaches_();
+  let moved = 0, hitLimit = false;
+
+  sourceConfigs_().filter(cfg => cfg.done).forEach(cfg => {
+    if (hitLimit || !GmailApp.getUserLabelByName(cfg.done)) return;
+    const seen = new Set();
+    [cfg.confirm, cfg.modify].filter(Boolean).forEach(labelName => {
+      if (hitLimit) return;
+      const label = getLabel_(labelName);
+      if (!label) return;
+      const threads = label.getThreads(0, RNR.MAX_THREADS_AUDIT) || [];
+      for (const thread of threads) {
+        if (Date.now() - RNR_RUN_STARTED_AT_ > 5.5 * 60000) { hitLimit = true; break; }
+        try {
+          const id = thread.getId();
+          if (seen.has(id)) continue;
+          if (!completedThreadShouldMoveToDone_(thread, cfg.source)) continue;
+          seen.add(id);
+          stripSourceLabelsExcept_(thread, cfg, [cfg.done]);
+          moveThreadOutOfInbox_(thread);
+          moved++;
+        } catch (e) { logError_('archivePastTourEmails ' + cfg.source, e, ''); }
+      }
+    });
+  });
+
+  if (!hitLimit) {
+    try { moveCompletedWebsiteThreadsToDone_(); } catch (e) { /* best effort */ }
+    try { moveCompletedViatorConversationThreads_(); } catch (e) { /* best effort */ }
+  }
+  console.log('archivePastTourEmails: moved ' + moved + ' completed thread(s) to Done.' +
+    (hitLimit ? ' Stopped early on time — run again to finish.' : ''));
+  return moved;
+}
+
+
 function moveCompletedPlatformThreadsToDone_() {
   sourceConfigs_().filter(cfg => cfg.done).forEach(cfg => {
     if (!GmailApp.getUserLabelByName(cfg.done)) return;

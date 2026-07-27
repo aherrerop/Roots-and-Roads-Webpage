@@ -60,10 +60,24 @@ const PORTAL = {
   DEFAULT_PAID_RATE: 10,       // paid tours: we owe the guide, € per checked-in person
   DEFAULT_FREE_RATE: 6,        // free tours: the guide owes us, € per checked-in person
   DEFAULT_PRIVATE_PAY: 75,     // private tours: flat € we owe the guide who runs it
-  DEFAULT_GURUWALK_FEE: 4.70,  // € Guruwalk charges us, per booking (a cost to R&R)
+
+  // Free-tour platform commission the platform charges US, € per CHECKED-IN
+  // person (a cost to R&R). We charge the guide DEFAULT_FREE_RATE/person and
+  // keep the difference. Editable per platform on the Rates tab. Keys are
+  // matched case-insensitively against the booking Source; '' is the default.
+  DEFAULT_FREE_COMMISSIONS: {
+    guruwalk: 4.70,
+    'free tour': 0,
+    website: 0,
+    '': 0                       // any other free source
+  },
 
   // Show tours from today up to this many days ahead.
   UPCOMING_DAYS: 45,
+
+  // A tour stays visible on the portal until this hour (24h) of its own day,
+  // so management can check prepaid/free guests after it ran.
+  TOUR_VISIBLE_UNTIL_HOUR: 23,
 
   // BookingSheet tab name pattern per language, e.g. "English Tours".
   BOOKING_TAB_SUFFIX: ' Tours',
@@ -427,33 +441,60 @@ function moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage) {
   return { ok: true, moved: true, to: toLanguage };
 }
 
+/**
+ * Write a manager assignment into Schedule_<language>, CREATING the tab, the
+ * time column and/or the date row if they are missing. Management can always
+ * assign a booked tour even when it was never in the pre-written offer ("there
+ * are people signed up, it must be assignable"). A blank guide clears the cell.
+ */
 function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide) {
-  const sh = control_().getSheetByName('Schedule_' + language);
-  if (!sh || sh.getLastRow() < 3) {
-    return { ok: false, error: 'Schedule_' + language + ' tab not found or empty' };
+  const ss = control_();
+  const tabName = 'Schedule_' + language;
+  let sh = ss.getSheetByName(tabName);
+  const header = gridHeaderForColumn_(time, isPriv, privIndex);
+  const dayLabel = Utilities.formatDate(new Date(dateKey + 'T12:00:00'), Session.getScriptTimeZone(), 'EEE MMM d');
+
+  // Repair/create the tab if it is missing or not a real grid (e.g. the
+  // "<lang>: no tours in the scheduling window" placeholder).
+  let dv = sh ? sh.getDataRange().getDisplayValues() : [];
+  const isGrid = dv.length >= 2 && String(dv[1][0] || '').trim().toLowerCase() === 'date';
+  if (!sh || !isGrid) {
+    if (!sh) sh = ss.insertSheet(tabName);
+    sh.clear();
+    sh.getRange(1, 1).setValue(language + ' schedule (' + dateKey + ' to ' + dateKey + ')')
+      .setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+    sh.getRange(2, 1, 1, 2).setValues([['Date', header]])
+      .setFontWeight('bold').setBackground('#bfdbfe').setHorizontalAlignment('center');
+    dv = sh.getDataRange().getDisplayValues();
   }
-  const dv = sh.getDataRange().getDisplayValues();
+
   const anchor = gridAnchor_(String(dv[0][0] || ''));
   const timeRow = dv[1] || [];
 
-  let col = -1;
+  // Time column: find, else append a new one (management-added column).
+  let colNum = -1;
   for (let c = 1; c < timeRow.length; c++) {
     const h = parseGridTimeHeader_(timeRow[c]);
-    if (h && h.time === time && h.isPrivate === isPriv && (!isPriv || h.index === privIndex)) {
-      col = c; break;
-    }
+    if (h && h.time === time && h.isPrivate === isPriv && (!isPriv || h.index === privIndex)) { colNum = c + 1; break; }
   }
-  if (col === -1) {
-    return { ok: false, error: 'No ' + (isPriv ? 'private ' : '') + time + ' column in Schedule_' + language };
+  if (colNum === -1) {
+    colNum = sh.getLastColumn() + 1;
+    sh.getRange(2, colNum).setValue(header)
+      .setFontWeight('bold').setHorizontalAlignment('center')
+      .setBackground(isPriv ? '#fde68a' : '#bfdbfe');
   }
 
-  let row = -1;
+  // Date row: find, else append one (works for any date — the label carries the month).
+  let rowNum = -1;
   for (let r = 2; r < dv.length; r++) {
-    if (gridLabelToKey_(String(dv[r][0] || '').trim(), anchor) === dateKey) { row = r; break; }
+    if (gridLabelToKey_(String(dv[r][0] || '').trim(), anchor) === dateKey) { rowNum = r + 1; break; }
   }
-  if (row === -1) return { ok: false, error: dateKey + ' is not in Schedule_' + language };
+  if (rowNum === -1) {
+    rowNum = sh.getLastRow() + 1;
+    sh.getRange(rowNum, 1).setValue(dayLabel).setFontWeight('bold').setBackground('#dbeafe');
+  }
 
-  const cell = sh.getRange(row + 1, col + 1);
+  const cell = sh.getRange(rowNum, colNum);
   if (!guide) {
     cell.setValue('Not assigned');
     cell.setFontWeight('normal').setFontStyle('italic').setFontColor('#94a3b8');
@@ -943,14 +984,20 @@ function ledgerSS_() {
 function seedRatesTab_(ss) {
   let sh = ss.getSheetByName('Rates') || ss.insertSheet('Rates', 0);
   sh.clear();
-  sh.getRange(1, 1, 6, 2).setValues([
+  const rows = [
     ['Setting', 'Value'],
     ['Paid tour — we owe guide (€ per checked-in person)', PORTAL.DEFAULT_PAID_RATE],
     ['Free tour — guide owes us (€ per checked-in person)', PORTAL.DEFAULT_FREE_RATE],
-    ['Private tour — we owe guide (flat € per tour)', PORTAL.DEFAULT_PRIVATE_PAY],
-    ['Guruwalk fee we pay (€ per booking)', PORTAL.DEFAULT_GURUWALK_FEE],
-    ['Paid sources (comma separated)', PORTAL.PAID_SOURCES.join(', ')]
-  ]);
+    ['Private tour — we owe guide (flat € per tour)', PORTAL.DEFAULT_PRIVATE_PAY]
+  ];
+  // One editable commission per free-tour platform (€ per checked-in person).
+  Object.keys(PORTAL.DEFAULT_FREE_COMMISSIONS).forEach(k => {
+    const label = k === '' ? 'other' : k;
+    rows.push(['Free tour commission — ' + label + ' (€ per checked-in person)',
+               PORTAL.DEFAULT_FREE_COMMISSIONS[k]]);
+  });
+  rows.push(['Paid sources (comma separated)', PORTAL.PAID_SOURCES.join(', ')]);
+  sh.getRange(1, 1, rows.length, 2).setValues(rows);
   sh.getRange(1, 1, 1, 2).setFontWeight('bold');
   sh.setColumnWidth(1, 360); sh.setColumnWidth(2, 160);
   // Remove the default empty "Sheet1" if present.
@@ -962,23 +1009,43 @@ function readRates_() {
   const ss = ledgerSS_();
   const sh = ss.getSheetByName('Rates');
   let paid = PORTAL.DEFAULT_PAID_RATE, free = PORTAL.DEFAULT_FREE_RATE;
-  let privatePay = PORTAL.DEFAULT_PRIVATE_PAY, guruwalkFee = PORTAL.DEFAULT_GURUWALK_FEE;
+  let privatePay = PORTAL.DEFAULT_PRIVATE_PAY;
   let paidSources = PORTAL.PAID_SOURCES.slice();
+  // Start from the defaults so a platform without a Rates row still resolves.
+  const freeCommissions = {};
+  Object.keys(PORTAL.DEFAULT_FREE_COMMISSIONS).forEach(k => { freeCommissions[k] = PORTAL.DEFAULT_FREE_COMMISSIONS[k]; });
   if (sh && sh.getLastRow() >= 2) {
     const v = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
     v.forEach(r => {
       const label = String(r[0] || '').toLowerCase();
-      if (label.indexOf('paid tour') === 0) paid = Number(r[1]) || paid;
+      if (label.indexOf('free tour commission') === 0) {
+        // "Free tour commission — guruwalk (€ …)" -> platform key "guruwalk".
+        const m = label.match(/commission\s*[—\-:]\s*([^(]+)/);
+        let key = m ? m[1].trim() : '';
+        if (key === 'other') key = '';
+        freeCommissions[key] = Number(r[1]) || 0;
+      }
+      else if (label.indexOf('paid tour') === 0) paid = Number(r[1]) || paid;
       else if (label.indexOf('free tour') === 0) free = Number(r[1]) || free;
       else if (label.indexOf('private tour') === 0) privatePay = Number(r[1]) || privatePay;
-      else if (label.indexOf('guruwalk fee') === 0) guruwalkFee = Number(r[1]) || guruwalkFee;
       else if (label.indexOf('paid sources') === 0 && r[1]) {
         paidSources = String(r[1]).split(',').map(s => s.trim()).filter(Boolean);
       }
     });
   }
   PORTAL._paidSources = paidSources; // cache for isPaidSource_
-  return { paid, free, privatePay, guruwalkFee, paidSources };
+  return { paid, free, privatePay, freeCommissions, paidSources };
+}
+
+/** Free-tour platform commission (€ per checked-in person) for a booking's
+ *  source. Matches the Source against the Rates platform keys; falls back to
+ *  the '' (other) commission. */
+function freeCommissionFor_(source, rates) {
+  const s = String(source || '').toLowerCase();
+  const map = (rates && rates.freeCommissions) || {};
+  const keys = Object.keys(map).filter(k => k);   // named platforms
+  const hit = keys.find(k => s.indexOf(k) !== -1);
+  return Number((hit != null ? map[hit] : map['']) || 0);
 }
 
 function guideTab_(ss, name) {
@@ -1096,23 +1163,27 @@ function repairLedgerDuplicates() {
  * All money for one ledger row.
  *   Private tour  -> we owe the guide a flat privatePay; R&R = OTA income - privatePay.
  *   Paid tour     -> we owe the guide 10 €/checked-in; R&R = OTA income - that.
- *   Free tour     -> guide owes us 6 €/checked-in; R&R = that - Guruwalk fee (Guruwalk only).
+ *   Free tour     -> guide owes us 6 €/checked-in; the platform charges us a
+ *                    commission €/checked-in, so R&R keeps (free - commission)
+ *                    per checked-in person. Commission is per-platform (Rates).
  */
 function computeMoney_(source, checkedIn, isPrivate, income, rates) {
   const paid = isPaidSource_(source);
-  const guruFee = /guruwalk/i.test(String(source || '')) ? Number(rates.guruwalkFee || 0) : 0;
   const inc = Number(income || 0);
+  const ppl = Number(checkedIn || 0);
 
   if (isPrivate) {
     const weOwe = Number(rates.privatePay || 0);
     return { weOwe, theyOwe: 0, rrMakes: round2_(inc - weOwe), type: 'Private' };
   }
   if (paid) {
-    const weOwe = round2_(checkedIn * rates.paid);
+    const weOwe = round2_(ppl * rates.paid);
     return { weOwe, theyOwe: 0, rrMakes: round2_(inc - weOwe), type: 'Paid' };
   }
-  const theyOwe = round2_(checkedIn * rates.free);
-  return { weOwe: 0, theyOwe, rrMakes: round2_(theyOwe - guruFee), type: 'Free' };
+  // Free tour: guide owes us `free`/person; platform commission is per-person.
+  const commission = freeCommissionFor_(source, rates);
+  const theyOwe = round2_(ppl * rates.free);
+  return { weOwe: 0, theyOwe, rrMakes: round2_(ppl * (rates.free - commission)), type: 'Free' };
 }
 
 function makeLedgerRow_(o) {
@@ -1237,8 +1308,12 @@ function timeToMinutes_(t24) {
 function shiftIsOver_(dateKey, minutes) {
   const d = new Date(dateKey + 'T00:00:00');
   if (isNaN(d)) return false;
-  const start = d.getTime() + Math.max(0, Number(minutes) || 0) * 60000;
-  return Date.now() > start + 2 * 3600000;
+  // A tour stays on the portal until the EVENING of its own day, so management
+  // can still check who was prepaid vs free after it ran. (Guides can only tick
+  // check-ins, never untick, so keeping it visible is safe.) It disappears once
+  // we pass PORTAL.TOUR_VISIBLE_UNTIL_HOUR on the tour's date.
+  const cutoff = d.getTime() + (PORTAL.TOUR_VISIBLE_UNTIL_HOUR || 23) * 3600000;
+  return Date.now() > cutoff;
 }
 
 /**
