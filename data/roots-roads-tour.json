@@ -8,8 +8,11 @@
   "languages": [
     "English",
     "German",
-    "Spanish"
+    "Spanish",
+    "Italian",
+    "French"
   ],
+  "languages_note": "English, German and Spanish run on the regular weekly schedule. Italian and French run on selected schedules — reserve the tour and request the language.",
   "meeting_point": "Av. Gaudí 1, by the lamppost between KFC and Hard Rock Café at Sagrada Família, Barcelona",
   "route": [
     "Sagrada Família exterior",
@@ -25,7 +28,7 @@
     "travellers interested in Sagrada Família, Gaudí, Modernisme and the Gothic Quarter",
     "budget-conscious travellers who prefer free-reserve, tip-based tours",
     "short-stay and cruise visitors when timing allows",
-    "English-speaking, German-speaking and Spanish-speaking visitors"
+    "English-speaking, German-speaking, Spanish-speaking, Italian-speaking and French-speaking visitors"
   ],
   "not_for": [
     "travellers looking for interior Sagrada Família tickets included",
@@ -48,5 +51,5 @@
     "Facebook": "https://www.facebook.com/profile.php?id=61586161017203",
     "Meetup": "https://www.meetup.com/roots-and-roads/"
   },
-  "date_modified": "2026-07-01"
+  "date_modified": "2026-07-28"
 }

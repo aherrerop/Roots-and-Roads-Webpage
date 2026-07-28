@@ -25,4 +25,47 @@ Allow: /
 User-agent: Applebot
 Allow: /
 
+User-agent: Applebot-Extended
+Allow: /
+
+# Anthropic (Claude) crawlers
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+# Common Crawl — its dataset is used to train and ground many LLMs
+User-agent: CCBot
+Allow: /
+
+# Google AI surfaces (Vertex AI Search grounding, Gemini/AI products)
+User-agent: Google-CloudVertexBot
+Allow: /
+
+User-agent: GoogleOther
+Allow: /
+
+# Other AI assistants / answer engines
+User-agent: Meta-ExternalAgent
+Allow: /
+
+User-agent: FacebookBot
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
+User-agent: DuckAssistBot
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
 Sitemap: https://rootsandroadsbcn.com/sitemap.xml
