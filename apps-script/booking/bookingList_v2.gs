@@ -209,6 +209,12 @@ const RNR = {
 
   DONE_AFTER_HOURS: 2,
 
+  // A booking's row stays in its active language tab (so it keeps showing in the
+  // guide portal WITH its reservations and check-ins) until this hour (24h) of
+  // the tour's own day — matching the portal's TOUR_VISIBLE_UNTIL_HOUR. Only
+  // then is it moved to Done. Management keeps full visibility all day.
+  DONE_VISIBLE_UNTIL_HOUR: 23,
+
   // Fast (5-min) runs only ever see Processed-labelled threads on repeat
   // passes, so they can afford a smaller cap. The audit run needs a bigger
   // cap to clear whatever backlog piled up. Raise MAX_THREADS_AUDIT further
@@ -1899,7 +1905,9 @@ function moveCompletedBookingRowsToDone_() {
 
     for (let i = 0; i < rows.length; i++) {
       const booking = rowToBooking_(rows[i], sheetName);
-      if (isValidBooking_(booking) && isCompleted_(booking)) {
+      // Keep the row (and thus the portal's reservations + check-ins) until the
+      // tour's DAY is over, not just 2h after it started.
+      if (isValidBooking_(booking) && tourDayIsOver_(booking)) {
         completed.push(booking);
         rowsToDelete.push(i + 2);
       }
@@ -3984,6 +3992,20 @@ function isCompleted_(booking) {
   const start = combineDateTime_(b.date, b.time);
   const doneAt = new Date(start.getTime() + RNR.DONE_AFTER_HOURS * 60 * 60 * 1000);
   return new Date() >= doneAt;
+}
+
+/**
+ * A tour's booking row moves to Done only when its DAY is over (evening), not
+ * 2h after it started. Until then the row stays in the active language tab so
+ * the guide portal keeps showing the shift WITH its reservations and check-ins.
+ * Aligned with the Control portal's evening cutoff (TOUR_VISIBLE_UNTIL_HOUR).
+ */
+function tourDayIsOver_(booking) {
+  const b = normalizeBooking_(booking);
+  if (!b.date) return isCompleted_(b);   // no usable date -> fall back to start+2h
+  const end = new Date(b.date.getTime());
+  end.setHours(RNR.DONE_VISIBLE_UNTIL_HOUR, 0, 0, 0);
+  return new Date() >= end;
 }
 
 

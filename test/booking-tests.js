@@ -84,6 +84,14 @@ check('cancellation thread is owned elsewhere too',
 check('a plain confirmation is NOT treated as modify/cancel (still logged if it fails)',
   threadIsModifyOrCancel_(mkThread('Booking - S779080 - GYG996ZAK7R7','Se ha reservado tu producto'))===false, null);
 
+console.log('--- Booking rows stay active until the tour DAY is over (portal keeps reservations) ---');
+const _today=new Date(); _today.setHours(9,0,0,0);
+const _yest=new Date(); _yest.setDate(_yest.getDate()-1); _yest.setHours(9,0,0,0);
+const _mk=d=>({date:d,time:'9:00 AM',name:'Guest',bookingId:'BK1',language:'English',source:'Website',guests:2});
+check('a tour EARLIER today is not yet moved to Done (reservations persist in portal)', tourDayIsOver_(_mk(_today))===false, null);
+check('a tour YESTERDAY is done (row moves to Done)', tourDayIsOver_(_mk(_yest))===true, null);
+check('start+2h isCompleted_ still true earlier today (Gmail/invariants unchanged)', isCompleted_(_mk(_today))===true, null);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
