@@ -166,6 +166,15 @@ function apiTours_(p) {
     (a.dateKey < b.dateKey ? -1 : a.dateKey > b.dateKey ? 1 : 0) ||
     (a.minutes - b.minutes) ||
     String(a.language).localeCompare(String(b.language)));
+
+  // A completed tour's live booking rows have moved to Done, so fall back to the
+  // LEDGER (durable) for its guests, phones, children and check-ins — management
+  // and guides keep full reservation info after the tour has run.
+  const ledgerByKey = readLedgerReservations_();
+  Object.keys(ledgerByKey).forEach(k => {
+    if (!bookingsByKey[k] || !bookingsByKey[k].length) bookingsByKey[k] = ledgerByKey[k];
+  });
+
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
   const priorCheckins = readGuideCheckins_(name);   // key|bookingId -> checkedIn
@@ -191,8 +200,9 @@ function apiTours_(p) {
           income: Number(b.income || 0),
           isPrivate: /privat/i.test(b.note || ''),
           note: String(b.note || ''),
-          checked: isCk,
-          checkedIn: isCk ? Number(priorCheckins[kk]) : Number(b.guests || 0) // locked count, or booked default to adjust
+          checked: isCk || (b.checkedIn != null && Number(b.checkedIn) > 0),
+          checkedIn: isCk ? Number(priorCheckins[kk])
+                          : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0)) // ledger value, or booked default
         };
       });
 
@@ -281,8 +291,9 @@ function apiTours_(p) {
             income: Number(b.income || 0),
             paid: isPaidSource_(b.source), isPrivate: /privat/i.test(b.note || ''),
             note: String(b.note || ''),
-            checked: isCk,
-            checkedIn: isCk ? Number(ck[kk]) : Number(b.guests || 0)
+            checked: isCk || (b.checkedIn != null && Number(b.checkedIn) > 0),
+            checkedIn: isCk ? Number(ck[kk])
+                            : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0))
           };
         });
       return {
@@ -1074,6 +1085,53 @@ function readGuideCheckins_(name) {
     const bookingId = String(r[LEDGER_BOOKINGID_COL] || '').trim();
     if (!dateKey || !bookingId) return;
     out[shiftKey_(dateKey, minutes, language) + '|' + bookingId] = Number(r[LEDGER_CHECKEDIN_COL] || 0);
+  });
+  return out;
+}
+
+/**
+ * Full reservation detail from the ledger, keyed by shift, across every guide
+ * tab. The ledger is the durable record — name, phone, guests, children,
+ * checked-in, booking id — and is NOT cleared when a tour completes. Used so a
+ * completed tour keeps showing its guests in the portal after the live booking
+ * row has moved to Done. Deduped by booking id per shift.
+ */
+function readLedgerReservations_() {
+  const out = {};
+  let names = [];
+  try {
+    const raw = readGuidesRaw_();
+    const cols = guideColumns_(raw.header);
+    names = raw.rows.map(r => String(r[cols.nameCol] || '').trim()).filter(Boolean);
+  } catch (e) { return out; }
+  let ss; try { ss = ledgerSS_(); } catch (e) { return out; }
+  names.forEach(name => {
+    const sh = ss.getSheetByName(name.substring(0, 90));
+    if (!sh || sh.getLastRow() < 2) return;
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
+    v.forEach(r => {
+      const dateKey = toDateKey_(r[0]);
+      const minutes = timeToMinutes_(normTime24_(r[2]));
+      const language = String(r[3] || '').trim();
+      const bookingId = String(r[LEDGER_BOOKINGID_COL] || '').trim();
+      if (!dateKey || !bookingId) return;
+      const key = shiftKey_(dateKey, minutes, language);
+      const arr = out[key] = out[key] || [];
+      if (arr.some(b => b.bookingId === bookingId)) return;   // dedupe
+      arr.push({
+        bookingId,
+        name: String(r[4] || '').trim(),
+        phone: String(r[5] || '').trim(),
+        source: String(r[6] || '').trim(),
+        guests: Number(r[7] || 0),
+        children: Number(r[8] || 0),
+        infants: 0, income: 0,
+        // "Private" in the note so a private completed tour attaches to its
+        // private column, not the regular one (the Type column records it).
+        note: /priv/i.test(String(r[13] || '')) ? 'Private' : '',
+        checkedIn: Number(r[LEDGER_CHECKEDIN_COL] || 0)
+      });
+    });
   });
   return out;
 }
