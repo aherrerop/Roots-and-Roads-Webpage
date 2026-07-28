@@ -176,6 +176,25 @@ console.log('--- Portal keeps a tour until the evening of its day ---');
 check('same-day morning tour is NOT over', shiftIsOver_(key(new Date()),10*60)===false, null);
 check('a tour on a past day IS over', shiftIsOver_(key(day(-1)),10*60)===true, null);
 
+console.log('--- Ledger fallback: a completed tour keeps its reservations (durable) ---');
+const lc=new __mock.MockSS('control-ledger'); SpreadsheetApp._active=lc;
+lc.insertSheet('Guides').getRange(1,1,2,11).setValues([
+ ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Manager','Email','Password'],
+ ['Marco',true,1,false,false,false,false,true,false,'m@x.com','pw']]);
+const led=new __mock.MockSS('ledger-fb'); __mock.SS_BY_ID['LEDFB']=led; __mock.PROPS['LEDGER_ID']='LEDFB';
+const gt=led.insertSheet('Marco');
+gt.getRange(1,1,2,LEDGER_HEADERS.length).setNumberFormat('@');
+gt.getRange(1,1,2,LEDGER_HEADERS.length).setValues([
+ LEDGER_HEADERS,
+ ['2026-07-28','Tue','11:00','Italian','Guest Uno','+3912345','GetYourGuide',2,1,2,40,0,7,'Paid','GYGIT9','2026-07-28 13:00']]);
+const lr=readLedgerReservations_();
+const lk=shiftKey_('2026-07-28',11*60,'Italian');
+check('ledger reservation indexed by shift key', !!lr[lk] && lr[lk].length===1, Object.keys(lr));
+const rb=(lr[lk]||[])[0]||{};
+check('reservation carries name/phone/guests/children/checkedIn from ledger',
+  rb.name==='Guest Uno' && rb.phone==='+3912345' && Number(rb.guests)===2 && Number(rb.children)===1 && Number(rb.checkedIn)===2, rb);
+check('no duplicate booking ids in the ledger index', (lr[lk]||[]).filter(b=>b.bookingId==='GYGIT9').length===1, lr[lk]);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
