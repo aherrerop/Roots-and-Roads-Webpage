@@ -1057,7 +1057,11 @@ function sendWebsiteReservationAlert_(booking, params) {
     ) + '\n' +
     'Time: ' + safeString_(booking.time) + '\n' +
     'Source: ' + safeString_(booking.source) + '\n' +
-    'Booking ID: ' + safeString_(booking.bookingId) + '\n\n' +
+    'Booking ID: ' + safeString_(booking.bookingId) + '\n' +
+    // Machine-readable lines so the confirmation pass can reconstruct the
+    // booking unambiguously (used to mark the thread Processed / self-heal).
+    'DateKey: ' + (dateKey_(booking.date) || '') + '\n' +
+    'Time24: ' + normalizeTime_(booking.time) + '\n\n' +
     'Message:\n' + safeString_(params.message);
 
   MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject, body });
@@ -1077,6 +1081,63 @@ function processConfirmations_() {
   // Airbnb forwarded emails may already be read, so process them separately
   // (harmless: this system never branches on read/unread anyway).
   processConfirmationLabel_(RNR.LABELS.AIRBNB_CONFIRM, RNR.SOURCE.AIRBNB);
+
+  // Website reservations are authored by doPost (the webhook), not by an email.
+  // Their alert email still needs to be marked Processed like every other
+  // confirmation, and doubles as a backup source if the row was ever lost.
+  processWebsiteConfirmations_();
+}
+
+
+/**
+ * Parse the internal "NEW WEBSITE RESERVATION" alert back into a booking. The
+ * alert (sendWebsiteReservationAlert_) is our own email, so the format is
+ * fixed; the machine "DateKey"/"Time24" lines make the date/time unambiguous.
+ * Returns null if it is not a complete website alert.
+ */
+function parseWebsiteAlert_(message) {
+  const body = getBestMessageText_(message) || '';
+  const get = re => { const m = body.match(re); return m ? String(m[1]).trim() : ''; };
+  const bookingId = get(/Booking ID:\s*(\S+)/i);
+  const dateKey = get(/DateKey:\s*(\d{4}-\d{2}-\d{2})/i);
+  if (!bookingId || !dateKey) return null;   // not a parseable website alert
+
+  return normalizeBooking_({
+    name: get(/Name:\s*(.+)/i),
+    phone: cleanPhone_(get(/Phone:\s*(.+)/i)),
+    guests: Number(get(/Guests:\s*(\d+)/i)) || 1,
+    date: normalizeDate_(dateKey),
+    time: normalizeTime_(get(/Time24:\s*([0-9: APM]+)/i) || get(/Time:\s*(.+)/i)),
+    language: normalizeLanguage_(get(/Language:\s*(.+)/i)),
+    source: RNR.SOURCE.WEBSITE,
+    income: 0,
+    bookingId: bookingId,
+    notes: '',
+    hasExplicitGuests: true, hasExplicitDate: true, hasExplicitTime: true, hasExplicitIncome: true
+  });
+}
+
+
+/**
+ * Mark every website alert thread Processed (matching OTA confirmations), and
+ * re-insert its booking if it is somehow missing from the sheet. doPost is the
+ * authority — it writes the row before the alert is sent — so upsert with
+ * allowUpdate=false never disturbs an existing row or a manager's edits.
+ */
+function processWebsiteConfirmations_() {
+  const threads = getThreadsSafe_(RNR.LABELS.WEB_CONFIRM);
+  for (const thread of threads) {
+    if (!runHasTimeLeft_()) break;
+    try {
+      thread.getMessages().forEach(m => {
+        const b = parseWebsiteAlert_(m);
+        if (b && isValidBooking_(b)) upsertActiveBooking_(b, false);  // self-heal only if absent
+      });
+      finalizeThreadProcessed_(thread);   // doPost already handled it; stop re-scanning
+    } catch (e) {
+      logError_('processWebsiteConfirmations_', e, RNR.LABELS.WEB_CONFIRM);
+    }
+  }
 }
 
 

@@ -21,15 +21,15 @@
   .hidden{display:none!important}
   .lbadge{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;color:#fff;font-size:10px;font-weight:800;letter-spacing:.3px;vertical-align:middle;flex:none}
 .flagmini{display:inline-flex;width:15px;height:11px;border-radius:2px;overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,.65)}.flagmini svg{width:100%;height:100%;display:block}
-.notebtn{background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:2px 5px;margin-left:4px;cursor:pointer;display:inline-flex;align-items:center;line-height:0}.notebtn.has{background:#fde047;box-shadow:0 0 0 2px rgba(202,138,4,.3)}
-.notepanel{background:#fffbeb;border:1px solid #fde047;border-radius:12px;padding:12px;margin:2px 0 8px}
-.noteta{width:100%;min-height:64px;border:1px solid #e7e1d8;border-radius:8px;padding:8px;font:inherit;resize:vertical;box-sizing:border-box}
+.bnotebtn{background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:2px 5px;margin-left:6px;cursor:pointer;display:inline-flex;align-items:center;line-height:0;vertical-align:middle}.bnotebtn.has{background:#fde047;box-shadow:0 0 0 2px rgba(202,138,4,.3)}
+.bnotepanel{background:#fffbeb;border:1px solid #fde047;border-radius:12px;padding:12px;margin:2px 2px 10px}
+.bnoteta{width:100%;min-height:56px;border:1px solid #e7e1d8;border-radius:8px;padding:8px;font:inherit;resize:vertical;box-sizing:border-box}
 .noteread{white-space:pre-wrap;padding:2px}
 .noterow{display:flex;gap:8px;align-items:center;margin-top:8px}
-.notesave{background:#111;color:#fff;border:none;border-radius:999px;padding:7px 14px;font-weight:700;cursor:pointer}
-.noteclose{background:#fff;border:1px solid #ccc;border-radius:999px;padding:7px 12px;cursor:pointer}
+.bnotesave{background:#111;color:#fff;border:none;border-radius:999px;padding:7px 14px;font-weight:700;cursor:pointer}
+.bnoteclose{background:#fff;border:1px solid #ccc;border-radius:999px;padding:7px 12px;cursor:pointer}
 .notemsg{font-size:.85rem;color:#555}
-.closebtn{background:#fff;border:1px solid #f0c4c4;color:#c0392b;border-radius:6px;padding:1px 6px;margin-left:4px;cursor:pointer;font-weight:800;line-height:1.2}.closebtn:hover{background:#fdecec}
+.closebtn{position:absolute;top:8px;right:8px;z-index:5;width:22px;height:22px;padding:0;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid #e6c3c3;color:#c0392b;border-radius:50%;cursor:pointer;font-size:12px;font-weight:800;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.12)}.closebtn:hover{background:#fdecec;border-color:#e08a8a}
 .openform{background:#f4f7ff;border:1px solid #cdd9f5;border-radius:14px;padding:10px 14px;margin:0 0 14px}
 .openform>summary{cursor:pointer;font-weight:800;color:#2547a0;list-style:none}
 .openform .ofrow{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:10px}
@@ -66,8 +66,9 @@
   .dayhdr .badge{font-size:11px;font-weight:800;letter-spacing:.6px}
   .badge.today{color:var(--ok)} .badge.tom{color:var(--blue)}
 
-  .tour{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
+  .tour{position:relative;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
   .head{display:flex;align-items:center;gap:10px;padding:15px 16px;cursor:pointer}
+  .tour .head{padding-right:38px}
   .tour.static .head{cursor:default}
   .head .time{font-weight:800;font-size:16px;min-width:50px}
   .pill{display:inline-flex;align-items:center;gap:6px;background:#eef2f7;color:#334155;font-weight:700;font-size:12px;padding:5px 10px;border-radius:20px}
@@ -451,22 +452,14 @@ function tourCard(t, canAssign){
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   const srcSet=Array.from(new Set(t.bookings.map(b=>b.source))).filter(Boolean); if(!srcSet.length) srcSet.push("Website");
   const walk = srcSet.map(s=>'<div class="wl"><span class="lbl">Walk-in ('+esc(s)+')</span>'+stepper(t.id,"walk|"+s,0,99,0)+'</div>').join("");
-  const hasNote=!!t.shiftNote;
-  const noteBtn=(canAssign||hasNote)?'<button class="notebtn'+(hasNote?' has':'')+'" data-note="'+esc(t.id)+'" title="'+(hasNote?esc(t.shiftNote):'Add a note')+'">'+POSTIT+'</button>':'';
-  const closeBtn=canAssign?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Close this schedule (it disappears)">✕</button>':'';
-  const notePanel=(canAssign||hasNote)?'<div class="notepanel" data-np="'+esc(t.id)+'" hidden>'+
-    (canAssign
-      ?'<textarea class="noteta" data-nt="'+esc(t.id)+'" placeholder="Management note for this tour…">'+esc(t.shiftNote||'')+'</textarea>'+
-       '<div class="noterow"><button class="notesave" data-ns="'+esc(t.id)+'">Save</button><button class="noteclose">Close</button><span class="notemsg" data-nm="'+esc(t.id)+'"></span></div>'
-      :'<div class="noteread">'+esc(t.shiftNote||'')+'</div><div class="noterow"><button class="noteclose">Close</button></div>')+
-    '</div>':'';
-  return '<div class="tour" data-tour="'+esc(t.id)+'">'+
+  // Small round ✕ in the card's top-right corner — closes the schedule.
+  const closeBtn=canAssign?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Close this schedule">✕</button>':'';
+  return '<div class="tour" data-tour="'+esc(t.id)+'">'+ closeBtn +
     '<div class="head js-toggle">'+
       '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+ flagImg(t.language)+
-      (t.isPrivate?'<span class="pill priv">Private</span>':'')+ noteBtn + closeBtn +'<span class="spacer"></span>'+
+      (t.isPrivate?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
       '<div class="count"><div class="big"><span class="ck">'+t.checkedGuests+'</span> / '+t.bookedGuests+(t.bookedChildren?'<span class="kids">+'+t.bookedChildren+'</span>':'')+'</div>'+sub+'</div>'+
     '</div>'+
-    notePanel+
     '<div class="chips">'+chips+'</div>'+
     '<div class="bookings">'+bk+
       '<div class="walkins">'+walk+'</div>'+
@@ -480,11 +473,22 @@ function bookingRow(tourId,b,i,canAssign,lang){
   const mv = (canAssign&&b.bookingId) ?
     '<select class="mvsel" data-move=\''+esc(JSON.stringify({bookingId:b.bookingId,from:lang,name:b.name||b.bookingId}))+'\'>'+
     ['English','German','Spanish','French','Italian'].map(L=>'<option'+(L===lang?' selected':'')+'>'+L+'</option>').join('')+'</select>' : '';
-  return '<div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mv+'</div>'+
+  // Per-booking note: a small post-it icon next to the language dropdown.
+  const ref = esc(tourId+'~'+i);
+  const hasN = !!b.manualNote;
+  const noteBtn = (canAssign||hasN) && b.bookingId
+    ? '<button class="bnotebtn'+(hasN?' has':'')+'" data-bnote="'+ref+'" title="'+(hasN?esc(b.manualNote):'Add a note')+'">'+POSTIT+'</button>' : '';
+  const noteEditor = canAssign && b.bookingId
+    ? '<div class="bnotepanel" data-bnp="'+ref+'" hidden><textarea class="bnoteta" placeholder="Note for this booking…">'+esc(b.manualNote||'')+'</textarea>'+
+      '<div class="noterow"><button class="bnotesave" data-bns="'+ref+'" data-bid="'+esc(b.bookingId)+'" data-blang="'+esc(lang)+'">Save</button>'+
+      '<button class="bnoteclose">Close</button><span class="notemsg" data-bnm="'+ref+'"></span></div></div>'
+    : (hasN ? '<div class="bnotepanel" data-bnp="'+ref+'" hidden><div class="noteread">'+esc(b.manualNote)+'</div>'+
+      '<div class="noterow"><button class="bnoteclose">Close</button></div></div>' : '');
+  return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mv+noteBtn+'</div>'+
     wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
     '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+(b.checked?' disabled':'')+'>'+(b.checked?'✓ In':'Check in')+'</button>'+
-    '</div>';
+    '</div>'+ noteEditor + '</div>';
 }
 function stepper(tourId,ref,val,max,total,kids){
   const kidsHtml = kids?'<span class="kids">+'+kids+'</span>':'';
@@ -533,40 +537,41 @@ function bindTours(tours){
       }catch(err){ alert(err.message||"Network problem — try again"); sel.disabled=false; sel.value=info.from; }
     };
   });
-  // Management post-it notes: toggle the panel, save/clear the note.
-  document.querySelectorAll(".notebtn").forEach(btn=>{
+  // Per-booking note: toggle the panel next to the language dropdown.
+  document.querySelectorAll(".bnotebtn").forEach(btn=>{
     btn.onclick=(e)=>{ e.stopPropagation();
-      const panel=btn.closest(".tour").querySelector(".notepanel");
-      if(panel){ panel.hidden=!panel.hidden; const ta=panel.querySelector(".noteta"); if(ta&&!panel.hidden) ta.focus(); }
+      const panel=btn.closest(".bkwrap").querySelector(".bnotepanel");
+      if(panel){ panel.hidden=!panel.hidden; const ta=panel.querySelector(".bnoteta"); if(ta&&!panel.hidden) ta.focus(); }
     };
   });
-  document.querySelectorAll(".noteclose").forEach(b=>{ b.onclick=(e)=>{ e.stopPropagation(); const p=b.closest(".notepanel"); if(p) p.hidden=true; }; });
-  document.querySelectorAll(".notesave").forEach(b=>{
+  document.querySelectorAll(".bnoteclose").forEach(b=>{ b.onclick=(e)=>{ e.stopPropagation(); const p=b.closest(".bnotepanel"); if(p) p.hidden=true; }; });
+  document.querySelectorAll(".bnotesave").forEach(b=>{
     b.onclick=async (e)=>{ e.stopPropagation();
-      const id=b.dataset.ns, panel=b.closest(".notepanel");
-      const ta=panel.querySelector(".noteta"), msg=panel.querySelector(".notemsg");
+      const ref=b.dataset.bns, bookingId=b.dataset.bid, lang=b.dataset.blang, panel=b.closest(".bnotepanel");
+      const ta=panel.querySelector(".bnoteta"), msg=panel.querySelector(".notemsg");
       const note=ta?ta.value:""; b.disabled=true; if(msg) msg.textContent="Saving…"; LAST_EDIT=Date.now();
       try{
-        const r=await api("setNote",{token:store.token, id:id, note:note});
+        const r=await api("setNote",{token:store.token, bookingId:bookingId, language:lang, note:note});
         if(!r.ok){ if(msg) msg.textContent=r.error||"Error"; b.disabled=false; return; }
         if(msg) msg.textContent="Saved ✓";
-        const t=TOURS_CACHE.find(x=>x.id===id); if(t) t.shiftNote=r.note;
+        // Update the cache so a background refresh doesn't clobber the just-typed note.
+        const parts=ref.split("~"), t=TOURS_CACHE.find(x=>x.id===parts[0]);
+        if(t&&t.bookings[+parts[1]]) t.bookings[+parts[1]].manualNote=r.note;
         setTimeout(loadTours,700);
       }catch(err){ if(msg) msg.textContent="Network problem"; b.disabled=false; }
     };
   });
-  // Management: close a schedule (it disappears from the portal for everyone).
+  // Management: close a schedule — no confirmation, it just disappears (and
+  // comes back on its own if someone books it).
   document.querySelectorAll(".closebtn").forEach(btn=>{
     btn.onclick=async (e)=>{ e.stopPropagation();
-      const id=btn.dataset.close;
-      if(!confirm("Close this schedule? It will disappear from the portal for everyone. You can reopen it later from the Closed_Shifts tab.")) return;
-      btn.disabled=true; LAST_EDIT=Date.now();
+      const id=btn.dataset.close; btn.disabled=true; LAST_EDIT=Date.now();
+      const card=btn.closest(".tour"); if(card) card.remove();
       try{
         const r=await api("closeShift",{token:store.token, id:id});
-        if(!r.ok){ alert(r.error||"Could not close it"); btn.disabled=false; return; }
-        const card=btn.closest(".tour"); if(card) card.remove();
+        if(!r.ok){ alert(r.error||"Could not close it"); loadTours(); return; }
         setTimeout(loadTours,700);
-      }catch(err){ alert("Network problem"); btn.disabled=false; }
+      }catch(err){ alert("Network problem"); loadTours(); }
     };
   });
   // Check-in button per reservation: set the count, lock the row, save.
@@ -596,7 +601,7 @@ async function saveTour(tourId,btn){
   const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return;
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
   const bookings=t.bookings.map((b,i)=>{ const st=card.querySelector('.stepper[data-ref="bk|'+i+'"] .val');
-    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,income:b.income,isPrivate:b.isPrivate,checked:!!b.checked,checkedIn:+(st?st.textContent:b.checkedIn)}; });
+    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,income:b.income,isPrivate:b.isPrivate,manualNote:b.manualNote||"",checked:!!b.checked,checkedIn:+(st?st.textContent:b.checkedIn)}; });
   const walkins=[]; card.querySelectorAll('.stepper[data-ref^="walk|"]').forEach(st=>{ const source=st.dataset.ref.split("|")[1]; const count=+st.querySelector(".val").textContent; if(count>0) walkins.push({source,count}); });
   const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins,guide:t.guide||""};
   const msg=card.querySelector('[data-msg]'); if(btn) btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";

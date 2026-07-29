@@ -209,14 +209,26 @@ const clb=(cr[clk]||[])[0]||{};
 check('completed-log carries name/phone/guests/children (checked-in unknown)',
   clb.name==='No Show Guy'&&clb.phone==='+33999'&&Number(clb.guests)===2&&Number(clb.children)===1, clb);
 
-console.log('--- Management post-it notes on tours ---');
-const cn=new __mock.MockSS('control-notes'); SpreadsheetApp._active=cn;
-cn.insertSheet('Shift_Notes').getRange(1,1,2,3).setValues([
- ['Tour id','Note','Updated'],
- ['2026-07-28|660|italian','Meet at the side entrance','2026-07-28 09:00']]);
-const shiftNotes=readShiftNotes_();
-check('shift note read by tour id', shiftNotes['2026-07-28|660|italian']==='Meet at the side entrance', shiftNotes);
-check('no note for an id without one', !shiftNotes['2026-07-28|660|french'], shiftNotes);
+console.log('--- Per-booking notes: written to the BookingSheet (col J) ---');
+const bnss=new __mock.MockSS(PORTAL.BOOKING_SHEET_ID); __mock.SS_BY_ID[PORTAL.BOOKING_SHEET_ID]=bnss;
+const bnEn=bnss.insertSheet('English Tours');
+bnEn.getRange(1,1,3,9).setValues([
+ ['Name','Phone','Number of Guests','Tour date','Time','Source','Income','Booking ID','Notes'],
+ ['Kai','+49',2,'2026-08-05','11:00 AM','Guruwalk',0,'GW1',''],
+ ['Edgar','+49',1,'2026-08-05','11:00 AM','GetYourGuide',15,'GYG1','']]);
+const wn=writeBookingNote_('GYG1','English','Bringing a wheelchair');
+check('note write succeeds for a real booking', wn.ok===true && wn.note==='Bringing a wheelchair', wn);
+check('note lands in column J of the right row', String(bnEn.getRange(3,10).getValue())==='Bringing a wheelchair', bnEn.getRange(3,10).getValue());
+check('column J header set to Note', String(bnEn.getRange(1,10).getValue())==='Note', bnEn.getRange(1,10).getValue());
+check('note write fails for an unknown booking id', writeBookingNote_('NOPE','English','x').ok===false, null);
+check('readBookingsIndex_ surfaces the per-booking note as manualNote',
+  (readBookingsIndex_()[shiftKey_('2026-08-05',660,'English')]||[]).find(b=>b.bookingId==='GYG1').manualNote==='Bringing a wheelchair', null);
+// The note rides into the ledger row (last column).
+const lrow=makeLedgerRow_({dateKey:'2026-08-05',day:'Wednesday',timeLabel:'11:00 AM',language:'English',
+  bookingName:'Edgar',phone:'+49',source:'GetYourGuide',guests:1,children:0,checkedIn:1,
+  weOwe:10,theyOwe:0,rrMakes:0,type:'Paid',bookingId:'GYG1',note:'Bringing a wheelchair'});
+check('ledger row carries the note in the Note column', lrow[LEDGER_NOTE_COL]==='Bringing a wheelchair' && lrow.length===LEDGER_HEADERS.length, lrow);
+check('ledger Updated column is still the timestamp (not the note)', /\d{4}-\d{2}-\d{2}/.test(String(lrow[LEDGER_UPDATED_COL])), lrow[LEDGER_UPDATED_COL]);
 
 console.log('--- #4 Weekly_Schedule rules surface in the portal immediately ---');
 const cw=new __mock.MockSS('control-weekly'); SpreadsheetApp._active=cw;
@@ -251,6 +263,19 @@ check('shiftDomId_ regular = shiftKey_',
 check('shiftDomId_ private = key|P<idx>',
   shiftDomId_({dateKey:'2026-07-30',minutes:660,language:'Italian',private:true,privIndex:2})==='2026-07-30|660|italian|P2', null);
 check('an unclosed shift is not in the closed set', !closedSet['2026-07-30|660|french'], closedSet);
+// New semantics: a closed shift with a booking must reappear.
+const _closeFilter=(shifts,closed,bbk)=>shifts.filter(s=>{
+  if(!closed[shiftDomId_(s)]) return true;
+  const list=bbk[shiftKey_(s.dateKey,s.minutes,s.language)]||[];
+  return list.some(b=>s.private?/privat/i.test(b.note||''):!/privat/i.test(b.note||''));
+});
+const _s1={dateKey:'2026-07-30',minutes:660,language:'Italian',private:false};
+const _s2={dateKey:'2026-07-31',minutes:660,language:'Italian',private:false};
+const _closed={'2026-07-30|660|italian':true,'2026-07-31|660|italian':true};
+const _bbk={}; _bbk[shiftKey_('2026-07-31',660,'Italian')]=[{bookingId:'X',note:''}];
+const _kept=_closeFilter([_s1,_s2],_closed,_bbk);
+check('closed shift with NO booking stays hidden', !_kept.some(s=>s.dateKey==='2026-07-30'), _kept);
+check('closed shift WITH a booking comes back', _kept.some(s=>s.dateKey==='2026-07-31'), _kept);
 
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');

@@ -92,6 +92,31 @@ check('a tour EARLIER today is not yet moved to Done (reservations persist in po
 check('a tour YESTERDAY is done (row moves to Done)', tourDayIsOver_(_mk(_yest))===true, null);
 check('start+2h isCompleted_ still true earlier today (Gmail/invariants unchanged)', isCompleted_(_mk(_today))===true, null);
 
+console.log('--- Website alert is a parseable backup source (Processed gap fix) ---');
+const webBody =
+  'A new website reservation has been received.\n\n' +
+  'Language: English\n' +
+  'Name: Jane Doe\n' +
+  'Email: jane@example.com\n' +
+  'Phone: +34123456789\n' +
+  'Guests: 3\n' +
+  'Tour date: Sat, 5 Sep 2026\n' +
+  'Time: 11:00 AM\n' +
+  'Source: Website\n' +
+  'Booking ID: RRABC1234\n' +
+  'DateKey: 2026-09-05\n' +
+  'Time24: 11:00\n\n' +
+  'Message:\nSee you there';
+const wb = parseWebsiteAlert_(makeFakeMsg_('NEW WEBSITE RESERVATION - Roots & Roads', webBody));
+check('website alert parses into a booking',       !!wb, wb);
+check('website alert booking id preserved',        wb && wb.bookingId==='RRABC1234', wb && wb.bookingId);
+check('website alert language English',            wb && wb.language==='English', wb && wb.language);
+check('website alert 3 guests',                    wb && wb.guests===3, wb && wb.guests);
+check('website alert date from DateKey',           wb && dateKey_(wb.date)==='2026-09-05', wb && wb.date);
+check('website alert routes to English Tours',     wb && languageToSheet_(wb.language)==='English Tours', null);
+check('website alert is a valid booking',          wb && isValidBooking_(wb), wb);
+check('a non-website email is not mis-parsed',     parseWebsiteAlert_(makeFakeMsg_('Booking - GYG', 'Se ha reservado tu producto'))===null, null);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
