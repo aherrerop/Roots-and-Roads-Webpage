@@ -167,12 +167,17 @@ function apiTours_(p) {
     (a.minutes - b.minutes) ||
     String(a.language).localeCompare(String(b.language)));
 
-  // A completed tour's live booking rows have moved to Done, so fall back to the
-  // LEDGER (durable) for its guests, phones, children and check-ins — management
-  // and guides keep full reservation info after the tour has run.
+  // A completed tour's live booking rows have moved to Done, so fall back to
+  // durable sources for its guests, phones, children and check-in status —
+  // management and guides keep full reservation info after the tour has run,
+  // INCLUDING guests who were never checked in. The Completed Log has every
+  // completed booking; the guide ledger is a backup for anything it misses.
+  const doneByKey = readCompletedLogReservations_();
   const ledgerByKey = readLedgerReservations_();
-  Object.keys(ledgerByKey).forEach(k => {
-    if (!bookingsByKey[k] || !bookingsByKey[k].length) bookingsByKey[k] = ledgerByKey[k];
+  new Set(Object.keys(doneByKey).concat(Object.keys(ledgerByKey))).forEach(k => {
+    if (!bookingsByKey[k] || !bookingsByKey[k].length) {
+      bookingsByKey[k] = doneByKey[k] || ledgerByKey[k];
+    }
   });
 
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
@@ -1131,6 +1136,44 @@ function readLedgerReservations_() {
         note: /priv/i.test(String(r[13] || '')) ? 'Private' : '',
         checkedIn: Number(r[LEDGER_CHECKEDIN_COL] || 0)
       });
+    });
+  });
+  return out;
+}
+
+/**
+ * Full reservation detail from the BookingSheet's "Completed Log", keyed by
+ * shift. The Completed Log records EVERY completed booking with full detail
+ * (name, phone, adults, children, source, booking id) whether or not anyone was
+ * checked in — so a done tour keeps showing its guests, and un-checked-in guests
+ * still appear (their check-in simply reads as 0 / "to check in"). Deduped by
+ * booking id per shift.
+ */
+function readCompletedLogReservations_() {
+  const out = {};
+  let sh; try { sh = bookingSS_().getSheetByName('Completed Log'); } catch (e) { return out; }
+  if (!sh || sh.getLastRow() < 2) return out;
+  // Columns: Date, Time, Language, Name, Phone, Adults, Children, Source, Income, Booking ID, Notes, Logged
+  const v = sh.getRange(2, 1, sh.getLastRow() - 1, 12).getValues();
+  v.forEach(r => {
+    const dateKey = toDateKey_(r[0]);
+    const minutes = timeToMinutes_(normTime24_(r[1]));
+    const language = String(r[2] || '').trim();
+    const bookingId = String(r[9] || '').trim();
+    if (!dateKey || !bookingId) return;
+    const key = shiftKey_(dateKey, minutes, language);
+    const arr = out[key] = out[key] || [];
+    if (arr.some(b => b.bookingId === bookingId)) return;
+    arr.push({
+      bookingId,
+      name: String(r[3] || '').trim(),
+      phone: String(r[4] || '').trim(),
+      guests: Number(r[5] || 0),
+      children: Number(r[6] || 0),
+      source: String(r[7] || '').trim(),
+      infants: 0,
+      income: Number(r[8] || 0),
+      note: String(r[10] || '')
     });
   });
   return out;
