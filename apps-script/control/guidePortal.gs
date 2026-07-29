@@ -86,10 +86,6 @@ const PORTAL = {
   SCHEDULE_TAB: 'Schedule',
   GUIDES_TAB: 'Guides',
 
-  // Management post-it notes on a tour, keyed by the tour's id (survives
-  // makeSchedule, which rewrites the grids).
-  NOTES_TAB: 'Shift_Notes',
-
   // Shifts a manager has CLOSED. Keyed by tour id, this durably hides a shift
   // from the portal no matter which source produced it (grid, live booking, or
   // a Weekly_Schedule offer rule). Reversible: delete the row to reopen.
@@ -172,10 +168,6 @@ function apiTours_(p) {
   const bookingsByKey = readBookingsIndex_();       // "yyyy-mm-dd|minutes|Language" -> [bookings]
   appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
   appendWeeklyScheduleShifts_(schedule);            // #4: new Weekly_Schedule offer rows show at once
-  // Management can CLOSE a shift; it disappears from the portal for everyone,
-  // regardless of which source produced it.
-  const closed = readClosedShifts_();
-  schedule = schedule.filter(s => !closed[shiftDomId_(s)]);
   // Order every shift by date then start time (so appended orphans slot into
   // their real time position, not at the end of the list).
   schedule.sort((a, b) =>
@@ -196,10 +188,20 @@ function apiTours_(p) {
     }
   });
 
+  // Management can CLOSE a shift so it disappears from the portal — UNLESS it
+  // has any booking (live or completed), in which case it comes back on its own
+  // (just like any out-of-schedule booking in the BookingSheet). Applied after
+  // the durable-source merge so a closed shift with real reservations reappears.
+  const closed = readClosedShifts_();
+  schedule = schedule.filter(s => {
+    if (!closed[shiftDomId_(s)]) return true;
+    const list = bookingsByKey[shiftKey_(s.dateKey, s.minutes, s.language)] || [];
+    return list.some(b => s.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''));
+  });
+
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
   const priorCheckins = readGuideCheckins_(name);   // key|bookingId -> checkedIn
-  const notesById = readShiftNotes_();              // management post-it notes
 
   const tours = mine.map(shift => {
     const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
@@ -222,6 +224,7 @@ function apiTours_(p) {
           income: Number(b.income || 0),
           isPrivate: /privat/i.test(b.note || ''),
           note: String(b.note || ''),
+          manualNote: String(b.manualNote || ''),   // editable per-booking note
           checked: isCk || (b.checkedIn != null && Number(b.checkedIn) > 0),
           checkedIn: isCk ? Number(priorCheckins[kk])
                           : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0)) // ledger value, or booked default
@@ -244,7 +247,6 @@ function apiTours_(p) {
       coGuides: shift.assigned.filter(a => !sameName_(a, name)),
       status: shift.status,
       isPrivate: !!shift.private,
-      shiftNote: notesById[id] || '',
       bookedGuests,
       bookedChildren,
       checkedGuests,
@@ -315,6 +317,7 @@ function apiTours_(p) {
             income: Number(b.income || 0),
             paid: isPaidSource_(b.source), isPrivate: /privat/i.test(b.note || ''),
             note: String(b.note || ''),
+            manualNote: String(b.manualNote || ''),
             checked: isCk || (b.checkedIn != null && Number(b.checkedIn) > 0),
             checkedIn: isCk ? Number(ck[kk])
                             : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0))
@@ -329,7 +332,6 @@ function apiTours_(p) {
         eligible: eligibleGuidesForShift_(shift, busyMap, guidesByLanguage),
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
-        shiftNote: notesById[aid] || '',
         bookedGuests: bookings.reduce((s, b) => s + Number(b.guests || 0), 0),
         bookedChildren: bookings.reduce((s, b) => s + Number(b.children || 0), 0),
         checkedGuests: bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0),
@@ -351,21 +353,12 @@ function apiTours_(p) {
  *   params: token, dateKey (yyyy-MM-dd), time (24h "17:00"), language,
  *           isPrivate ("1"/""), privIndex, guide
  */
-/** Management post-it notes on a tour, keyed by the tour id. { id -> note }. */
-function readShiftNotes_() {
-  const out = {};
-  const sh = control_().getSheetByName(PORTAL.NOTES_TAB);
-  if (!sh || sh.getLastRow() < 2) return out;
-  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(r => {
-    const id = String(r[0] || '').trim();
-    if (id) out[id] = String(r[1] || '');
-  });
-  return out;
-}
-
 /**
- * action=setNote — MANAGER ONLY. Save (or clear) the post-it note on a tour.
- *   params: token, id (the tour id), note
+ * action=setNote — MANAGER ONLY. Save (or clear) the note on a single
+ * BOOKING. The note lives in column J of the booking's row in the BookingSheet
+ * language tab (the sync only writes A:I, so column J is the portal's alone),
+ * and rides into the ledger's Note column when the guest is checked in.
+ *   params: token, bookingId, language (optional hint), note
  */
 function apiSetNote_(p) {
   const name = requireToken_(p.token);
@@ -373,31 +366,50 @@ function apiSetNote_(p) {
   const me = findGuideByName_(name);
   if (!me || !me.manager) return { ok: false, error: 'Managers only' };
 
-  const id = String(p.id || '').trim();
-  if (!id) return { ok: false, error: 'Missing tour id' };
+  const bookingId = String(p.bookingId || '').trim();
+  if (!bookingId) return { ok: false, error: 'Missing booking id' };
   const note = String(p.note || '').trim();
+  const language = String(p.language || '').trim();
 
-  const ss = control_();
-  let sh = ss.getSheetByName(PORTAL.NOTES_TAB);
-  if (!sh) {
-    sh = ss.insertSheet(PORTAL.NOTES_TAB);
-    sh.getRange(1, 1, 1, 3).setValues([['Tour id', 'Note', 'Updated']]).setFontWeight('bold');
-    sh.setFrozenRows(1);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
+  try {
+    return writeBookingNote_(bookingId, language, note);
+  } finally {
+    lock.releaseLock();
   }
-  const last = sh.getLastRow();
-  let row = -1;
-  if (last >= 2) {
-    const ids = sh.getRange(2, 1, last - 1, 1).getValues();
-    for (let i = 0; i < ids.length; i++) { if (String(ids[i][0] || '').trim() === id) { row = i + 2; break; } }
+}
+
+/** Column J of the booking's active row -> the per-booking note. */
+function writeBookingNote_(bookingId, language, note) {
+  const ss = bookingSS_();
+  const idNorm = bookingId.toUpperCase().replace(/\s+/g, '');
+
+  // Prefer the hinted language tab, then scan every active language tab (a
+  // manager may have moved the guest to another language).
+  const tabs = [];
+  if (language) { const s = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX); if (s) tabs.push(s); }
+  ss.getSheets().forEach(sh => {
+    const tab = sh.getName();
+    if (tab.indexOf(PORTAL.BOOKING_TAB_SUFFIX) === -1 || /^done\b/i.test(tab)) return;
+    if (tabs.indexOf(sh) === -1) tabs.push(sh);
+  });
+
+  for (const sh of tabs) {
+    const last = sh.getLastRow();
+    if (last < 2) continue;
+    const ids = sh.getRange(2, 8, last - 1, 1).getValues();   // col H = Booking ID
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || '').toUpperCase().replace(/\s+/g, '') === idNorm) {
+        if (String(sh.getRange(1, 10).getValue() || '').trim() !== 'Note') {
+          sh.getRange(1, 10).setValue('Note').setFontWeight('bold');   // ensure the header once
+        }
+        sh.getRange(i + 2, 10).setValue(note);   // col J
+        return { ok: true, bookingId: bookingId, note: note };
+      }
+    }
   }
-  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
-  if (!note) {                              // empty note -> remove the row
-    if (row !== -1) sh.deleteRow(row);
-    return { ok: true, id, note: '' };
-  }
-  if (row === -1) row = sh.getLastRow() + 1;
-  sh.getRange(row, 1, 1, 3).setValues([[id, note, stamp]]);
-  return { ok: true, id, note };
+  return { ok: false, error: 'Booking ' + bookingId + ' not found' };
 }
 
 /** The tour id a shift shows under — regular = key, private = key|P<index>. */
@@ -727,7 +739,7 @@ function apiSave_(p) {
       bookingName: b.name || '', phone: b.phone || '', source: b.source || '',
       guests: Number(b.guests || 0), children: Number(b.children || 0), checkedIn,
       weOwe: m.weOwe, theyOwe: m.theyOwe, rrMakes: m.rrMakes, type: m.type,
-      bookingId: b.bookingId || ''
+      bookingId: b.bookingId || '', note: b.manualNote || ''
     }));
   });
 
@@ -1024,7 +1036,9 @@ function readBookingsIndex_() {
     const language = tab.replace(PORTAL.BOOKING_TAB_SUFFIX, '').trim();
     if (sh.getLastRow() < 2) return;
 
-    const values = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
+    // Read 10 cols so column J (the per-booking management note) comes through.
+    // The booking sync only ever writes A:I, so column J is the portal's alone.
+    const values = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
     values.forEach(row => {
       const dateKey = toDateKey_(row[3]);           // D Tour date
       const minutes = timeToMinutes_(normTime24_(row[4])); // E Time
@@ -1041,6 +1055,7 @@ function readBookingsIndex_() {
         source: String(row[5] || '').trim(),
         income: Number(row[6] || 0),        // OTA income (col G), for the R&R margin
         bookingId: String(row[7] || '').trim(),
+        manualNote: String(row[9] || '').trim(),  // J: editable per-booking note
         note                                // "Private" flag comes through here
       });
     });
@@ -1119,11 +1134,13 @@ function appendOrphanBookingShifts_(schedule, bookingsByKey) {
 
 const LEDGER_HEADERS = [
   'Date', 'Day', 'Time', 'Language', 'Booking', 'Phone', 'Source',
-  'Guests', 'Children', 'Checked-in', 'We owe guide (€)', 'Guide owes us (€)', 'R&R makes (€)', 'Type', 'Booking ID', 'Updated'
+  'Guests', 'Children', 'Checked-in', 'We owe guide (€)', 'Guide owes us (€)', 'R&R makes (€)', 'Type', 'Booking ID', 'Updated', 'Note'
 ];
 const LEDGER_BOOKINGID_COL = 14;   // 0-based index of 'Booking ID' (used when re-reading)
 const LEDGER_CHECKEDIN_COL = 9;    // 0-based index of 'Checked-in'
 const LEDGER_SOURCE_COL = 6;       // 0-based index of 'Source'
+const LEDGER_UPDATED_COL = 15;     // 0-based index of 'Updated' (no longer the last column)
+const LEDGER_NOTE_COL = 16;        // 0-based index of 'Note' — the per-booking management note
 
 /**
  * SAFE MIGRATION: insert the Children column into any guide tab still on the
@@ -1304,6 +1321,7 @@ function readLedgerReservations_() {
         // "Private" in the note so a private completed tour attaches to its
         // private column, not the regular one (the Type column records it).
         note: /priv/i.test(String(r[13] || '')) ? 'Private' : '',
+        manualNote: String(r[LEDGER_NOTE_COL] || ''),
         checkedIn: Number(r[LEDGER_CHECKEDIN_COL] || 0)
       });
     });
@@ -1410,7 +1428,7 @@ function repairLedgerDuplicates() {
     v.forEach((r, i) => {
       const key = String(r[LEDGER_BOOKINGID_COL] || '').trim() + '|' + toDateKey_(r[0]) +
                   '|' + timeToMinutes_(normTime24_(r[2]));
-      const updated = String(r[LEDGER_HEADERS.length - 1] || '');
+      const updated = String(r[LEDGER_UPDATED_COL] || '');
       if (!bestByKey[key] || updated >= bestByKey[key].updated) {
         bestByKey[key] = { idx: i, updated };
       }
@@ -1461,7 +1479,8 @@ function makeLedgerRow_(o) {
   return [
     o.dateKey, o.day, o.timeLabel, o.language, o.bookingName, o.phone, o.source,
     o.guests, Number(o.children || 0), o.checkedIn, o.weOwe, o.theyOwe, o.rrMakes, o.type, o.bookingId,
-    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm')
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm'),
+    String(o.note || '')
   ];
 }
 
@@ -1981,7 +2000,7 @@ function repairLedgers() {
       }
     }
 
-    if (dataWidth === LEDGER_HEADERS.length - 1) {   // 15 -> needs Children inserted
+    if (dataWidth === 15) {   // pre-Children 15-col layout -> needs Children inserted
       sh.insertColumnAfter(8);                        // after 'Guests'
       sh.getRange(1, 9).setValue('Children');
       if (dataRows > 0) sh.getRange(2, 9, dataRows, 1).setValue(0);
@@ -2144,7 +2163,7 @@ function readAllCheckins_() {
         guide: name,
         source: String(r[LEDGER_SOURCE_COL] || ''),
         checkedIn: Number(r[LEDGER_CHECKEDIN_COL] || 0),
-        updated: String(r[LEDGER_HEADERS.length - 1] || ''),
+        updated: String(r[LEDGER_UPDATED_COL] || ''),
         time: String(r[2] || ''),
         language: String(r[3] || ''),
         booking: String(r[4] || ''),
