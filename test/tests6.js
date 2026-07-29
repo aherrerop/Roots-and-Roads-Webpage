@@ -195,6 +195,20 @@ check('reservation carries name/phone/guests/children/checkedIn from ledger',
   rb.name==='Guest Uno' && rb.phone==='+3912345' && Number(rb.guests)===2 && Number(rb.children)===1 && Number(rb.checkedIn)===2, rb);
 check('no duplicate booking ids in the ledger index', (lr[lk]||[]).filter(b=>b.bookingId==='GYGIT9').length===1, lr[lk]);
 
+console.log('--- Completed Log fallback: un-checked-in guests still show ---');
+const bkCL=new __mock.MockSS('booking-cl'); __mock.SS_BY_ID['1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw']=bkCL;
+const cl=bkCL.insertSheet('Completed Log');
+cl.getRange(1,1,2,12).setNumberFormat('@');
+cl.getRange(1,1,2,12).setValues([
+ ['Date','Time','Language','Name','Phone','Adults','Children','Source','Income','Booking ID','Notes','Logged'],
+ ['2026-07-28','11:00','French','No Show Guy','+33999','2','1','Viator','0','BRFR9','','2026-07-28 13:00']]);
+const cr=readCompletedLogReservations_();
+const clk=shiftKey_('2026-07-28',11*60,'French');
+check('completed-log reservation indexed by shift', !!cr[clk] && cr[clk].length===1, Object.keys(cr));
+const clb=(cr[clk]||[])[0]||{};
+check('completed-log carries name/phone/guests/children (checked-in unknown)',
+  clb.name==='No Show Guy'&&clb.phone==='+33999'&&Number(clb.guests)===2&&Number(clb.children)===1, clb);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
