@@ -218,6 +218,40 @@ const shiftNotes=readShiftNotes_();
 check('shift note read by tour id', shiftNotes['2026-07-28|660|italian']==='Meet at the side entrance', shiftNotes);
 check('no note for an id without one', !shiftNotes['2026-07-28|660|french'], shiftNotes);
 
+console.log('--- #4 Weekly_Schedule rules surface in the portal immediately ---');
+const cw=new __mock.MockSS('control-weekly'); SpreadsheetApp._active=cw;
+const _plus=n=>{ const d=new Date(); d.setDate(d.getDate()+n); return Utilities.formatDate(d,Session.getScriptTimeZone(),'yyyy-MM-dd'); };
+const tgtKey=_plus(7), tgtDay=dayNameFromKey_(tgtKey);
+cw.insertSheet('Weekly_Schedule').getRange(1,1,4,6).setValues([
+ ['Day','Time','Language','Guides needed','Active from','Active until'],
+ [tgtDay,'11:00','Italian',1,'',''],
+ [tgtDay,'17:00','Private',1,'',''],               // availability window: must NOT surface
+ ['Monday','09:00','French',1,'2000-01-01','2000-01-02']]); // expired: must NOT surface
+const wsched=[];
+appendWeeklyScheduleShifts_(wsched);
+const itShift=wsched.find(s=>s.language==='Italian'&&s.dateKey===tgtKey);
+check('Italian 11:00 rule surfaced as an unassigned shift',
+  !!itShift && itShift.status==='Not assigned' && itShift.assigned.length===0 && !itShift.private, wsched);
+check('Private availability row is NOT surfaced', !wsched.some(s=>/private/i.test(s.language)), wsched);
+check('expired French rule is NOT surfaced', !wsched.some(s=>s.language==='French'), wsched);
+const wsched2=[{dateKey:tgtKey, minutes:timeToMinutes_('11:00'), language:'Italian', private:false, assigned:['Someone'], status:'OK'}];
+appendWeeklyScheduleShifts_(wsched2);
+check('a shift already present is not duplicated by the rule',
+  wsched2.filter(s=>s.language==='Italian'&&s.dateKey===tgtKey).length===1, wsched2);
+
+console.log('--- #5 Management closes a schedule (durable, source-agnostic hide) ---');
+const cc2=new __mock.MockSS('control-close'); SpreadsheetApp._active=cc2;
+cc2.insertSheet('Closed_Shifts').getRange(1,1,2,3).setValues([
+ ['Tour id','Closed by','Closed at'],
+ ['2026-07-30|660|italian','Albert','2026-07-29 10:00']]);
+const closedSet=readClosedShifts_();
+check('closed shift id is read', closedSet['2026-07-30|660|italian']===true, closedSet);
+check('shiftDomId_ regular = shiftKey_',
+  shiftDomId_({dateKey:'2026-07-30',minutes:660,language:'Italian',private:false})==='2026-07-30|660|italian', null);
+check('shiftDomId_ private = key|P<idx>',
+  shiftDomId_({dateKey:'2026-07-30',minutes:660,language:'Italian',private:true,privIndex:2})==='2026-07-30|660|italian|P2', null);
+check('an unclosed shift is not in the closed set', !closedSet['2026-07-30|660|french'], closedSet);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

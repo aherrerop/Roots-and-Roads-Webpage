@@ -29,6 +29,14 @@
 .notesave{background:#111;color:#fff;border:none;border-radius:999px;padding:7px 14px;font-weight:700;cursor:pointer}
 .noteclose{background:#fff;border:1px solid #ccc;border-radius:999px;padding:7px 12px;cursor:pointer}
 .notemsg{font-size:.85rem;color:#555}
+.closebtn{background:#fff;border:1px solid #f0c4c4;color:#c0392b;border-radius:6px;padding:1px 6px;margin-left:4px;cursor:pointer;font-weight:800;line-height:1.2}.closebtn:hover{background:#fdecec}
+.openform{background:#f4f7ff;border:1px solid #cdd9f5;border-radius:14px;padding:10px 14px;margin:0 0 14px}
+.openform>summary{cursor:pointer;font-weight:800;color:#2547a0;list-style:none}
+.openform .ofrow{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:10px}
+.openform label{display:flex;flex-direction:column;font-size:.8rem;font-weight:700;color:#42506b;gap:4px;flex:1;min-width:120px}
+.openform input,.openform select{padding:7px 9px;border:1px solid #cdd9f5;border-radius:9px;font:inherit;font-weight:600}
+.of-open{background:#2547a0;color:#fff;border:none;border-radius:999px;padding:8px 16px;font-weight:800;cursor:pointer}
+.of-msg{font-size:.85rem;color:#42506b;align-self:center}
   .avatar{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;font-weight:800;text-transform:uppercase;margin-right:5px;flex:none}
 
   .topbar{display:flex;align-items:center;justify-content:space-between;margin:8px 4px 16px}
@@ -370,13 +378,54 @@ function groupByDay(items){
 function renderTours(tours, paneId, canAssign){
   const pane=$(paneId||"toursPane");
   const seen={}; tours=(tours||[]).filter(t=>{ if(seen[t.id]) return false; seen[t.id]=true; return true; });
-  if(!tours.length){ pane.innerHTML='<div class="empty">'+(paneId==="schedPane"?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; return; }
-  let html="";
+  const opener = (canAssign && paneId==="schedPane") ? openScheduleForm() : "";
+  if(!tours.length){ pane.innerHTML=opener+'<div class="empty">'+(paneId==="schedPane"?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; bindOpenForm(); return; }
+  let html=opener;
   groupByDay(tours).forEach(day=>{
     html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
     day.items.forEach(t=> html+=tourCard(t, canAssign));
   });
   pane.innerHTML=html;
+  bindOpenForm();
+}
+/* Manager-only: open a brand-new schedule (pick day/date, time, language and,
+   optionally, a guide). Reuses the assign action, which creates the grid slot
+   if it doesn't exist yet. Leaving the guide empty opens an unassigned slot. */
+function openScheduleForm(){
+  const langs=Object.keys(GUIDES_BY_LANG||{});
+  if(!langs.length) langs.push("English","German","Spanish","Italian","French");
+  const langOpts=langs.map(l=>'<option>'+esc(l)+'</option>').join("");
+  return '<details class="openform"><summary>➕ Open a schedule</summary>'+
+    '<div class="ofrow">'+
+      '<label>Date<input type="date" class="of-date"></label>'+
+      '<label>Time<input type="text" class="of-time" placeholder="11:00" value="11:00"></label>'+
+    '</div>'+
+    '<div class="ofrow">'+
+      '<label>Language<select class="of-lang">'+langOpts+'</select></label>'+
+      '<label>Guide<select class="of-guide"><option value="">Not assigned</option></select></label>'+
+    '</div>'+
+    '<div class="ofrow"><button class="of-open">Open schedule</button><span class="of-msg"></span></div>'+
+    '</details>';
+}
+function bindOpenForm(){
+  const form=document.querySelector(".openform"); if(!form) return;
+  const langSel=form.querySelector(".of-lang"), guideSel=form.querySelector(".of-guide");
+  const fillGuides=()=>{ const gs=(GUIDES_BY_LANG||{})[langSel.value]||[];
+    guideSel.innerHTML='<option value="">Not assigned</option>'+gs.map(n=>'<option>'+esc(n)+'</option>').join(""); };
+  langSel.onchange=fillGuides; fillGuides();
+  form.querySelector(".of-open").onclick=async ()=>{
+    const msg=form.querySelector(".of-msg");
+    const dateKey=form.querySelector(".of-date").value;
+    const time=(form.querySelector(".of-time").value||"").trim();
+    const language=langSel.value, guide=guideSel.value;
+    if(!dateKey||!time){ msg.textContent="Pick a date and time."; return; }
+    const btn=form.querySelector(".of-open"); btn.disabled=true; msg.textContent="Opening…"; LAST_EDIT=Date.now();
+    try{
+      const r=await api("assign",{token:store.token,dateKey:dateKey,time:time,language:language,guide:guide,force:"1"});
+      if(!r.ok){ msg.textContent=r.error||"Error"; btn.disabled=false; return; }
+      msg.textContent="Opened ✓"; setTimeout(loadTours,700);
+    }catch(err){ msg.textContent="Network problem"; btn.disabled=false; }
+  };
 }
 /* Manager-only: dropdown of guides who SPEAK the tour's language. Picking one
    writes it into the Schedule_<Language> grid in bold (= a management lock). */
@@ -404,6 +453,7 @@ function tourCard(t, canAssign){
   const walk = srcSet.map(s=>'<div class="wl"><span class="lbl">Walk-in ('+esc(s)+')</span>'+stepper(t.id,"walk|"+s,0,99,0)+'</div>').join("");
   const hasNote=!!t.shiftNote;
   const noteBtn=(canAssign||hasNote)?'<button class="notebtn'+(hasNote?' has':'')+'" data-note="'+esc(t.id)+'" title="'+(hasNote?esc(t.shiftNote):'Add a note')+'">'+POSTIT+'</button>':'';
+  const closeBtn=canAssign?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Close this schedule (it disappears)">✕</button>':'';
   const notePanel=(canAssign||hasNote)?'<div class="notepanel" data-np="'+esc(t.id)+'" hidden>'+
     (canAssign
       ?'<textarea class="noteta" data-nt="'+esc(t.id)+'" placeholder="Management note for this tour…">'+esc(t.shiftNote||'')+'</textarea>'+
@@ -413,7 +463,7 @@ function tourCard(t, canAssign){
   return '<div class="tour" data-tour="'+esc(t.id)+'">'+
     '<div class="head js-toggle">'+
       '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+ flagImg(t.language)+
-      (t.isPrivate?'<span class="pill priv">Private</span>':'')+ noteBtn +'<span class="spacer"></span>'+
+      (t.isPrivate?'<span class="pill priv">Private</span>':'')+ noteBtn + closeBtn +'<span class="spacer"></span>'+
       '<div class="count"><div class="big"><span class="ck">'+t.checkedGuests+'</span> / '+t.bookedGuests+(t.bookedChildren?'<span class="kids">+'+t.bookedChildren+'</span>':'')+'</div>'+sub+'</div>'+
     '</div>'+
     notePanel+
@@ -503,6 +553,20 @@ function bindTours(tours){
         const t=TOURS_CACHE.find(x=>x.id===id); if(t) t.shiftNote=r.note;
         setTimeout(loadTours,700);
       }catch(err){ if(msg) msg.textContent="Network problem"; b.disabled=false; }
+    };
+  });
+  // Management: close a schedule (it disappears from the portal for everyone).
+  document.querySelectorAll(".closebtn").forEach(btn=>{
+    btn.onclick=async (e)=>{ e.stopPropagation();
+      const id=btn.dataset.close;
+      if(!confirm("Close this schedule? It will disappear from the portal for everyone. You can reopen it later from the Closed_Shifts tab.")) return;
+      btn.disabled=true; LAST_EDIT=Date.now();
+      try{
+        const r=await api("closeShift",{token:store.token, id:id});
+        if(!r.ok){ alert(r.error||"Could not close it"); btn.disabled=false; return; }
+        const card=btn.closest(".tour"); if(card) card.remove();
+        setTimeout(loadTours,700);
+      }catch(err){ alert("Network problem"); btn.disabled=false; }
     };
   });
   // Check-in button per reservation: set the count, lock the row, save.
