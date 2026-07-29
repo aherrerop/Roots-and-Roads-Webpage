@@ -84,7 +84,11 @@ const PORTAL = {
 
   // Control_v1 tab that holds the generated assignments.
   SCHEDULE_TAB: 'Schedule',
-  GUIDES_TAB: 'Guides'
+  GUIDES_TAB: 'Guides',
+
+  // Management post-it notes on a tour, keyed by the tour's id (survives
+  // makeSchedule, which rewrites the grids).
+  NOTES_TAB: 'Shift_Notes'
 };
 
 
@@ -104,6 +108,7 @@ function doGet(e) {
       case 'save':   out = apiSave_(p);  break;
       case 'assign': out = apiAssign_(p); break;
       case 'move':   out = apiMoveBooking_(p); break;
+      case 'setNote': out = apiSetNote_(p); break;
       case 'ping':   out = { ok: true, pong: true }; break;
       case 'health': out = apiHealth_(); break;
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
@@ -183,6 +188,7 @@ function apiTours_(p) {
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
   const priorCheckins = readGuideCheckins_(name);   // key|bookingId -> checkedIn
+  const notesById = readShiftNotes_();              // management post-it notes
 
   const tours = mine.map(shift => {
     const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
@@ -215,8 +221,9 @@ function apiTours_(p) {
     const bookedChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
     const checkedGuests = bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0);
 
+    const id = shift.private ? key + '|P' + (shift.privIndex || 1) : key;
     return {
-      id: shift.private ? key + '|P' + (shift.privIndex || 1) : key,
+      id,
       dateKey: shift.dateKey,
       dateText: shift.dateText,
       day: shift.day,
@@ -226,6 +233,7 @@ function apiTours_(p) {
       coGuides: shift.assigned.filter(a => !sameName_(a, name)),
       status: shift.status,
       isPrivate: !!shift.private,
+      shiftNote: notesById[id] || '',
       bookedGuests,
       bookedChildren,
       checkedGuests,
@@ -301,14 +309,16 @@ function apiTours_(p) {
                             : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0))
           };
         });
+      const aid = shift.private ? key + '|P' + (shift.privIndex || 1) : key;
       return {
-        id: shift.private ? key + '|P' + (shift.privIndex || 1) : key,
+        id: aid,
         dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
         time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
         privIndex: shift.privIndex || 1,
         eligible: eligibleGuidesForShift_(shift, busyMap, guidesByLanguage),
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
+        shiftNote: notesById[aid] || '',
         bookedGuests: bookings.reduce((s, b) => s + Number(b.guests || 0), 0),
         bookedChildren: bookings.reduce((s, b) => s + Number(b.children || 0), 0),
         checkedGuests: bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0),
@@ -330,6 +340,55 @@ function apiTours_(p) {
  *   params: token, dateKey (yyyy-MM-dd), time (24h "17:00"), language,
  *           isPrivate ("1"/""), privIndex, guide
  */
+/** Management post-it notes on a tour, keyed by the tour id. { id -> note }. */
+function readShiftNotes_() {
+  const out = {};
+  const sh = control_().getSheetByName(PORTAL.NOTES_TAB);
+  if (!sh || sh.getLastRow() < 2) return out;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(r => {
+    const id = String(r[0] || '').trim();
+    if (id) out[id] = String(r[1] || '');
+  });
+  return out;
+}
+
+/**
+ * action=setNote — MANAGER ONLY. Save (or clear) the post-it note on a tour.
+ *   params: token, id (the tour id), note
+ */
+function apiSetNote_(p) {
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+
+  const id = String(p.id || '').trim();
+  if (!id) return { ok: false, error: 'Missing tour id' };
+  const note = String(p.note || '').trim();
+
+  const ss = control_();
+  let sh = ss.getSheetByName(PORTAL.NOTES_TAB);
+  if (!sh) {
+    sh = ss.insertSheet(PORTAL.NOTES_TAB);
+    sh.getRange(1, 1, 1, 3).setValues([['Tour id', 'Note', 'Updated']]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  const last = sh.getLastRow();
+  let row = -1;
+  if (last >= 2) {
+    const ids = sh.getRange(2, 1, last - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) { if (String(ids[i][0] || '').trim() === id) { row = i + 2; break; } }
+  }
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+  if (!note) {                              // empty note -> remove the row
+    if (row !== -1) sh.deleteRow(row);
+    return { ok: true, id, note: '' };
+  }
+  if (row === -1) row = sh.getLastRow() + 1;
+  sh.getRange(row, 1, 1, 3).setValues([[id, note, stamp]]);
+  return { ok: true, id, note };
+}
+
 function apiAssign_(p) {
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };

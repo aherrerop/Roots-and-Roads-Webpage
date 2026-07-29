@@ -209,6 +209,15 @@ const clb=(cr[clk]||[])[0]||{};
 check('completed-log carries name/phone/guests/children (checked-in unknown)',
   clb.name==='No Show Guy'&&clb.phone==='+33999'&&Number(clb.guests)===2&&Number(clb.children)===1, clb);
 
+console.log('--- Management post-it notes on tours ---');
+const cn=new __mock.MockSS('control-notes'); SpreadsheetApp._active=cn;
+cn.insertSheet('Shift_Notes').getRange(1,1,2,3).setValues([
+ ['Tour id','Note','Updated'],
+ ['2026-07-28|660|italian','Meet at the side entrance','2026-07-28 09:00']]);
+const shiftNotes=readShiftNotes_();
+check('shift note read by tour id', shiftNotes['2026-07-28|660|italian']==='Meet at the side entrance', shiftNotes);
+check('no note for an id without one', !shiftNotes['2026-07-28|660|french'], shiftNotes);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
