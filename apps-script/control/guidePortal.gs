@@ -88,7 +88,12 @@ const PORTAL = {
 
   // Management post-it notes on a tour, keyed by the tour's id (survives
   // makeSchedule, which rewrites the grids).
-  NOTES_TAB: 'Shift_Notes'
+  NOTES_TAB: 'Shift_Notes',
+
+  // Shifts a manager has CLOSED. Keyed by tour id, this durably hides a shift
+  // from the portal no matter which source produced it (grid, live booking, or
+  // a Weekly_Schedule offer rule). Reversible: delete the row to reopen.
+  CLOSED_TAB: 'Closed_Shifts'
 };
 
 
@@ -109,6 +114,7 @@ function doGet(e) {
       case 'assign': out = apiAssign_(p); break;
       case 'move':   out = apiMoveBooking_(p); break;
       case 'setNote': out = apiSetNote_(p); break;
+      case 'closeShift': out = apiCloseShift_(p); break;
       case 'ping':   out = { ok: true, pong: true }; break;
       case 'health': out = apiHealth_(); break;
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
@@ -162,9 +168,14 @@ function apiTours_(p) {
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
 
   const rates = readRates_();
-  const schedule = readSchedule_();                 // all upcoming shifts (from the grids)
+  let schedule = readSchedule_();                   // all upcoming shifts (from the grids)
   const bookingsByKey = readBookingsIndex_();       // "yyyy-mm-dd|minutes|Language" -> [bookings]
   appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
+  appendWeeklyScheduleShifts_(schedule);            // #4: new Weekly_Schedule offer rows show at once
+  // Management can CLOSE a shift; it disappears from the portal for everyone,
+  // regardless of which source produced it.
+  const closed = readClosedShifts_();
+  schedule = schedule.filter(s => !closed[shiftDomId_(s)]);
   // Order every shift by date then start time (so appended orphans slot into
   // their real time position, not at the end of the list).
   schedule.sort((a, b) =>
@@ -387,6 +398,106 @@ function apiSetNote_(p) {
   if (row === -1) row = sh.getLastRow() + 1;
   sh.getRange(row, 1, 1, 3).setValues([[id, note, stamp]]);
   return { ok: true, id, note };
+}
+
+/** The tour id a shift shows under — regular = key, private = key|P<index>. */
+function shiftDomId_(s) {
+  const k = shiftKey_(s.dateKey, s.minutes, s.language);
+  return s.private ? k + '|P' + (s.privIndex || 1) : k;
+}
+
+/** Set of tour ids a manager has closed (hidden from the portal). */
+function readClosedShifts_() {
+  const set = {};
+  const sh = control_().getSheetByName(PORTAL.CLOSED_TAB);
+  if (!sh || sh.getLastRow() < 2) return set;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues().forEach(r => {
+    const id = String(r[0] || '').trim();
+    if (id) set[id] = true;
+  });
+  return set;
+}
+
+/**
+ * action=closeShift — MANAGER ONLY. Hide a shift from the portal (it
+ * disappears), or reopen it. The suppression is durable and source-agnostic:
+ * it outlives makeSchedule and also stops a Weekly_Schedule offer rule from
+ * re-surfacing the shift.
+ *   params: token, id (the tour id), reopen ("1" to un-hide)
+ */
+function apiCloseShift_(p) {
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+
+  const id = String(p.id || '').trim();
+  if (!id) return { ok: false, error: 'Missing tour id' };
+  const reopen = String(p.reopen || '') === '1';
+
+  const ss = control_();
+  let sh = ss.getSheetByName(PORTAL.CLOSED_TAB);
+  if (!sh) {
+    sh = ss.insertSheet(PORTAL.CLOSED_TAB);
+    sh.getRange(1, 1, 1, 3).setValues([['Tour id', 'Closed by', 'Closed at']]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  const last = sh.getLastRow();
+  let row = -1;
+  if (last >= 2) {
+    const ids = sh.getRange(2, 1, last - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) { if (String(ids[i][0] || '').trim() === id) { row = i + 2; break; } }
+  }
+  if (reopen) {
+    if (row !== -1) sh.deleteRow(row);
+    return { ok: true, id, closed: false };
+  }
+  if (row === -1) {
+    const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+    sh.getRange(sh.getLastRow() + 1, 1, 1, 3).setValues([[id, name, stamp]]);
+  }
+  return { ok: true, id, closed: true };
+}
+
+/**
+ * #4 — a Weekly_Schedule offer rule shows in the portal IMMEDIATELY, before
+ * the weekly makeSchedule run materialises it into a Schedule_<Language> grid.
+ * Expands the rules (RULES × DATES) across the visible window into "Not
+ * assigned" shifts, skipping any (date, time, language) the grids or live
+ * bookings already produced. "Private" rows are availability windows, not
+ * offered tours, so they are not surfaced here (a private tour appears only
+ * when a private booking exists).
+ */
+function appendWeeklyScheduleShifts_(schedule) {
+  let rules;
+  try { rules = readWeeklySchedule_(control_()); }   // shared with assignShifts.gs (same project)
+  catch (e) { return; }                              // no Weekly_Schedule tab -> nothing to add
+  if (!rules || !rules.length) return;
+
+  const today = todayKey_();
+  const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
+  const have = new Set(schedule.filter(s => !s.private)
+    .map(s => shiftKey_(s.dateKey, s.minutes, s.language)));
+
+  for (let dateKey = today; dateKey <= maxKey; dateKey = addDaysKey_(dateKey, 1)) {
+    const day = dayNameFromKey_(dateKey);
+    rules.forEach(rule => {
+      if (rule.day !== day) return;
+      if (/^private$/i.test(rule.language)) return;
+      if (rule.activeFrom && dateKey < toDateKey_(rule.activeFrom)) return;
+      if (rule.activeUntil && dateKey > toDateKey_(rule.activeUntil)) return;
+      const time = normTime24_(rule.time);
+      const minutes = timeToMinutes_(time);
+      if (shiftIsOver_(dateKey, minutes)) return;
+      const k = shiftKey_(dateKey, minutes, rule.language);
+      if (have.has(k)) return;
+      have.add(k);
+      schedule.push({
+        dateKey, dateText: prettyDate_(dateKey), day, time, timeLabel: to12h_(time),
+        minutes, language: rule.language, private: false, assigned: [], status: 'Not assigned'
+      });
+    });
+  }
 }
 
 function apiAssign_(p) {
