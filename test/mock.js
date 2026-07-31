@@ -157,6 +157,7 @@ const SS_BY_ID={};
 global.__mock={MockSS,SS_BY_ID,PROPS};
 global.SpreadsheetApp={
   _active:null,
+  flush(){return this;},
   getActiveSpreadsheet(){return this._active;},
   openById(id){ if(!SS_BY_ID[id]) SS_BY_ID[id]=new MockSS(id); return SS_BY_ID[id]; },
   create(name){const ss=new MockSS('created-'+name);SS_BY_ID[ss.getId()]=ss;return ss;},
