@@ -651,11 +651,15 @@ function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guid
   let sh = ss.getSheetByName(tabName);
   const header = gridHeaderForColumn_(time, isPriv, privIndex);
   const dayLabel = Utilities.formatDate(new Date(dateKey + 'T12:00:00'), Session.getScriptTimeZone(), 'EEE MMM d');
+  const newMinutes = timeToMinutes_(time);
 
   // Repair/create the tab if it is missing or not a real grid (e.g. the
   // "<lang>: no tours in the scheduling window" placeholder).
-  let dv = sh ? sh.getDataRange().getDisplayValues() : [];
-  const isGrid = dv.length >= 2 && String(dv[1][0] || '').trim().toLowerCase() === 'date';
+  let isGrid = false;
+  if (sh) {
+    const head = sh.getRange(2, 1).getDisplayValue();
+    isGrid = String(head || '').trim().toLowerCase() === 'date';
+  }
   if (!sh || !isGrid) {
     if (!sh) sh = ss.insertSheet(tabName);
     sh.clear();
@@ -663,32 +667,56 @@ function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guid
       .setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
     sh.getRange(2, 1, 1, 2).setValues([['Date', header]])
       .setFontWeight('bold').setBackground('#bfdbfe').setHorizontalAlignment('center');
-    dv = sh.getDataRange().getDisplayValues();
   }
 
-  const anchor = gridAnchor_(String(dv[0][0] || ''));
-  const timeRow = dv[1] || [];
+  const anchor = gridAnchor_(String(sh.getRange(1, 1).getDisplayValue() || ''));
 
-  // Time column: find, else append a new one (management-added column).
-  let colNum = -1;
+  // ---- COLUMN: find by (time, private, index); else insert IN CHRONOLOGICAL
+  //      ORDER (so a new 11:00 slots between 10:00 and 17:00, never at the end). ----
+  const timeRow = sh.getRange(2, 1, 1, Math.max(2, sh.getLastColumn())).getDisplayValues()[0];
+  let colNum = -1, insertColAt = -1;
   for (let c = 1; c < timeRow.length; c++) {
     const h = parseGridTimeHeader_(timeRow[c]);
-    if (h && h.time === time && h.isPrivate === isPriv && (!isPriv || h.index === privIndex)) { colNum = c + 1; break; }
+    if (!h) continue;
+    if (h.time === time && h.isPrivate === isPriv && (!isPriv || h.index === privIndex)) { colNum = c + 1; break; }
+    if (insertColAt === -1) {
+      const hm = timeToMinutes_(h.time);
+      const after = hm > newMinutes ||
+        (hm === newMinutes && (h.isPrivate ? 1 : 0) > (isPriv ? 1 : 0)) ||
+        (hm === newMinutes && h.isPrivate === isPriv && (h.index || 1) > (privIndex || 1));
+      if (after) insertColAt = c + 1;
+    }
   }
   if (colNum === -1) {
-    colNum = sh.getLastColumn() + 1;
+    if (insertColAt === -1) {
+      colNum = Math.max(2, sh.getLastColumn() + 1);
+    } else {
+      sh.getRange(1, 1, 1, sh.getMaxColumns()).breakApart();   // title merge would block the insert
+      sh.insertColumnBefore(insertColAt);
+      colNum = insertColAt;
+    }
     sh.getRange(2, colNum).setValue(header)
       .setFontWeight('bold').setHorizontalAlignment('center')
       .setBackground(isPriv ? '#fde68a' : '#bfdbfe');
   }
 
-  // Date row: find, else append one (works for any date — the label carries the month).
-  let rowNum = -1;
-  for (let r = 2; r < dv.length; r++) {
-    if (gridLabelToKey_(String(dv[r][0] || '').trim(), anchor) === dateKey) { rowNum = r + 1; break; }
+  // ---- ROW: find by resolved date (window-aware, so it matches even a stale
+  //      title); else insert IN CHRONOLOGICAL ORDER. ----
+  const lastRow = sh.getLastRow();
+  const colA = lastRow >= 3 ? sh.getRange(3, 1, lastRow - 2, 1).getDisplayValues() : [];
+  let rowNum = -1, insertRowAt = -1;
+  for (let i = 0; i < colA.length; i++) {
+    const rk = gridLabelToKey_(String(colA[i][0] || '').trim(), anchor);
+    if (rk === dateKey) { rowNum = i + 3; break; }
+    if (insertRowAt === -1 && rk && rk > dateKey) insertRowAt = i + 3;
   }
   if (rowNum === -1) {
-    rowNum = sh.getLastRow() + 1;
+    if (insertRowAt === -1) {
+      rowNum = Math.max(3, sh.getLastRow() + 1);
+    } else {
+      sh.insertRowBefore(insertRowAt);
+      rowNum = insertRowAt;
+    }
     sh.getRange(rowNum, 1).setValue(dayLabel).setFontWeight('bold').setBackground('#dbeafe');
   }
 
@@ -696,16 +724,36 @@ function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guid
   if (!guide) {
     cell.setValue('Not assigned');
     cell.setFontWeight('normal').setFontStyle('italic').setFontColor('#94a3b8');
-    return { ok: true, assigned: '' };
+  } else {
+    // Manager assignment = LOCK -> bold, so makeSchedule never moves it.
+    cell.setFontStyle('normal').setFontColor('#1a2b49');
+    cell.setRichTextValue(
+      SpreadsheetApp.newRichTextValue().setText(guide)
+        .setTextStyle(0, guide.length, SpreadsheetApp.newTextStyle().setBold(true).build())
+        .build());
   }
 
-  // Manager assignment = LOCK -> bold, so makeSchedule never moves it.
-  cell.setFontStyle('normal').setFontColor('#1a2b49');
-  cell.setRichTextValue(
-    SpreadsheetApp.newRichTextValue().setText(guide)
-      .setTextStyle(0, guide.length, SpreadsheetApp.newTextStyle().setBold(true).build())
-      .build());
-  return { ok: true, assigned: guide };
+  // Self-heal the title to the true min/max of the rows, so the anchor is always
+  // accurate for the next read/write (kills the degenerate "(X to X)" title).
+  refreshGridTitle_(sh, language, anchor);
+  return { ok: true, assigned: guide || '' };
+}
+
+/** Rewrite the grid title to span the actual first..last dated row. */
+function refreshGridTitle_(sh, language, anchor) {
+  const last = sh.getLastRow();
+  if (last < 3) return;
+  const labels = sh.getRange(3, 1, last - 2, 1).getDisplayValues();
+  let min = '', max = '';
+  labels.forEach(r => {
+    const k = gridLabelToKey_(String(r[0] || '').trim(), anchor);
+    if (!k) return;
+    if (!min || k < min) min = k;
+    if (!max || k > max) max = k;
+  });
+  if (min && max) {
+    sh.getRange(1, 1).setValue(language + ' schedule (' + min + ' to ' + max + ')');
+  }
 }
 
 
@@ -994,15 +1042,32 @@ function readSchedule_(opts) {
   return deduped;
 }
 
-/** Anchor {year, month} from a grid title's first yyyy-MM-dd (for year-boundary safety). */
+/**
+ * The grid window {startKey, endKey} from a title's yyyy-MM-dd dates, plus the
+ * legacy {year, month} of the first one. gridLabelToKey_ uses the window to pick
+ * the right YEAR for a year-less row label — the single source of a nasty class
+ * of bugs where a "Jul 31" row in an "August" grid silently became next year, so
+ * a portal assignment never matched its own shift and never "stuck".
+ */
 function gridAnchor_(title) {
-  const m = String(title).match(/(20\d{2})-(\d{2})-(\d{2})/);
-  if (m) return { year: Number(m[1]), month: Number(m[2]) - 1 };
+  const all = String(title).match(/20\d{2}-\d{2}-\d{2}/g) || [];
+  if (all.length) {
+    const start = all[0], end = all[all.length - 1];
+    const m = start.match(/(20\d{2})-(\d{2})-(\d{2})/);
+    return { year: Number(m[1]), month: Number(m[2]) - 1, startKey: start, endKey: end };
+  }
   const now = new Date();
-  return { year: now.getFullYear(), month: now.getMonth() };
+  const todayK = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return { year: now.getFullYear(), month: now.getMonth(), startKey: todayK, endKey: todayK };
 }
 
-/** "Thu Jul 16" + anchor -> "2026-07-16" (rolls to next year across Dec->Jan). */
+/**
+ * "Thu Jul 16" + anchor -> "2026-07-16". Year-boundary safe AND resilient to a
+ * stale or degenerate grid title: of the candidate years around the anchor, it
+ * picks the one whose date falls INSIDE the grid window, else the one closest to
+ * it. That way a "Jul 31" row resolves to the same 2026-07-31 the portal shift
+ * uses, no matter what month the title happens to name.
+ */
 function gridLabelToKey_(label, anchor) {
   const m = String(label).match(/([A-Za-z]{3,})\s+(\d{1,2})\s*$/);
   if (!m) return '';
@@ -1010,9 +1075,23 @@ function gridLabelToKey_(label, anchor) {
   const mon = months[m[1].slice(0, 3).toLowerCase()];
   if (mon == null) return '';
   const day = Number(m[2]);
-  const year = mon < anchor.month ? anchor.year + 1 : anchor.year;
-  const d = new Date(year, mon, day, 12, 0, 0);
-  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const baseYear = (anchor && anchor.year) || new Date().getFullYear();
+  const tz = Session.getScriptTimeZone();
+  const startT = (anchor && anchor.startKey) ? new Date(anchor.startKey + 'T12:00:00').getTime() : null;
+  const endT   = (anchor && anchor.endKey)   ? new Date(anchor.endKey   + 'T12:00:00').getTime() : null;
+
+  let best = '', bestScore = Infinity;
+  for (let dy = -1; dy <= 1; dy++) {
+    const d = new Date(baseYear + dy, mon, day, 12, 0, 0);
+    if (isNaN(d.getTime())) continue;
+    const t = d.getTime();
+    let score;
+    if (startT != null && endT != null && t >= startT && t <= endT) score = 0;         // inside the window
+    else if (startT != null && endT != null) score = Math.min(Math.abs(t - startT), Math.abs(t - endT));
+    else score = Math.abs(t - Date.now());
+    if (score < bestScore) { bestScore = score; best = Utilities.formatDate(d, tz, 'yyyy-MM-dd'); }
+  }
+  return best;
 }
 
 

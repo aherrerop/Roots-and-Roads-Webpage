@@ -172,6 +172,45 @@ check('both created slots read back from the grid', itSched.length===2 &&
   itSched.some(s=>s.time==='10:00'&&s.assigned.join()==='Giulia') &&
   itSched.some(s=>s.time==='17:00'&&s.assigned.join()==='Marco'), itSched);
 
+console.log('--- Year resolver: a Jul row in an Aug-titled grid must NOT jump to next year ---');
+const augAnchor=gridAnchor_('Italian schedule (2026-08-07 to 2026-08-07)');
+check('Jul 31 in an Aug-titled grid -> 2026-07-31 (was 2027, the sticking bug)',
+  gridLabelToKey_('Fri Jul 31',augAnchor)==='2026-07-31', gridLabelToKey_('Fri Jul 31',augAnchor));
+check('Aug 7 in the same grid -> 2026-08-07', gridLabelToKey_('Fri Aug 7',augAnchor)==='2026-08-07', null);
+const decAnchor=gridAnchor_('English schedule (2026-12-28 to 2027-01-05)');
+check('Jan 3 across a Dec->Jan boundary -> 2027-01-03', gridLabelToKey_('Sat Jan 3',decAnchor)==='2027-01-03', gridLabelToKey_('Sat Jan 3',decAnchor));
+check('Dec 30 across the same boundary -> 2026-12-30', gridLabelToKey_('Wed Dec 30',decAnchor)==='2026-12-30', null);
+
+console.log('--- Assignment STICKS + no duplicate rows + chronological order ---');
+const gc=new __mock.MockSS('control-grid'); SpreadsheetApp._active=gc;
+const fmtLabel=k=>Utilities.formatDate(new Date(k+'T12:00:00'),Session.getScriptTimeZone(),'EEE MMM d');
+const gA=key(day(3)), gB=key(day(10));   // gA earlier than gB, both upcoming
+// Seed a messy grid like production: title anchored to the LATER date, a 17:00
+// column and only the later row — exactly the shape that made assigns append.
+const gsh=gc.insertSheet('Schedule_Italian');
+gsh.getRange(1,1).setValue('Italian schedule ('+gB+' to '+gB+')');
+gsh.getRange(2,1,1,2).setValues([['Date','17:00']]);
+gsh.getRange(3,1).setValue(fmtLabel(gB));
+const GA1=writeAssignmentToGrid_('Italian',gA,'10:00',false,1,'Miguel');
+check('assigning the earlier date returns Miguel', GA1.assigned==='Miguel', GA1);
+let gv=gsh.getDataRange().getDisplayValues();
+const gh1=parseGridTimeHeader_(gv[1][1]), gh2=parseGridTimeHeader_(gv[1][2]);
+check('new 10:00 column is inserted BEFORE 17:00 (chronological)',
+  !!gh1&&!!gh2&&gh1.time==='10:00'&&gh2.time==='17:00', gv[1]);
+check('earlier date row is inserted BEFORE the later one', gv[2][0]===fmtLabel(gA)&&gv[3][0]===fmtLabel(gB), [gv[2][0],gv[3][0]]);
+check('Miguel is written into the earlier date / 10:00 cell', gv[2][1]==='Miguel', gv[2][1]);
+// Re-assign the SAME shift: must update in place, never add a second row.
+writeAssignmentToGrid_('Italian',gA,'10:00',false,1,'Miguel');
+gv=gsh.getDataRange().getDisplayValues();
+check('re-assigning the same shift does NOT create a duplicate row',
+  gv.filter((r,i)=>i>=2 && r[0]===fmtLabel(gA)).length===1, gv.map(r=>r[0]));
+// The portal must read it back at the correct date, assigned to Miguel.
+const gp=readSchedule_().filter(s=>s.language==='Italian'&&s.dateKey===gA&&s.time==='10:00');
+check('portal reads the assignment at the RIGHT date, assigned to Miguel',
+  gp.length===1 && gp[0].assigned.indexOf('Miguel')!==-1, gp);
+check('the title self-healed to span the real date range',
+  /\(\d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}\)/.test(String(gsh.getRange(1,1).getDisplayValue())), gsh.getRange(1,1).getDisplayValue());
+
 console.log('--- Portal keeps a tour until the evening of its day ---');
 check('same-day morning tour is NOT over', shiftIsOver_(key(new Date()),10*60)===false, null);
 check('a tour on a past day IS over', shiftIsOver_(key(day(-1)),10*60)===true, null);

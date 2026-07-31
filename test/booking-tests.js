@@ -90,7 +90,14 @@ const _yest=new Date(); _yest.setDate(_yest.getDate()-1); _yest.setHours(9,0,0,0
 const _mk=d=>({date:d,time:'9:00 AM',name:'Guest',bookingId:'BK1',language:'English',source:'Website',guests:2});
 check('a tour EARLIER today is not yet moved to Done (reservations persist in portal)', tourDayIsOver_(_mk(_today))===false, null);
 check('a tour YESTERDAY is done (row moves to Done)', tourDayIsOver_(_mk(_yest))===true, null);
-check('start+2h isCompleted_ still true earlier today (Gmail/invariants unchanged)', isCompleted_(_mk(_today))===true, null);
+// A tour that STARTED 3h ago: start+2h is an hour in the past -> completed.
+// Built from wall-clock offset so the assertion never depends on the run time.
+const _past=new Date(Date.now()-3*3600000);
+let _ph=_past.getHours(); const _pap=_ph>=12?'PM':'AM'; let _p12=_ph%12; if(_p12===0)_p12=12;
+const _pmin=_past.getMinutes();
+const _ptime=_p12+':'+(_pmin<10?'0'+_pmin:_pmin)+' '+_pap;
+check('start+2h isCompleted_ is true once a tour has run (Gmail/invariants unchanged)',
+  isCompleted_({date:_past,time:_ptime,name:'Guest',bookingId:'BK1',language:'English',source:'Website',guests:2})===true, _ptime);
 
 console.log('--- Website alert is a parseable backup source (Processed gap fix) ---');
 const webBody =
