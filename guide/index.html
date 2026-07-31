@@ -315,8 +315,10 @@ function showDash(){
 let LAST_EDIT = 0;
 document.addEventListener("input",  e=>{ if(e.target.closest && e.target.closest("#toursPane,#schedPane")) LAST_EDIT=Date.now(); }, true);
 document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.closest(".ckin,.step,.stepbtn,.asgsel,.mvsel,.savebar,#toursPane,#schedPane")) LAST_EDIT=Date.now(); }, true);
+let MUTATING = 0;   // >0 while a write (assign/save/move/…) is in flight
 function canAutoRefresh(){
   if(!store.token || document.hidden) return false;
+  if(MUTATING > 0) return false;                          // never poll mid-write
   if(Date.now()-LAST_EDIT < 25000) return false;          // user interacted recently
   const a=document.activeElement;
   if(a && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(a.tagName||"") && a.closest && a.closest("#toursPane,#schedPane")) return false;
@@ -328,10 +330,17 @@ function startAutoRefresh(){
   document.addEventListener("visibilitychange", ()=>{ if(!document.hidden && canAutoRefresh()) loadTours(); });
   window.addEventListener("focus", ()=>{ if(canAutoRefresh()) loadTours(); });
 }
+// A monotonic id per load. Only the NEWEST request may render — a slow, stale
+// response (e.g. an auto-refresh that read the grid before a manager's assign)
+// can never land late and revert the screen. This is what made assignments
+// look like they "didn't stick, then kicked in later".
+let LOAD_SEQ = 0;
 async function loadTours(){
+  const seq = ++LOAD_SEQ;
   if(!store.cache) $("toursPane").innerHTML='<div class="spin">Loading…</div>';
   let r; try{ r=await api("tours",{token:store.token}); }
-  catch(err){ await showLoadError(err); return; }
+  catch(err){ if(seq!==LOAD_SEQ) return; await showLoadError(err); return; }
+  if(seq!==LOAD_SEQ) return;                 // a newer load has superseded this one
   if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
     $("toursPane").innerHTML='<div class="loaderr"><b>Server error</b>'+esc(r.error||"Unknown error")+
       '<br><button class="retry" onclick="loadTours()">Retry</button></div>'; return; }
@@ -509,7 +518,7 @@ function bindTours(tours){
   document.querySelectorAll(".asgsel").forEach(sel=>{
     sel.onchange=async ()=>{
       const info=JSON.parse(sel.dataset.assign);
-      sel.disabled=true;
+      sel.disabled=true; MUTATING++; LAST_EDIT=Date.now();
       try{
         let r=await api("assign",Object.assign({token:store.token, guide:sel.value},info));
         if(!r.ok && r.conflict){
@@ -518,9 +527,10 @@ function bindTours(tours){
             r=await api("assign",Object.assign({token:store.token, guide:sel.value, force:1},info));
           }
         }
-        if(!r.ok){ if(r.error&&!r.conflict) alert(r.error); sel.disabled=false; loadTours(); return; }
-        loadTours();
-      }catch(err){ alert(err.message||"Network problem — try again"); sel.disabled=false; }
+        if(!r.ok && r.error && !r.conflict) alert(r.error);
+        // Whatever the outcome, the reload below is the authoritative view.
+      }catch(err){ alert(err.message||"Network problem — try again"); }
+      finally{ sel.disabled=false; await loadTours(); MUTATING--; }
     };
   });
   // Manager: move a booking to another language's tour (guest agreed).
@@ -605,10 +615,12 @@ async function saveTour(tourId,btn){
   const walkins=[]; card.querySelectorAll('.stepper[data-ref^="walk|"]').forEach(st=>{ const source=st.dataset.ref.split("|")[1]; const count=+st.querySelector(".val").textContent; if(count>0) walkins.push({source,count}); });
   const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins,guide:t.guide||""};
   const msg=card.querySelector('[data-msg]'); if(btn) btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
+  MUTATING++; LAST_EDIT=Date.now();   // block auto-refresh from clobbering the check-in mid-save
   try{ const r=await api("save",{token:store.token,data:JSON.stringify(data)});
     if(r.ok){ msg.style.color="var(--ok)"; msg.textContent="Saved ✓"; DIRTY[tourId]=false; }
     else{ msg.style.color="var(--danger)"; msg.textContent=r.error||"Error"; } }
   catch(err){ msg.style.color="var(--danger)"; msg.textContent=err.message; }
+  finally{ MUTATING--; }
   if(btn) btn.disabled=false; setTimeout(()=>{ if(!DIRTY[tourId]) msg.textContent=""; },4000);
 }
 

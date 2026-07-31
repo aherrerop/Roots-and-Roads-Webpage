@@ -596,7 +596,9 @@ function apiAssign_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
-    return writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide);
+    const out = writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide);
+    SpreadsheetApp.flush();   // commit before returning, so the phone's next read is guaranteed fresh
+    return out;
   } finally {
     lock.releaseLock();
   }
@@ -847,6 +849,7 @@ function apiSave_(p) {
   if (!lock.tryLock(15000)) return { ok: false, error: 'Server busy, try again in a moment' };
   try {
     writeGuideLedger_(targetGuide, d.dateKey, d.time || timeLabel, d.language, rows);
+    SpreadsheetApp.flush();   // commit the check-in before returning, so a reload can't read stale
     // Keep the GuruWalk management queue current without waiting for the trigger.
     try { updateGuruwalkCheckinQueue_(); } catch (e) { /* queue refresh is best-effort */ }
   } finally {
