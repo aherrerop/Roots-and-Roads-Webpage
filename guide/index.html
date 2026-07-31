@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<!-- The portal must never be served stale from the phone's cache, or a fix
+     never reaches the guide. These stop future caching; the version check in
+     the script reloads the page the moment a new build is deployed. -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Guide Portal — Roots &amp; Roads</title>
 <link rel="icon" type="image/png" href="/images/blackWhite_Logo_v2.png?v=1">
 <style>
@@ -124,6 +130,7 @@
   .chip.miss{background:#fff7ed;color:#b45309;font-style:italic}
   .bnote{font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
   .mvsel{margin-top:4px;padding:3px 6px;border:1px solid #e2e6ea;border-radius:7px;font-size:11px;color:var(--muted);background:#fff}
+  .ver{text-align:center;color:var(--muted);font-size:11px;padding:14px 0 22px;opacity:.7}
 </style>
 </head>
 <body>
@@ -149,6 +156,7 @@
     </div>
     <div id="toursPane"><div class="spin">Loading…</div></div>
     <div id="schedPane" class="hidden"></div>
+    <div id="ver" class="ver"></div>
   </div>
 
 </div>
@@ -156,6 +164,21 @@
 <script>
 /* ================== CONFIG ================== */
 const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hcjuNZ_Z7J8zu7iI5ZPq9P4Ag6rZ19-XYgx_qWjFLohAa7iEf/exec";
+/* Bump this string on every portal deploy. It is shown at the bottom of the
+   page AND used to auto-reload the phone when a newer build is live, so a fix
+   can never be stuck behind a stale cached page again. */
+const PORTAL_VERSION = "2026-07-31-optimistic-assign";
+
+/* Fetch our own page fresh (bypassing cache) and, if a newer version is
+   deployed, reload once so the phone is always on the latest build. */
+async function checkForUpdate(){
+  try{
+    const res = await fetch(location.pathname + "?_v=" + Date.now(), { cache: "no-store" });
+    const txt = await res.text();
+    const m = txt.match(/PORTAL_VERSION\s*=\s*"([^"]+)"/);
+    if(m && m[1] && m[1] !== PORTAL_VERSION){ location.reload(); }
+  }catch(e){ /* offline / transient — try again next time */ }
+}
 
 /* ================== API (fetch first, JSONP fallback) ==================
    fetch gives REAL error information (HTTP status, login redirects), which
@@ -302,10 +325,12 @@ function switchTab(t){
 function showDash(){
   $("loginView").classList.add("hidden"); $("dashView").classList.remove("hidden");
   $("who").textContent=store.name;
+  const v=$("ver"); if(v) v.textContent="Portal "+PORTAL_VERSION;
   const c=store.cache;
   if(c){ renderAll(c); }                 // instant render from the last load
   loadTours();                            // then refresh from the server
   startAutoRefresh();
+  checkForUpdate();                       // jump to the newest build if one is live
 }
 
 /* Keep the portal in sync with the BookingSheet without a manual reload. Polls
@@ -327,8 +352,10 @@ function canAutoRefresh(){
 function startAutoRefresh(){
   if(window._rrRefresh) return;
   window._rrRefresh = setInterval(()=>{ if(canAutoRefresh()) loadTours(); }, 20000);
-  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden && canAutoRefresh()) loadTours(); });
-  window.addEventListener("focus", ()=>{ if(canAutoRefresh()) loadTours(); });
+  // Check for a newer deployed build every 2 min and when the tab regains focus.
+  window._rrVerCheck = setInterval(checkForUpdate, 120000);
+  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); if(canAutoRefresh()) loadTours(); } });
+  window.addEventListener("focus", ()=>{ checkForUpdate(); if(canAutoRefresh()) loadTours(); });
 }
 // A monotonic id per load. Only the NEWEST request may render — a slow, stale
 // response (e.g. an auto-refresh that read the grid before a manager's assign)
