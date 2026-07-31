@@ -210,6 +210,17 @@ check('portal reads the assignment at the RIGHT date, assigned to Miguel',
   gp.length===1 && gp[0].assigned.indexOf('Miguel')!==-1, gp);
 check('the title self-healed to span the real date range',
   /\(\d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}\)/.test(String(gsh.getRange(1,1).getDisplayValue())), gsh.getRange(1,1).getDisplayValue());
+// Re-assigning a DIFFERENT guide (Albert -> Carlos) must reflect immediately on
+// the very next read, on the same row, with no trace of the old guide.
+writeAssignmentToGrid_('Italian',gA,'10:00',false,1,'Albert');
+let gpA=readSchedule_().filter(s=>s.language==='Italian'&&s.dateKey===gA&&s.time==='10:00');
+check('after assigning Albert, the shift reads back as Albert', gpA.length===1 && gpA[0].assigned.join()==='Albert', gpA);
+writeAssignmentToGrid_('Italian',gA,'10:00',false,1,'Carlos');
+let gpC=readSchedule_().filter(s=>s.language==='Italian'&&s.dateKey===gA&&s.time==='10:00');
+check('reassign Albert->Carlos reflects on the NEXT read (no delay)', gpC.length===1 && gpC[0].assigned.join()==='Carlos', gpC);
+check('the old guide Albert is gone (not merged/duplicated)', gpC[0].assigned.indexOf('Albert')===-1, gpC[0].assigned);
+gv=gsh.getDataRange().getDisplayValues();
+check('still a SINGLE grid row for the reassigned shift', gv.filter((r,i)=>i>=2 && r[0]===fmtLabel(gA)).length===1, gv.map(r=>r[0]));
 
 console.log('--- Portal keeps a tour until the evening of its day ---');
 check('same-day morning tour is NOT over', shiftIsOver_(key(new Date()),10*60)===false, null);
