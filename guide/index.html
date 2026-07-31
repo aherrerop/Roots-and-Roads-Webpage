@@ -347,6 +347,20 @@ async function loadTours(){
   store.cache=r;
   renderAll(r);
 }
+/* Optimistic update: reflect an assignment in the on-screen model the instant
+   the server confirms the write, WITHOUT waiting for a full reload. A background
+   loadTours() then reconciles with the authoritative server state. This is what
+   removes the "reverts to the old guide, then changes 30s later" delay. */
+function patchAssignInCache(info, guide){
+  const c=store.cache; if(!c) return;
+  const isPriv=(info.isPrivate==1||info.isPrivate===true||info.isPrivate==="1");
+  const hit=s=> s && s.dateKey===info.dateKey && s.language===info.language &&
+    String(s.time)===String(info.time) && (!!s.isPrivate===isPriv) &&
+    (!isPriv || Number(s.privIndex||1)===Number(info.privIndex||1));
+  (c.allTours||[]).forEach(s=>{ if(hit(s)){ s.assigned=guide?[guide]:[]; s.guide=guide||""; s.coGuides=guide?[guide]:[]; s.status=guide?"OK":"Not assigned"; } });
+  (c.schedule||[]).forEach(s=>{ if(hit(s)){ s.assigned=guide?[guide]:[]; s.status=guide?"OK":"Not assigned"; } });
+  renderAll(c);
+}
 function renderAll(r){
   RATES=r.rates||RATES;
   MANAGER=!!r.manager;
@@ -518,19 +532,25 @@ function bindTours(tours){
   document.querySelectorAll(".asgsel").forEach(sel=>{
     sel.onchange=async ()=>{
       const info=JSON.parse(sel.dataset.assign);
-      sel.disabled=true; MUTATING++; LAST_EDIT=Date.now();
+      const newGuide=sel.value;
+      MUTATING++; LAST_EDIT=Date.now();
+      patchAssignInCache(info, newGuide);        // instant, optimistic — no waiting on a reload
+      let ok=true, errMsg="";
       try{
-        let r=await api("assign",Object.assign({token:store.token, guide:sel.value},info));
+        let r=await api("assign",Object.assign({token:store.token, guide:newGuide},info));
         if(!r.ok && r.conflict){
           // Management can ENFORCE the change — but never by accident.
           if(confirm(r.error+"\n\nAssign anyway?")){
-            r=await api("assign",Object.assign({token:store.token, guide:sel.value, force:1},info));
-          }
+            r=await api("assign",Object.assign({token:store.token, guide:newGuide, force:1},info));
+          } else { ok=false; }
         }
-        if(!r.ok && r.error && !r.conflict) alert(r.error);
-        // Whatever the outcome, the reload below is the authoritative view.
-      }catch(err){ alert(err.message||"Network problem — try again"); }
-      finally{ sel.disabled=false; await loadTours(); MUTATING--; }
+        if(!r.ok){ ok=false; errMsg=r.conflict?"":(r.error||""); }
+      }catch(err){ ok=false; errMsg=err.message||"Network problem — try again"; }
+      // Reconcile with the authoritative server state. On success this confirms
+      // the optimistic change (no flicker); on failure it restores the real one.
+      try{ await loadTours(); }catch(e){}
+      MUTATING--;
+      if(!ok && errMsg) alert(errMsg);
     };
   });
   // Manager: move a booking to another language's tour (guest agreed).
