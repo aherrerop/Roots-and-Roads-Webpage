@@ -57,4 +57,13 @@ for (const [sources, suite] of SUITES) {
     failed = 1;
   }
 }
+
+// Standalone suite: the portal's own client JS (extracted from guide/index.html),
+// no mock/Apps Script bundle needed.
+try {
+  execFileSync(node, [path.join(testDir, 'portal-tests.js')], { stdio: 'inherit' });
+} catch (e) {
+  failed = 1;
+}
+
 process.exit(failed);
