@@ -90,7 +90,14 @@ const _yest=new Date(); _yest.setDate(_yest.getDate()-1); _yest.setHours(9,0,0,0
 const _mk=d=>({date:d,time:'9:00 AM',name:'Guest',bookingId:'BK1',language:'English',source:'Website',guests:2});
 check('a tour EARLIER today is not yet moved to Done (reservations persist in portal)', tourDayIsOver_(_mk(_today))===false, null);
 check('a tour YESTERDAY is done (row moves to Done)', tourDayIsOver_(_mk(_yest))===true, null);
-check('start+2h isCompleted_ still true earlier today (Gmail/invariants unchanged)', isCompleted_(_mk(_today))===true, null);
+// A tour that STARTED 3h ago: start+2h is an hour in the past -> completed.
+// Built from wall-clock offset so the assertion never depends on the run time.
+const _past=new Date(Date.now()-3*3600000);
+let _ph=_past.getHours(); const _pap=_ph>=12?'PM':'AM'; let _p12=_ph%12; if(_p12===0)_p12=12;
+const _pmin=_past.getMinutes();
+const _ptime=_p12+':'+(_pmin<10?'0'+_pmin:_pmin)+' '+_pap;
+check('start+2h isCompleted_ is true once a tour has run (Gmail/invariants unchanged)',
+  isCompleted_({date:_past,time:_ptime,name:'Guest',bookingId:'BK1',language:'English',source:'Website',guests:2})===true, _ptime);
 
 console.log('--- Website alert is a parseable backup source (Processed gap fix) ---');
 const webBody =
@@ -116,6 +123,23 @@ check('website alert date from DateKey',           wb && dateKey_(wb.date)==='20
 check('website alert routes to English Tours',     wb && languageToSheet_(wb.language)==='English Tours', null);
 check('website alert is a valid booking',          wb && isValidBooking_(wb), wb);
 check('a non-website email is not mis-parsed',     parseWebsiteAlert_(makeFakeMsg_('Booking - GYG', 'Se ha reservado tu producto'))===null, null);
+
+console.log('--- A manually-added past tour with NO Booking ID must still move to Done ---');
+const mvSS=new __mock.MockSS('booking-move'); SpreadsheetApp._active=mvSS;
+const mvEn=mvSS.insertSheet('English Tours');
+mvEn.getRange(1,1,1,9).setValues([['Name','Phone','Number of Guests','Tour date','Time','Source','Income','Booking ID','Notes']]);
+const _yd=new Date(); _yd.setDate(_yd.getDate()-1); _yd.setHours(12,0,0,0);
+const _fd=new Date(); _fd.setDate(_fd.getDate()+3); _fd.setHours(12,0,0,0);
+mvEn.getRange(2,1,2,9).setValues([
+ ['Kleiton Reis','+34600',1,_yd,'4:00 PM','Guruwalk',6,'',''],        // manual, NO id, yesterday
+ ['Future Guest','+34600',2,_fd,'11:00 AM','Website',0,'RRFUT1','']]); // upcoming, must stay
+const _moved=moveCompletedBookingRowsToDone_();
+check('the no-id past tour is recognised as completed', _moved.some(b=>b.name==='Kleiton Reis'), _moved.map(b=>b.name));
+check('a synthetic Booking ID was assigned so Done/Log dedupe works',
+  _moved.filter(b=>b.name==='Kleiton Reis').every(b=>/^MAN/.test(b.bookingId)), _moved);
+const _act=mvEn.getDataRange().getDisplayValues().map(r=>r[0]);
+check('the manual past row was removed from the active tab', _act.indexOf('Kleiton Reis')===-1, _act);
+check('the upcoming tour stays active', _act.indexOf('Future Guest')!==-1, _act);
 
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');

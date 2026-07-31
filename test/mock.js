@@ -74,6 +74,8 @@ class MockSheet{
   clearFormats(){return this;}
   deleteRow(r){this.rows.splice(r-1,1);this.fmts.splice(r-1,1);this.rich.splice(r-1,1);}
   insertRowBefore(r){this._ensure(r,1);this.rows.splice(r-1,0,[]);this.fmts.splice(r-1,0,[]);this.rich.splice(r-1,0,[]);}
+  insertColumnBefore(c){this._ensure(1,c);for(let i=0;i<this.rows.length;i++){this.rows[i].splice(c-1,0,'');this.fmts[i].splice(c-1,0,'');this.rich[i].splice(c-1,0,null);}return this;}
+  insertColumnAfter(c){return this.insertColumnBefore(c+1);}
   appendRow(vals){const r=this.getLastRow()+1;this.getRange(r,1,1,vals.length).setValues([vals]);}
   setColumnWidth(){return this;} setColumnWidths(){return this;} setRowHeight(){return this;} setRowHeights(){return this;}
   autoResizeColumns(){return this;}
@@ -109,6 +111,7 @@ class MockRange{
     const out=[];for(let i=0;i<this.nr;i++){const row=[];for(let j=0;j<this.nc;j++)row.push(this.sh.rows[this.r-1+i][this.c-1+j]);out.push(row);}return out;}
   getValue(){return this.getValues()[0][0];}
   getDisplayValues(){return this.getValues().map(r=>r.map(disp));}
+  getDisplayValue(){return disp(this.getValue());}
   setNumberFormat(f){this.sh._ensure(this.r+this.nr-1,this.c+this.nc-1);
     for(let i=0;i<this.nr;i++)for(let j=0;j<this.nc;j++)this.sh.fmts[this.r-1+i][this.c-1+j]=f;return this;}
   setNumberFormats(f){this.sh._ensure(this.r+this.nr-1,this.c+this.nc-1);

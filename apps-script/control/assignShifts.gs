@@ -416,19 +416,18 @@ function readLockedAssignments_(controlSS) {
     if (!language || sheet.getLastRow() < 3) return;
 
     const dv = sheet.getDataRange().getDisplayValues();
-    const anchorYear = extractYear_(String(dv[0][0] || ""));
+    // Same window-aware resolver the portal uses, so a locked "Jul 31" row maps
+    // to the exact same date the portal shift does (no year drift between the
+    // two — that mismatch is what made assignments fail to stick).
+    const anchor = gridAnchor_(String(dv[0][0] || ""));
     const timeRow = dv[1] || [];
     const rich = sheet.getDataRange().getRichTextValues();
 
     for (let r = 2; r < dv.length; r++) {
       const label = String(dv[r][0] || "").trim();
       if (!label) continue;
-      // label is like "Thu Jul 16": parse month/day directly.
-      const m = label.match(/([A-Za-z]{3,})\s+(\d{1,2})$/);
-      if (!m) continue;
-      const dObj = new Date(`${m[1]} ${m[2]}, ${anchorYear} 12:00:00`);
-      if (isNaN(dObj)) continue;
-      const dateText = formatDate_(dObj);
+      const dateText = gridLabelToKey_(label, anchor);   // "yyyy-MM-dd"
+      if (!dateText) continue;
 
       for (let c = 1; c < timeRow.length; c++) {
         const h = parseGridTimeHeader_(timeRow[c]);
