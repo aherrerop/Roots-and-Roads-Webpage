@@ -124,6 +124,23 @@ check('website alert routes to English Tours',     wb && languageToSheet_(wb.lan
 check('website alert is a valid booking',          wb && isValidBooking_(wb), wb);
 check('a non-website email is not mis-parsed',     parseWebsiteAlert_(makeFakeMsg_('Booking - GYG', 'Se ha reservado tu producto'))===null, null);
 
+console.log('--- A manually-added past tour with NO Booking ID must still move to Done ---');
+const mvSS=new __mock.MockSS('booking-move'); SpreadsheetApp._active=mvSS;
+const mvEn=mvSS.insertSheet('English Tours');
+mvEn.getRange(1,1,1,9).setValues([['Name','Phone','Number of Guests','Tour date','Time','Source','Income','Booking ID','Notes']]);
+const _yd=new Date(); _yd.setDate(_yd.getDate()-1); _yd.setHours(12,0,0,0);
+const _fd=new Date(); _fd.setDate(_fd.getDate()+3); _fd.setHours(12,0,0,0);
+mvEn.getRange(2,1,2,9).setValues([
+ ['Kleiton Reis','+34600',1,_yd,'4:00 PM','Guruwalk',6,'',''],        // manual, NO id, yesterday
+ ['Future Guest','+34600',2,_fd,'11:00 AM','Website',0,'RRFUT1','']]); // upcoming, must stay
+const _moved=moveCompletedBookingRowsToDone_();
+check('the no-id past tour is recognised as completed', _moved.some(b=>b.name==='Kleiton Reis'), _moved.map(b=>b.name));
+check('a synthetic Booking ID was assigned so Done/Log dedupe works',
+  _moved.filter(b=>b.name==='Kleiton Reis').every(b=>/^MAN/.test(b.bookingId)), _moved);
+const _act=mvEn.getDataRange().getDisplayValues().map(r=>r[0]);
+check('the manual past row was removed from the active tab', _act.indexOf('Kleiton Reis')===-1, _act);
+check('the upcoming tour stays active', _act.indexOf('Future Guest')!==-1, _act);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

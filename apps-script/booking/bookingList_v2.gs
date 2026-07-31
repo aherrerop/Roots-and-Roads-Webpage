@@ -1966,9 +1966,17 @@ function moveCompletedBookingRowsToDone_() {
 
     for (let i = 0; i < rows.length; i++) {
       const booking = rowToBooking_(rows[i], sheetName);
-      // Keep the row (and thus the portal's reservations + check-ins) until the
-      // tour's DAY is over, not just 2h after it started.
-      if (isValidBooking_(booking) && tourDayIsOver_(booking)) {
+      // A row moves to Done once its DAY is over. This must NOT require a
+      // Booking ID — a manually-added row (no OTA reference) still has to
+      // disappear. We only need enough to identify a real, dated tour; a stable
+      // fallback id is synthesised so the Completed Log / Done dedupe still work.
+      const isRealTour = Boolean(booking.name && booking.date && booking.time &&
+                                 booking.language && booking.source);
+      if (isRealTour && tourDayIsOver_(booking)) {
+        if (!booking.bookingId) {
+          booking.bookingId = generateFallbackBookingId_(
+            'MAN', booking.date, booking.name, booking.phone, booking.guests);
+        }
         completed.push(booking);
         rowsToDelete.push(i + 2);
       }
@@ -3992,6 +4000,11 @@ function normalizeDate_(x) {
 
 
 function normalizeTime_(x) {
+  // A manually-typed time cell that Sheets stored as a time VALUE (a Date, often
+  // the 1899 epoch) — not text — must still normalise, or the row looks like it
+  // has no time and never completes / moves to Done.
+  if (x instanceof Date && !isNaN(x)) return timeFrom24_(x.getHours(), x.getMinutes());
+
   const s = String(x || '').trim();
   if (!s) return '';
 
