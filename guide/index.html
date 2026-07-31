@@ -167,7 +167,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-07-31-optimistic-assign";
+const PORTAL_VERSION = "2026-07-31-pending-assign-2";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -374,21 +374,40 @@ async function loadTours(){
   store.cache=r;
   renderAll(r);
 }
-/* Optimistic update: reflect an assignment in the on-screen model the instant
-   the server confirms the write, WITHOUT waiting for a full reload. A background
-   loadTours() then reconciles with the authoritative server state. This is what
-   removes the "reverts to the old guide, then changes 30s later" delay. */
-function patchAssignInCache(info, guide){
-  const c=store.cache; if(!c) return;
-  const isPriv=(info.isPrivate==1||info.isPrivate===true||info.isPrivate==="1");
-  const hit=s=> s && s.dateKey===info.dateKey && s.language===info.language &&
-    String(s.time)===String(info.time) && (!!s.isPrivate===isPriv) &&
-    (!isPriv || Number(s.privIndex||1)===Number(info.privIndex||1));
-  (c.allTours||[]).forEach(s=>{ if(hit(s)){ s.assigned=guide?[guide]:[]; s.guide=guide||""; s.coGuides=guide?[guide]:[]; s.status=guide?"OK":"Not assigned"; } });
-  (c.schedule||[]).forEach(s=>{ if(hit(s)){ s.assigned=guide?[guide]:[]; s.status=guide?"OK":"Not assigned"; } });
-  renderAll(c);
+/* ---- Pending assignments: the real fix for the "reverts to Albert" bug ----
+   After you assign Carlos, Google's Sheets backend may still serve the very
+   next read from a replica that hasn't caught up, returning the OLD guide. So
+   we remember what you just set and force EVERY render to show it until the
+   server actually agrees (or a timeout passes). A stale read can no longer
+   revert the screen. */
+let PENDING_ASSIGN = {};                 // shiftKey -> { guide, until }
+const PENDING_TTL = 90000;               // hold the optimistic value up to 90s
+function shiftIdKey(o){
+  const isPriv=(o.isPrivate==1||o.isPrivate===true||o.isPrivate==="1");
+  return o.dateKey+"|"+String(o.time)+"|"+o.language+"|"+(isPriv?("P"+(o.privIndex||1)):"R");
+}
+function setPendingAssign(info, guide){
+  PENDING_ASSIGN[shiftIdKey(info)] = { guide: guide||"", until: Date.now()+PENDING_TTL };
+}
+/* Overlay pending assignments onto a tours payload, in place. When the server's
+   value matches what we set, the change is confirmed and the pending is cleared. */
+function applyPendingAssigns(r){
+  const now=Date.now();
+  Object.keys(PENDING_ASSIGN).forEach(k=>{ if(PENDING_ASSIGN[k].until<now) delete PENDING_ASSIGN[k]; });
+  if(!Object.keys(PENDING_ASSIGN).length) return;
+  const overlay=s=>{
+    const p=PENDING_ASSIGN[shiftIdKey(s)]; if(!p) return;
+    const cur=(s.assigned&&s.assigned[0])||s.guide||"";
+    if(cur===p.guide){ delete PENDING_ASSIGN[shiftIdKey(s)]; return; }   // server caught up
+    s.assigned=p.guide?[p.guide]:[]; s.guide=p.guide||"";
+    s.coGuides=p.guide?[p.guide]:[]; s.status=p.guide?"OK":"Not assigned";
+  };
+  (r.allTours||[]).forEach(overlay);
+  (r.tours||[]).forEach(overlay);
+  (r.schedule||[]).forEach(overlay);
 }
 function renderAll(r){
+  applyPendingAssigns(r);                // stale reads can never undo your last action
   RATES=r.rates||RATES;
   MANAGER=!!r.manager;
   GUIDES_BY_LANG=r.guidesByLanguage||{};
@@ -561,7 +580,8 @@ function bindTours(tours){
       const info=JSON.parse(sel.dataset.assign);
       const newGuide=sel.value;
       MUTATING++; LAST_EDIT=Date.now();
-      patchAssignInCache(info, newGuide);        // instant, optimistic — no waiting on a reload
+      setPendingAssign(info, newGuide);          // remember the choice; render shows it now
+      if(store.cache) renderAll(store.cache);     // instant, and stale reads can't undo it
       let ok=true, errMsg="";
       try{
         let r=await api("assign",Object.assign({token:store.token, guide:newGuide},info));
@@ -573,8 +593,9 @@ function bindTours(tours){
         }
         if(!r.ok){ ok=false; errMsg=r.conflict?"":(r.error||""); }
       }catch(err){ ok=false; errMsg=err.message||"Network problem — try again"; }
-      // Reconcile with the authoritative server state. On success this confirms
-      // the optimistic change (no flicker); on failure it restores the real one.
+      if(!ok){ delete PENDING_ASSIGN[shiftIdKey(info)]; }   // write failed -> drop the optimistic value
+      // Reconcile in the background. A stale read can't revert now: applyPendingAssigns
+      // re-imposes the pending value on every render until the server confirms it.
       try{ await loadTours(); }catch(e){}
       MUTATING--;
       if(!ok && errMsg) alert(errMsg);
