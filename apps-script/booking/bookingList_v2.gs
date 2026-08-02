@@ -2819,6 +2819,13 @@ function extractBookingIdFromThread_(thread, source) {
     ]);
   }
 
+  if (source === RNR.SOURCE.GURUWALK) {
+    return extractFirst_(text, [
+      /\b(BAR\d{5,})\b/i,                                            // "BAR12441706" (body + cancel subject)
+      /Booking code\s*:?\s*\n*\s*([A-Z0-9-]{4,})/i
+    ]);
+  }
+
   if (source === RNR.SOURCE.FREETOUR) {
     return extractFirst_(text, [
       /Booking\s*(?:code|reference|ID|number)\s*[:#]?\s*([A-Z0-9-]{4,})/i,
@@ -3398,6 +3405,7 @@ function parseGuruwalkMessage_(msg, mode) {
   return uniqueBookings_(bookings.map(b => {
     b.source = RNR.SOURCE.GURUWALK;
     b.income = guruwalkIncome_(b.guests);
+    b.isCancellation = isCancel;   // so cancellations are unambiguous downstream
     return normalizeBooking_(b);
   }));
 }
@@ -3411,68 +3419,51 @@ function parseGuruwalkBlocks_(text) {
     .replace(/\n{3,}/g, '\n\n');
 
   const out = [];
-  const matches = [...s.matchAll(/Booking code:\s*([A-Z0-9-]+)/gi)];
+  // Split into one block per booking at each "Booking code" label. The COLON is
+  // optional: confirmations render "Booking code: BAR123", cancellations render
+  // "Booking code\n\nBAR123" — the parser must handle BOTH, or a cancellation
+  // never removes its booking.
+  const codeRe = /Booking code\s*:?/gi;
+  const starts = []; let m;
+  while ((m = codeRe.exec(s))) starts.push(m.index);
+  const blocks = starts.length
+    ? starts.map((start, i) => {
+        const w = Math.max(s.lastIndexOf('Walker', start), s.lastIndexOf('Name', start));
+        return s.slice(w >= 0 ? w : start, i + 1 < starts.length ? starts[i + 1] : s.length);
+      })
+    : [s];   // no "Booking code" label at all -> treat the whole email as one block
 
-  for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].index;
-    const end = i + 1 < matches.length ? matches[i + 1].index : s.length;
+  for (const block of blocks) {
+    // valueAfterLabel_ reads a value whether it is on the same line ("X: v") or
+    // the next line ("X\n\nv"), so every field survives both email formats.
+    const idVal = valueAfterLabel_(block, [/^Booking code\b/i, /^Booking ID\b/i, /^Reservation ID\b/i]);
+    const bookingId = (idVal.match(/[A-Z0-9-]{4,}/i) || block.match(/\b(BAR\d{5,})\b/i) || [])[0] || '';
+    if (!bookingId) continue;
 
-    const walkerStart = Math.max(
-      s.lastIndexOf('Walker:', start),
-      s.lastIndexOf('Name:', start),
-      s.lastIndexOf('Traveler:', start),
-      s.lastIndexOf('Traveller:', start)
-    );
-
-    const block = s.slice(walkerStart >= 0 ? walkerStart : start, end);
-
-    const bookingId = extractFirst_(block, [
-      /Booking code:\s*([A-Z0-9-]+)/i,
-      /Booking ID:\s*([A-Z0-9-]+)/i,
-      /Reservation ID:\s*([A-Z0-9-]+)/i
-    ]);
-
-    const name = extractFirst_(block, [
-      /Walker:\s*([^\n\r]+)/i,
-      /Name:\s*([^\n\r]+)/i,
-      /Traveler:\s*([^\n\r]+)/i,
-      /Traveller:\s*([^\n\r]+)/i
-    ]);
-
-    const rawPhone = extractFirst_(block, [
-      /Phone\s*:?\s*([+\d][+\d\s().-]*)/i,
-      /Mobile\s*:?\s*([+\d][+\d\s().-]*)/i,
-      /Telephone\s*:?\s*([+\d][+\d\s().-]*)/i
-    ]);
+    const name = valueAfterLabel_(block, [/^Walker\b/i, /^Name\b/i, /^Traveler\b/i, /^Traveller\b/i]);
+    const rawPhone = valueAfterLabel_(block, [/^Phone\b/i, /^Mobile\b/i, /^Telephone\b/i]);
 
     // Attendees can break the party down — "1 adult, 1 child" — so parse each
     // group, not just the first number (that dropped the children entirely).
-    const attLine = extractFirst_(block, [
-      /Attendees:\s*([^\n\r]+)/i,
-      /People:\s*([^\n\r]+)/i,
-      /Guests:\s*([^\n\r]+)/i,
-      /Participants:\s*([^\n\r]+)/i
-    ]);
+    const attLine = valueAfterLabel_(block, [/^Attendees\b/i, /^People\b/i, /^Guests\b/i, /^Participants\b/i]);
     const gwAdultsM = attLine.match(/(\d+)\s*adults?/i);
     const gwChildM  = attLine.match(/(\d+)\s*(?:child(?:ren)?|kids?|ni[ñn]os?)/i);
     const gwInfM    = attLine.match(/(\d+)\s*(?:infants?|beb[eé]s?)/i);
     const gwChildren = gwChildM ? Number(gwChildM[1]) : 0;
     const gwInfants  = gwInfM ? Number(gwInfM[1]) : 0;
     let gwAdults = gwAdultsM ? Number(gwAdultsM[1]) : 0;
-    if (!gwAdults) { const t = attLine.match(/(\d+)/); gwAdults = t ? Number(t[1]) : 0; }  // legacy "Attendees: 3"
+    if (!gwAdults) { const t = attLine.match(/(\d+)/); gwAdults = t ? Number(t[1]) : 0; }  // "Attendees: 3" / "Attendees\n1"
     const guestsText = attLine ? String(gwAdults || '') : '';
 
-    const languageText = extractFirst_(block, [/Language:\s*([^\n\r]+)/i]);
-
-    const dateText = extractFirst_(block, [
-      /Date:\s*([^\n\r]+)/i,
-      /Tour date:\s*([^\n\r]+)/i
-    ]);
-
-    const timeText = extractFirst_(block, [
-      /Time:\s*(\d{1,2}:\d{2})/i,
-      /Start time:\s*(\d{1,2}:\d{2})/i
-    ]);
+    const languageText = valueAfterLabel_(block, [/^Language\b/i]);
+    // Confirmations label it "Date:"; cancellations "Date and time" and append
+    // the time ("Tuesday, July 28, 2026, 11:00h"). Pull the time out first, then
+    // strip it so the date actually parses (an unparsed date would make the whole
+    // booking "invalid" and a cancellation would then be silently dropped).
+    const dateRaw = valueAfterLabel_(block, [/^Date and time\b/i, /^Date\b/i, /^Tour date\b/i]);
+    const timeText = (extractFirst_(block, [/Time\s*:?\s*(\d{1,2}:\d{2})/i, /Start time\s*:?\s*(\d{1,2}:\d{2})/i])
+                      || extractFirst_(dateRaw, [/(\d{1,2}:\d{2})/]));
+    const dateText = dateRaw.replace(/[,·]?\s*\d{1,2}:\d{2}\s*h?\.?\s*$/i, '').trim();
 
     out.push({
       bookingId,
@@ -3905,7 +3896,9 @@ function valueAfterLabel_(text, labelRegexes) {
     for (const lab of labelRegexes) {
       if (!lab.test(lines[i])) continue;
       const sameLine = lines[i].replace(lab, '').replace(/^[:\s\-–]+/, '').trim();
-      if (sameLine) return sameLine;
+      // A "Fecha Nuevo" / "Date New" change badge is NOT the value — skip it and
+      // read the real value from the following line (GYG modification emails).
+      if (sameLine && !/^(nuevo|nueva|new|updated|actualizad[oa])$/i.test(sameLine)) return sameLine;
       for (let j = i + 1; j <= i + 4 && j < lines.length; j++) {
         if (lines[j]) return lines[j];
       }
