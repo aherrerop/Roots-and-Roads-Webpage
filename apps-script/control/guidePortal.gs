@@ -89,7 +89,12 @@ const PORTAL = {
   // Shifts a manager has CLOSED. Keyed by tour id, this durably hides a shift
   // from the portal no matter which source produced it (grid, live booking, or
   // a Weekly_Schedule offer rule). Reversible: delete the row to reopen.
-  CLOSED_TAB: 'Closed_Shifts'
+  CLOSED_TAB: 'Closed_Shifts',
+
+  // Timing budget (ms). An operation slower than this is flagged for review in
+  // the timing report, and a slow tours READ is logged (normal fast reads are
+  // not, to keep the 8-second auto-refresh cheap).
+  SLOW_MS: 6000
 };
 
 
@@ -126,11 +131,16 @@ function doGet(e) {
     out = { ok: false, error: String(err && err.message ? err.message : err) };
   }
 
+  const ms = Date.now() - t0;
   if (PORTAL_MUTATIONS[p.action]) {
     const detail = (out && out.error) ? out.error :
       ['date=' + (p.dateKey || ''), 'time=' + (p.time || ''), 'lang=' + (p.language || ''),
        'guide=' + (p.guide || ''), 'id=' + (p.bookingId || p.id || '')].filter(x => !/=$/.test(x)).join(' ');
-    portalLog_(p.action, Date.now() - t0, !!(out && out.ok), detail);
+    portalLog_(p.action, ms, !!(out && out.ok), detail);
+  } else if (p.action === 'tours' && ms > PORTAL.SLOW_MS) {
+    // Reads are not normally logged (the 8s poll would flood the log), but a
+    // SLOW load is exactly what we want to catch and diagnose.
+    portalLog_('tours (slow)', ms, !!(out && out.ok), 'load exceeded ' + PORTAL.SLOW_MS + 'ms');
   }
 
   return jsonp_(callback, out);
@@ -156,6 +166,65 @@ function portalLog_(action, ms, ok, detail) {
     const last = sh.getLastRow();
     if (last > 700) sh.deleteRows(2, last - 500);   // keep the newest ~500 lines
   } catch (e) { /* never let logging break a request */ }
+}
+
+/** The p-th percentile (0-100) of a numeric array. Nearest-rank, no interpolation. */
+function percentile_(arr, p) {
+  const a = (arr || []).filter(x => typeof x === 'number' && !isNaN(x)).slice().sort((x, y) => x - y);
+  if (!a.length) return 0;
+  const rank = Math.ceil((p / 100) * a.length);
+  return a[Math.min(a.length - 1, Math.max(0, rank - 1))];
+}
+
+/** Aggregate the raw Portal Log rows into per-action timing stats. Pure, testable. */
+function summarisePortalTimings_(rows, slowMs) {
+  const slow = Number(slowMs || 6000);
+  const by = {};
+  (rows || []).forEach(r => {
+    const action = String((r[1] != null ? r[1] : '')).trim();
+    if (!action) return;
+    const ms = Number(r[2] || 0);
+    const ok = String(r[3] || '') === 'OK';
+    const g = by[action] || (by[action] = { ms: [], errors: 0 });
+    g.ms.push(ms);
+    if (!ok) g.errors++;
+  });
+  return Object.keys(by).sort().map(action => {
+    const g = by[action];
+    const p50 = percentile_(g.ms, 50), p95 = percentile_(g.ms, 95);
+    const max = g.ms.reduce((m, x) => Math.max(m, x), 0);
+    return { action, count: g.ms.length, errors: g.errors, p50, p95, max,
+             status: (p95 > slow || g.errors > 0) ? 'REVIEW' : 'OK' };
+  });
+}
+
+/**
+ * TIMING REPORT: read the Portal Log and print (and write to a "Portal Timing"
+ * tab) how long each portal action really takes — count, p50, p95, max, and a
+ * REVIEW flag for anything slower than PORTAL.SLOW_MS or with errors. Run it
+ * from the editor to see, from real usage, whether the portal is fast enough.
+ */
+function portalTimingReport() {
+  const ss = control_();
+  const log = ss.getSheetByName('Portal Log');
+  if (!log || log.getLastRow() < 2) { console.log('No Portal Log data yet — use the portal, then run this.'); return []; }
+  const rows = log.getRange(2, 1, log.getLastRow() - 1, 5).getValues();
+  const stats = summarisePortalTimings_(rows, PORTAL.SLOW_MS);
+
+  const table = [['Action', 'Count', 'Errors', 'p50 ms', 'p95 ms', 'max ms', 'Status']]
+    .concat(stats.map(s => [s.action, s.count, s.errors, s.p50, s.p95, s.max, s.status]));
+  let out = ss.getSheetByName('Portal Timing') || ss.insertSheet('Portal Timing');
+  out.clear();
+  out.getRange(1, 1, table.length, table[0].length).setValues(table);
+  out.getRange(1, 1, 1, table[0].length).setFontWeight('bold');
+  out.setFrozenRows(1);
+
+  console.log('================ PORTAL TIMING (from ' + rows.length + ' logged ops) ================');
+  table.forEach(r => console.log(r.join('  |  ')));
+  const review = stats.filter(s => s.status === 'REVIEW');
+  console.log(review.length ? ('REVIEW: ' + review.map(s => s.action).join(', ') + ' (slow or erroring)')
+                            : 'All actions within the ' + PORTAL.SLOW_MS + 'ms budget.');
+  return stats;
 }
 
 function jsonp_(callback, obj) {
@@ -3011,13 +3080,16 @@ function deleteSelfTestArtifacts_(ST) {
 /** Write the self-test results to a "Self Test" tab and the log; return a summary. */
 function selfTestReport_(R) {
   const fails = R.filter(r => !r.ok);
+  const slow = R.filter(r => r.ms > PORTAL.SLOW_MS);
   const totalMs = R.reduce((s, r) => s + r.ms, 0);
+  const slowest = R.reduce((m, r) => (r.ms > (m ? m.ms : -1) ? r : m), null);
   try {
     const ss = control_();
     let sh = ss.getSheetByName('Self Test') || ss.insertSheet('Self Test');
     sh.clear();
     sh.getRange(1, 1, 1, 4).setValues([['Step', 'ms', 'Result', 'Detail']]).setFontWeight('bold');
-    const rows = R.map(r => [r.name, r.ms, r.ok ? 'PASS' : 'FAIL', String(r.detail || '')]);
+    const rows = R.map(r => [r.name, r.ms,
+      r.ok ? (r.ms > PORTAL.SLOW_MS ? 'PASS (SLOW)' : 'PASS') : 'FAIL', String(r.detail || '')]);
     if (rows.length) sh.getRange(2, 1, rows.length, 4).setValues(rows);
     sh.getRange(rows.length + 3, 1, 1, 4).setValues([[
       'TOTAL', totalMs, fails.length ? (fails.length + ' FAILED') : 'ALL PASS',
@@ -3029,6 +3101,9 @@ function selfTestReport_(R) {
   console.log('================ PORTAL SELF TEST ================');
   R.forEach(r => console.log((r.ok ? 'PASS' : 'FAIL') + ' ' + String(r.ms).padStart(5) + 'ms  ' +
     r.name + (r.detail ? '  — ' + r.detail : '')));
-  console.log('TOTAL ' + totalMs + 'ms | ' + (fails.length ? (fails.length + ' FAILED — see the FAIL lines') : 'ALL PASS'));
-  return { pass: R.length - fails.length, fail: fails.length, totalMs: totalMs, fails: fails.map(f => f.name + ': ' + f.detail) };
+  console.log('TOTAL ' + totalMs + 'ms | ' + (fails.length ? (fails.length + ' FAILED — see the FAIL lines') : 'ALL PASS') +
+    (slowest ? (' | slowest: ' + slowest.name + ' ' + slowest.ms + 'ms') : '') +
+    (slow.length ? (' | ' + slow.length + ' step(s) OVER ' + PORTAL.SLOW_MS + 'ms') : ''));
+  return { pass: R.length - fails.length, fail: fails.length, totalMs: totalMs, slowMs: PORTAL.SLOW_MS,
+           slow: slow.map(s => s.name + ' ' + s.ms + 'ms'), fails: fails.map(f => f.name + ': ' + f.detail) };
 }

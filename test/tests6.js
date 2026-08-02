@@ -327,6 +327,25 @@ const _kept=_closeFilter([_s1,_s2],_closed,_bbk);
 check('closed shift with NO booking stays hidden', !_kept.some(s=>s.dateKey==='2026-07-30'), _kept);
 check('closed shift WITH a booking comes back', _kept.some(s=>s.dateKey==='2026-07-31'), _kept);
 
+console.log('--- Portal timing report: percentiles + per-action stats ---');
+check('percentile_ p50 (nearest-rank)', percentile_([10,20,30,40,50],50)===30, percentile_([10,20,30,40,50],50));
+check('percentile_ p95', percentile_([10,20,30,40,50],95)===50, percentile_([10,20,30,40,50],95));
+check('percentile_ empty -> 0', percentile_([],50)===0, null);
+check('percentile_ single', percentile_([100],95)===100, null);
+const _now='2026-08-02 10:00:00';
+const _rows=[
+ [_now,'assign',1000,'OK',''],
+ [_now,'assign',9000,'OK',''],           // slow -> p95 high -> REVIEW
+ [_now,'save',2000,'OK',''],
+ [_now,'save',2500,'ERROR','boom'],      // an error -> REVIEW
+ [_now,'move',1500,'OK','']];
+const _stats=summarisePortalTimings_(_rows, PORTAL.SLOW_MS);
+const _a=_stats.find(s=>s.action==='assign'), _s=_stats.find(s=>s.action==='save'), _m=_stats.find(s=>s.action==='move');
+check('assign aggregated: count 2, max 9000, flagged REVIEW (p95>budget)', _a.count===2 && _a.max===9000 && _a.status==='REVIEW', _a);
+check('save aggregated: 1 error -> REVIEW', _s.errors===1 && _s.status==='REVIEW', _s);
+check('move aggregated: fast + no errors -> OK', _m.count===1 && _m.status==='OK', _m);
+check('slow tours read logging threshold is configured', typeof PORTAL.SLOW_MS==='number' && PORTAL.SLOW_MS>0, PORTAL.SLOW_MS);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

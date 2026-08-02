@@ -75,6 +75,24 @@ check('Carlos is gone (not merged in)', sh.length === 1 && (sh[0].assigned || []
 const gv2 = control.getSheetByName('Schedule_English').getDataRange().getDisplayValues();
 check('still a single grid row after reassign', gv2.filter((row, i) => i >= 2 && row[0] === label).length === 1, gv2.map(x => x[0]));
 
+console.log('--- Timing: each real portal operation is bounded, and repeats do not grow the grid ---');
+const time = fn => { const t = Date.now(); fn(); return Date.now() - t; };
+const p95 = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.ceil(0.95 * s.length) - 1)]; };
+const toursMs = [], assignMs = [], saveMs = [];
+for (let i = 0; i < 6; i++) toursMs.push(time(() => apiTours_({ token: token })));
+for (let i = 0; i < 6; i++) assignMs.push(time(() => apiAssign_({ token: token, dateKey: DATE, time: '10:00', language: 'English', guide: (i % 2 ? 'Carlos' : 'Albert'), force: '1' })));
+for (let i = 0; i < 6; i++) saveMs.push(time(() => apiSave_({ token: token, data: JSON.stringify(data) })));
+console.log('  apiTours_  p95=' + p95(toursMs) + 'ms max=' + Math.max.apply(null, toursMs) + 'ms');
+console.log('  apiAssign_ p95=' + p95(assignMs) + 'ms max=' + Math.max.apply(null, assignMs) + 'ms');
+console.log('  apiSave_   p95=' + p95(saveMs) + 'ms max=' + Math.max.apply(null, saveMs) + 'ms');
+// In node these are ~instant; a hard cap catches a runaway loop / O(n^2) blow-up.
+check('apiTours_ does bounded work (no runaway)', Math.max.apply(null, toursMs) < 2000, Math.max.apply(null, toursMs));
+check('apiAssign_ does bounded work', Math.max.apply(null, assignMs) < 2000, Math.max.apply(null, assignMs));
+check('apiSave_ does bounded work', Math.max.apply(null, saveMs) < 2000, Math.max.apply(null, saveMs));
+// The real regression guard: 6 more assigns must NOT accumulate grid rows.
+const gv3 = control.getSheetByName('Schedule_English').getDataRange().getDisplayValues();
+check('after many repeated assigns the grid STILL has a single row', gv3.filter((row, i) => i >= 2 && row[0] === label).length === 1, gv3.map(x => x[0]));
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
