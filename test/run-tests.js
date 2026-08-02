@@ -45,6 +45,9 @@ const SUITES = [
   [BOOKING, 'booking-tests.js']    // Italian + French: booking side
 ];
 
+// Gmail-side integration suite needs the stateful Gmail mock layered on top.
+const GMAIL_SUITE = [BOOKING, 'gmail-tests.js', 'gmail-mock.js'];
+
 let failed = 0;
 for (const [sources, suite] of SUITES) {
   const bundle = [path.join(testDir, 'mock.js'), ...sources, path.join(testDir, suite)]
@@ -56,6 +59,17 @@ for (const [sources, suite] of SUITES) {
   } catch (e) {
     failed = 1;
   }
+}
+
+// Gmail-side integration suite: mock.js + gmail-mock.js (overrides the Gmail
+// stub) + booking sources + the suite.
+{
+  const [sources, suite, gmailMock] = GMAIL_SUITE;
+  const bundle = [path.join(testDir, 'mock.js'), path.join(testDir, gmailMock), ...sources, path.join(testDir, suite)]
+    .map(read).join('\n');
+  const tmp = path.join(os.tmpdir(), 'rr_gmail.js');
+  fs.writeFileSync(tmp, bundle);
+  try { execFileSync(node, [tmp], { stdio: 'inherit' }); } catch (e) { failed = 1; }
 }
 
 // Standalone suite: the portal's own client JS (extracted from guide/index.html),
