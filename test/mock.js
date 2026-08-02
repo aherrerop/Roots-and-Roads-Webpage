@@ -18,9 +18,10 @@ function fmtDate(d, tz, pat){
 }
 global.Utilities={
   formatDate: fmtDate,
-  base64EncodeWebSafe:x=>Buffer.from(String(x)).toString('base64url'),
+  base64EncodeWebSafe:x=>(Buffer.isBuffer(x)||Array.isArray(x)?Buffer.from(x):Buffer.from(String(x))).toString('base64url'),
   base64DecodeWebSafe:x=>Buffer.from(String(x),'base64url'),
-  computeDigest:(a,s)=>Buffer.from(String(s)), DigestAlgorithm:{MD5:'md5'},
+  computeDigest:(a,s)=>require('crypto').createHash('md5').update(String(s)).digest(), DigestAlgorithm:{MD5:'md5'},
+  computeHmacSha256Signature:(s,key)=>require('crypto').createHmac('sha256',String(key)).update(String(s)).digest(),
   newBlob:b=>({getDataAsString:()=>Buffer.from(b).toString()})
 };
 global.Session={getScriptTimeZone:()=>'Europe/Madrid'};

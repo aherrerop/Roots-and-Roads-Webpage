@@ -88,6 +88,25 @@ const vagueCancel = __gmail.add([RNR.LABELS.GYG_CANCEL],
 processCancellationLabel_(RNR.LABELS.GYG_CANCEL, RNR.SOURCE.GYG);
 check('an unidentifiable cancellation is left UNprocessed (visible/retryable)', vagueCancel.hasLabel(P) === false, [...vagueCancel.labelSet]);
 
+console.log('--- END-TO-END list: 3 bookings + a cancellation, judged by PRODUCTION\'s own invariant oracle ---');
+resetWorld();
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S10 - GYGAAA010', gygBody('GYGAAA010', 'Ann', 'August 4, 2030 10:00 AM', 2, 'Inglés')));
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S11 - GYGBBB011', gygBody('GYGBBB011', 'Bob', 'August 5, 2030 11:00 AM', 3, 'Italiano')));
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S12 - GYGCCC012', gygBody('GYGCCC012', 'Cy', 'August 6, 2030 5:00 PM', 1, 'Inglés')));
+processConfirmationLabel_(RNR.LABELS.GYG_CONFIRM, RNR.SOURCE.GYG);
+check('all three bookings are on the list', ['GYGAAA010', 'GYGBBB011', 'GYGCCC012'].every(id => idsOnList()[id]), Object.keys(idsOnList()));
+check('the Italian booking routed to Italian Tours', SpreadsheetApp._active.getSheetByName('Italian Tours').getRange(2, 8).getDisplayValue() === 'GYGBBB011', null);
+check("PRODUCTION invariants hold (checkInvariants_ = 0)", checkInvariants_() === 0, checkInvariants_());
+
+// Cancel the middle booking.
+__gmail.add([RNR.LABELS.GYG_CANCEL], __gmail.msg('Se ha cancelado una reserva - S11 - GYGBBB011',
+  ['GYGBBB011 ha sido cancelada', 'Número de referencia: GYGBBB011', 'Nombre: Bob'].join('\n')));
+resetRunCaches_();
+processCancellationLabel_(RNR.LABELS.GYG_CANCEL, RNR.SOURCE.GYG);
+check('cancelled booking is removed', !idsOnList()['GYGBBB011'], Object.keys(idsOnList()));
+check('the other two remain', idsOnList()['GYGAAA010'] && idsOnList()['GYGCCC012'], null);
+check('invariants STILL hold after the cancellation (nothing cancelled-still-active)', checkInvariants_() === 0, checkInvariants_());
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
