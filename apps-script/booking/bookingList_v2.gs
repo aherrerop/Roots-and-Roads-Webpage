@@ -484,6 +484,12 @@ function runBookingCore_(skipProcessed) {
     if (runHasTimeLeft_()) completedNow = moveCompletedBookingRowsToDone_() || [];
     if (runHasTimeLeft_()) moveCompletedGmailThreadsToDone_(completedNow);
 
+    // 4a2. SAFETY NET (audits only): re-read confirmation threads and recover
+    //      any confirmed, upcoming booking missing from the list, so the
+    //      "Processed" label can never hide a booking. Runs before the invariant
+    //      checks so a just-recovered booking is counted as present.
+    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) reconcileConfirmationsToBookingList_();
+
     // 4b. INVARIANT CHECKS (audits only): duplicates, cancelled-still-active,
     //     completed-still-active, invalid rows. Findings land in Errors
     //     (deduped) — the daily self-test email surfaces them.
@@ -1206,21 +1212,33 @@ function processConfirmationLabel_(labelName, source) {
         continue;
       }
 
+      // PROCESSED MUST MEAN REGISTERED. We only finalise the thread as
+      // Processed when at least one valid booking was actually accounted for
+      // (inserted, or legitimately skipped because it is already completed or
+      // cancelled). A thread that parsed only INVALID bookings is NOT marked
+      // Processed — otherwise the booking silently vanishes behind a green
+      // label. It stays for the next run + reconcile to recover.
+      let registered = 0;
       for (const booking of bookings) {
         if (!isValidBooking_(booking)) continue;
-        if (isCompleted_(booking)) continue;
-
-        // Fail-safe: if this booking also appears in a cancellation email,
-        // do not (re)add it to the active sheet.
-        if (isBookingCancelledByEmail_(booking)) continue;
-
+        if (isCompleted_(booking)) { registered++; continue; }            // already run -> handled
+        if (isBookingCancelledByEmail_(booking)) { registered++; continue; } // cancelled -> handled
         // Confirmations INSERT only. Once the row exists, management edits
         // are authoritative; audits re-reading this email will not revert
         // them. Changes flow in through modification emails only.
         upsertActiveBooking_(booking, false);
+        registered++;
       }
 
-      // Parsed OK -> mark considered. Confirm label itself is left in
+      if (!registered) {
+        if (!RNR_SKIP_PROCESSED_) {
+          logError_('Confirmation NOT registered (no valid booking) — left unprocessed',
+            'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
+        }
+        continue;   // do NOT mark Processed — the label would be a lie
+      }
+
+      // Registered -> Processed is now truthful. The confirm label stays in
       // place; it only changes on cancel or done.
       finalizeThreadProcessed_(thread);
 
@@ -1229,6 +1247,87 @@ function processConfirmationLabel_(labelName, source) {
       logError_('processConfirmationLabel_ ' + source, e, labelName);
     }
   }
+}
+
+
+/** Normalised booking ids currently on the active language tabs. */
+function activeBookingIdSet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const set = {};
+  activeSheetNames_().forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh || sh.getLastRow() < 2) return;
+    sh.getRange(2, 8, sh.getLastRow() - 1, 1).getValues().forEach(r => {
+      const id = normalizeId_(r[0]); if (id) set[id] = true;
+    });
+  });
+  return set;
+}
+
+/**
+ * SAFETY NET (audits only): guarantee the booking list holds EVERY confirmed,
+ * upcoming, non-cancelled booking — so "Processed" can never hide a booking
+ * that failed to land. Re-reads confirmation threads (including ones already
+ * marked Processed) in permissive 'any' mode, which bypasses the confirm/modify
+ * classification that can drop a confirmation sharing a thread with a
+ * modification (the GYGN…/S779080 case). Any valid booking missing from the
+ * list is re-inserted and logged as RECOVERED, so it appears in the portal.
+ */
+function reconcileConfirmationsToBookingList_() {
+  const activeIds = activeBookingIdSet_();
+  let recovered = 0;
+
+  sourceConfigs_().forEach(cfg => {
+    if (!cfg.confirm || !runHasTimeLeft_()) return;
+    let label;
+    try { label = GmailApp.getUserLabelByName(cfg.confirm); } catch (e) { return; }
+    if (!label) return;
+
+    let threads = [];
+    try { threads = label.getThreads(0, RNR.MAX_THREADS_AUDIT) || []; } catch (e) { return; }
+
+    threads.forEach(thread => {
+      if (!runHasTimeLeft_()) return;
+      try {
+        const bookings = uniqueBookings_(parseThread_(thread, cfg.source, 'any'));
+        bookings.forEach(bk => {
+          const nb = normalizeBooking_(bk);
+          if (!isValidBooking_(nb)) return;              // a modification line etc. — no full booking
+          if (nb.isCancellation) return;
+          if (isCompleted_(nb)) return;                  // already ran; lives in Done / Completed Log
+          if (isBookingCancelledByEmail_(nb)) return;    // legitimately cancelled — don't resurrect
+          const id = normalizeId_(nb.bookingId);
+          if (!id || activeIds[id]) return;              // already on the list
+          upsertActiveBooking_(nb, false);
+          activeIds[id] = true;
+          recovered++;
+          logError_('RECOVERED a confirmed booking that was missing from the list',
+            nb.bookingId + '  ' + nb.name + '  ' + dateKey_(nb.date) + ' ' + normalizeTime_(nb.time),
+            cfg.confirm);
+        });
+      } catch (e) {
+        logError_('reconcileConfirmationsToBookingList_ ' + cfg.source, e, cfg.confirm);
+      }
+    });
+  });
+
+  if (recovered) console.log('Reconcile recovered ' + recovered + ' missing booking(s).');
+  return recovered;
+}
+
+/**
+ * RUN THIS NOW (from the editor) to recover any confirmed booking that is
+ * missing from the list, without waiting for the twice-daily audit. Reports how
+ * many it recovered; details land in the Errors tab as "RECOVERED …".
+ */
+function recoverMissingBookings() {
+  RNR_RUN_STARTED_AT_ = Date.now();
+  resetRunCaches_();
+  const n = reconcileConfirmationsToBookingList_();
+  const msg = n ? ('Recovered ' + n + ' missing booking(s) — see the Errors tab and your language tabs.')
+                : 'No missing bookings found — every confirmed upcoming booking is already on the list.';
+  console.log(msg);
+  return msg;
 }
 
 
