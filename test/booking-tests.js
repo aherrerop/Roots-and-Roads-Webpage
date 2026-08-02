@@ -200,6 +200,100 @@ const _act=mvEn.getDataRange().getDisplayValues().map(r=>r[0]);
 check('the manual past row was removed from the active tab', _act.indexOf('Kleiton Reis')===-1, _act);
 check('the upcoming tour stays active', _act.indexOf('Future Guest')!==-1, _act);
 
+console.log('--- REAL emails (captured from the live inbox) parse correctly ---');
+// Airbnb experience confirmation — exact fields from a real "booked your
+// experience" email (guest first name only; the parser needs no more).
+const airbnbReal = [
+  'Esteban booked your experience for July 7',
+  'Send them a message to confirm all the details.',
+  'Esteban', 'Identity verified · 1 review', 'Bogotá, Colombia',
+  'Barcelona Walking Tour: Gaudí, Modernism, & Gothic', 'Hosted by Albert',
+  'Date and time', 'Tue, July 7, 2026 · 11:00 AM – 2:00 PM CET',
+  'Guests', '2 adults',
+  'Confirmation code', 'TAFPNM3A',
+  '€15.00 x 2 guests', '€30.00', '-€6.00', '-€5.81', 'Total (EUR)', '€18.19'
+].join('\n');
+const ab = parseAirbnbMessage_(makeFakeMsg_('Fwd: Confirmed: Esteban booked your experience for July 7', airbnbReal), 'confirm');
+check('Airbnb real: parsed + valid', !!ab && isValidBooking_(ab), ab);
+check('Airbnb real: name Esteban',           ab && ab.name==='Esteban', ab && ab.name);
+check('Airbnb real: date 2026-07-07',        ab && dateKey_(ab.date)==='2026-07-07', ab && (ab.date&&dateKey_(ab.date)));
+check('Airbnb real: time 11:00 AM',          ab && ab.time==='11:00 AM', ab && ab.time);
+check('Airbnb real: 2 adults',               ab && ab.guests===2, ab && ab.guests);
+check('Airbnb real: net income €18.19',      ab && Math.abs(ab.income-18.19)<0.001, ab && ab.income);
+check('Airbnb real: confirmation code',      ab && ab.bookingId==='TAFPNM3A', ab && ab.bookingId);
+
+// GetYourGuide ITALIAN confirmation — exact fields from a real GYG email
+// (as htmlToText_ renders it): tests language routing + the labelled-date fix.
+const gygItalReal = [
+  '¡Hola! Buenas noticias.', 'Se ha reservado tu producto',
+  'Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town', 'Tour en italiano',
+  'Número de referencia', 'GYG7VKRVHNN2',
+  'Fecha', 'December 24, 2026 5:00 PM',
+  'Número de participantes', '1 x Child (Edad 0 - 13)', '3 x Adults (Edad 14 - 99)',
+  'Cliente principal', 'Oujia Wu', 'customer-b34m5e3nb7n25iji@reply.getyourguide.com',
+  'Teléfono: +393397905338', 'Idioma: Italian',
+  'Idioma del tour', 'Italiano (Live tour guide)',
+  'Precio', '61,00 €'
+].join('\n');
+const gg = parseGygMessage_(makeFakeMsg_('Booking - S779080 - GYG7VKRVHNN2', gygItalReal), 'confirm');
+check('GYG real IT: parsed + valid',         !!gg && isValidBooking_(gg), gg);
+check('GYG real IT: booking id',             gg && gg.bookingId==='GYG7VKRVHNN2', gg && gg.bookingId);
+check('GYG real IT: name Oujia Wu',          gg && gg.name==='Oujia Wu', gg && gg.name);
+check('GYG real IT: language Italian',       gg && gg.language==='Italian', gg && gg.language);
+check('GYG real IT: language is NOT flagged uncertain', gg && gg.languageUncertain===false, gg && gg.languageUncertain);
+check('GYG real IT: date 2026-12-24 (labelled Fecha)', gg && dateKey_(gg.date)==='2026-12-24', gg && (gg.date&&dateKey_(gg.date)));
+check('GYG real IT: time 5:00 PM',           gg && gg.time==='5:00 PM', gg && gg.time);
+check('GYG real IT: 3 adults',               gg && gg.guests===3, gg && gg.guests);
+check('GYG real IT: routes to Italian Tours', gg && languageToSheet_(gg.language)==='Italian Tours', null);
+
+// Viator confirmation — exact fields from a real "New Booking" email. The tour
+// TIME comes from the tour grade ("English Tour 17:00"), not an explicit clock.
+const viatorReal = [
+  'No action is required. This booking is confirmed.', 'Booking Confirmation',
+  'You have a new reservation for Barcelona Walking Tour: Sagrada Familia, Gaudi and Gothic Quarter.',
+  'Booking Details',
+  'Booking Reference: BR-1430762545',
+  'Tour Name: Barcelona Walking Tour: Sagrada Familia, Gaudi and Gothic Quarter',
+  'Travel Date: Fri, Sep 11, 2026',
+  'Lead Traveler Name: Ruben Demen',
+  'Traveler Names: Ruben Demen, Passenger Two',
+  'Travelers: 2 Adults',
+  'Product Code: 5631527P3', 'Tour Grade: English Tour 17:00', 'Tour Grade Code: TG4~17:00',
+  'Tour Language: English - Guide', 'Net Rate: EUR €23,04',
+  'Phone: (Alternate Phone)US+1 2817482866'
+].join('\n');
+const vi = parseViatorMessage_(makeFakeMsg_('New Booking for Fri, Sep 11, 2026 (#BR-1430762545)', viatorReal), 'confirm');
+check('Viator real: parsed + valid',         !!vi && isValidBooking_(vi), vi);
+check('Viator real: booking id',             vi && vi.bookingId==='BR-1430762545', vi && vi.bookingId);
+check('Viator real: name Ruben Demen',       vi && vi.name==='Ruben Demen', vi && vi.name);
+check('Viator real: date 2026-09-11',        vi && dateKey_(vi.date)==='2026-09-11', vi && (vi.date&&dateKey_(vi.date)));
+check('Viator real: time 5:00 PM (from tour grade 17:00)', vi && vi.time==='5:00 PM', vi && vi.time);
+check('Viator real: 2 adults',               vi && vi.guests===2, vi && vi.guests);
+check('Viator real: net income €23.04',      vi && Math.abs(vi.income-23.04)<0.001, vi && vi.income);
+check('Viator real: language English',       vi && vi.language==='English', vi && vi.language);
+
+// Guruwalk confirmation — real "1 adult, 1 child" German booking. This caught a
+// real bug: the child count used to be dropped (only the first number was read).
+const guruReal = [
+  'Hi Roots & roads,', 'You have a new booking on a Tour',
+  'Congratulations, you have a confirmed booking on your guruwalk:',
+  'Barcelona Highlights Free Tour: Sagrada Família, Passeig de Gràcia & Gothic Quarter',
+  'Booking details:',
+  'Walker: Yuliya', 'Booking code: BAR12477290', 'Phone +49 17661529180',
+  'Attendees: 1 adult, 1 child', 'Language: German',
+  'Date: Friday, 7 Aug 2026', 'Time: 10:00'
+].join('\n');
+const gw = parseGuruwalkMessage_(makeFakeMsg_('Confirmed booking 12477290 on your tour', guruReal), 'confirm')[0];
+check('Guruwalk real: parsed + valid',        !!gw && isValidBooking_(gw), gw);
+check('Guruwalk real: booking code',          gw && gw.bookingId==='BAR12477290', gw && gw.bookingId);
+check('Guruwalk real: name Yuliya',           gw && gw.name==='Yuliya', gw && gw.name);
+check('Guruwalk real: 1 adult',               gw && gw.guests===1, gw && gw.guests);
+check('Guruwalk real: 1 CHILD (was dropped before)', gw && gw.children===1, gw && gw.children);
+check('Guruwalk real: language German',       gw && gw.language==='German', gw && gw.language);
+check('Guruwalk real: routes to German Tours', gw && languageToSheet_(gw.language)==='German Tours', null);
+check('Guruwalk real: date 2026-08-07',       gw && dateKey_(gw.date)==='2026-08-07', gw && (gw.date&&dateKey_(gw.date)));
+check('Guruwalk real: time 10:00 AM',         gw && gw.time==='10:00 AM', gw && gw.time);
+
 console.log('--- Deduplication: different ids are DIFFERENT bookings (never merged) ---');
 const _b1=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGAAA1',name:'Jon Doe',phone:'+34600',date:'2027-08-04',time:'11:00 AM'});
 const _b2=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGBBB2',name:'Jon Doe',phone:'+34600',date:'2027-08-04',time:'11:00 AM'});

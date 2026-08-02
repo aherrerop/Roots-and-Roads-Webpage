@@ -3445,12 +3445,22 @@ function parseGuruwalkBlocks_(text) {
       /Telephone\s*:?\s*([+\d][+\d\s().-]*)/i
     ]);
 
-    const guestsText = extractFirst_(block, [
-      /Attendees:\s*(\d+)/i,
-      /People:\s*(\d+)/i,
-      /Guests:\s*(\d+)/i,
-      /Participants:\s*(\d+)/i
+    // Attendees can break the party down — "1 adult, 1 child" — so parse each
+    // group, not just the first number (that dropped the children entirely).
+    const attLine = extractFirst_(block, [
+      /Attendees:\s*([^\n\r]+)/i,
+      /People:\s*([^\n\r]+)/i,
+      /Guests:\s*([^\n\r]+)/i,
+      /Participants:\s*([^\n\r]+)/i
     ]);
+    const gwAdultsM = attLine.match(/(\d+)\s*adults?/i);
+    const gwChildM  = attLine.match(/(\d+)\s*(?:child(?:ren)?|kids?|ni[ñn]os?)/i);
+    const gwInfM    = attLine.match(/(\d+)\s*(?:infants?|beb[eé]s?)/i);
+    const gwChildren = gwChildM ? Number(gwChildM[1]) : 0;
+    const gwInfants  = gwInfM ? Number(gwInfM[1]) : 0;
+    let gwAdults = gwAdultsM ? Number(gwAdultsM[1]) : 0;
+    if (!gwAdults) { const t = attLine.match(/(\d+)/); gwAdults = t ? Number(t[1]) : 0; }  // legacy "Attendees: 3"
+    const guestsText = attLine ? String(gwAdults || '') : '';
 
     const languageText = extractFirst_(block, [/Language:\s*([^\n\r]+)/i]);
 
@@ -3468,10 +3478,14 @@ function parseGuruwalkBlocks_(text) {
       bookingId,
       name: cleanText_(name),
       phone: cleanPhone_(rawPhone),
-      guests: guestsText ? Number(guestsText) : 1,
+      guests: (gwAdults || (guestsText ? Number(guestsText) : 0)) || 1,   // ADULTS (paying)
+      children: gwChildren,
+      infants: gwInfants,
       date: normalizeDate_(dateText),
       time: normalizeTime_(timeText || RNR.DEFAULT_TIME),
       language: normalizeLanguage_(languageText),
+      languageUncertain: !languageRecognised_(languageText),
+      notes: composeNotes_(false, gwChildren, gwInfants, ''),
       hasExplicitGuests: Boolean(guestsText),
       hasExplicitDate: Boolean(dateText),
       hasExplicitTime: Boolean(timeText),
