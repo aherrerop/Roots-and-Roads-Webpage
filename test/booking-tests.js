@@ -84,6 +84,47 @@ check('cancellation thread is owned elsewhere too',
 check('a plain confirmation is NOT treated as modify/cancel (still logged if it fails)',
   threadIsModifyOrCancel_(mkThread('Booking - S779080 - GYG996ZAK7R7','Se ha reservado tu producto'))===false, null);
 
+console.log('--- A confirmation sharing a thread with a modification is NOT lost ---');
+// Mirrors the real case: order S779080 has a confirmation (GYGN6BZYAAHH) and a
+// modification for a DIFFERENT item (GYGMX4FWXAZY) threaded together.
+const _next=(o)=>{const d=new Date();d.setDate(d.getDate()+o);return (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();};
+const confBody=[
+ '¡Hola! Buenas noticias.','Se ha reservado tu producto',
+ 'Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town','Tour en inglés',
+ 'Número de referencia GYGN6BZYAAHH',
+ 'Fecha August 4, 2027 10:00 AM',
+ 'Número de participantes','5 x Adults (Edad 14 - 99)',
+ 'Cliente principal','Vijay Patel customer-pecme5uoyscbtib4@reply.getyourguide.com Teléfono: +447961286234 Idioma: English',
+ 'Idioma del tour','Inglés (Live tour guide)'
+].join('\n');
+const confMsg=makeFakeMsg_('Booking - S779080 - GYGN6BZYAAHH', confBody);
+const modMsg =makeFakeMsg_('Booking detail change: - S779080 - GYGMX4FWXAZY','Fecha August 6, 2027 10:00 AM');
+const mixedThread={getMessages:()=>[confMsg,modMsg],getFirstMessageSubject:()=>'Booking - S779080 - GYGN6BZYAAHH'};
+const confParsed=uniqueBookings_(parseThread_(mixedThread, RNR.SOURCE.GYG, 'confirm'));
+check('the confirmation still parses in confirm mode (modification does not swallow it)',
+  confParsed.length===1 && confParsed[0].bookingId==='GYGN6BZYAAHH', confParsed.map(b=>b.bookingId));
+check('the parsed confirmation is a VALID, registerable booking',
+  confParsed.length===1 && isValidBooking_(confParsed[0]), confParsed[0]);
+check('it is the right guest (Vijay Patel) and 5 adults',
+  confParsed.length===1 && confParsed[0].name==='Vijay Patel' && confParsed[0].guests===5, confParsed[0]);
+// The reconcile pass parses in 'any' mode (bypasses classification) — it must
+// still surface the confirmation as a recoverable booking.
+const anyValid=uniqueBookings_(parseThread_(mixedThread, RNR.SOURCE.GYG, 'any'))
+  .filter(b=>isValidBooking_(b) && !b.isCancellation);
+check('reconcile (any mode) surfaces the confirmation for recovery',
+  anyValid.some(b=>b.bookingId==='GYGN6BZYAAHH'), anyValid.map(b=>b.bookingId));
+
+console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
+const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;
+const idEn=idSS.insertSheet('English Tours');
+idEn.getRange(1,1,3,9).setValues([
+ ['Name','Phone','Number of Guests','Tour date','Time','Source','Income','Booking ID','Notes'],
+ ['A','+34',2,'2027-08-04','11:00 AM','GetYourGuide',0,'GYGAAA111',''],
+ ['B','+34',2,'2027-08-05','11:00 AM','Viator',0,'BR-222','']]);
+const idset=activeBookingIdSet_();
+check('active id set contains existing booking ids', idset['GYGAAA111']===true && idset['BR-222']===true, Object.keys(idset));
+check('a missing id is correctly absent', !idset['GYGN6BZYAAHH'], Object.keys(idset));
+
 console.log('--- Booking rows stay active until the tour DAY is over (portal keeps reservations) ---');
 const _today=new Date(); _today.setHours(9,0,0,0);
 const _yest=new Date(); _yest.setDate(_yest.getDate()-1); _yest.setHours(9,0,0,0);
