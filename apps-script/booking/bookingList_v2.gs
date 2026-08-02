@@ -1330,6 +1330,45 @@ function recoverMissingBookings() {
   return msg;
 }
 
+/**
+ * DIAGNOSE one booking id: prints how each of its emails parses, so a booking
+ * that won't land can be pinned to the exact field. Run from the editor:
+ *   diagnoseBooking('GYGN6BZYAAHH')
+ * then read the Execution log.
+ */
+function diagnoseBooking(idInput) {
+  const id = normalizeId_(idInput || 'GYGN6BZYAAHH');
+  console.log('Diagnosing booking id: ' + id);
+  let found = false;
+  sourceConfigs_().forEach(cfg => {
+    ['confirm', 'modify', 'cancel', 'done'].forEach(k => {
+      const labelName = cfg[k]; if (!labelName) return;
+      let label; try { label = GmailApp.getUserLabelByName(labelName); } catch (e) { return; }
+      if (!label) return;
+      let threads = []; try { threads = label.getThreads(0, RNR.MAX_THREADS_AUDIT) || []; } catch (e) { return; }
+      threads.forEach(thread => {
+        const subj = thread.getFirstMessageSubject() || '';
+        const hit = normalizeId_(subj).indexOf(id) !== -1 ||
+          thread.getMessages().some(m => normalizeId_(getBestMessageText_(m)).indexOf(id) !== -1);
+        if (!hit) return;
+        found = true;
+        console.log('--- under ' + labelName + ' | subject: ' + subj);
+        thread.getMessages().forEach((m, mi) => {
+          let b; try { b = parseThread_({ getMessages: () => [m] }, cfg.source, 'any')[0]; } catch (e) { b = null; }
+          if (!b) { console.log('  msg#' + mi + ': parsed -> null (subject: ' + (m.getSubject() || '') + ')'); return; }
+          console.log('  msg#' + mi +
+            ': id=' + b.bookingId + ' name=' + JSON.stringify(b.name) +
+            ' date=' + (b.date ? dateKey_(b.date) : '(NONE)') + ' time=' + b.time +
+            ' lang=' + b.language + ' guests=' + b.guests +
+            ' | valid=' + isValidBooking_(b) + ' completed=' + isCompleted_(b) +
+            ' cancelledByEmail=' + isBookingCancelledByEmail_(b));
+        });
+      });
+    });
+  });
+  if (!found) console.log('That id is under NO booking label in the scanned window (check the Gmail filter).');
+}
+
 
 /******************************************************
  * 8. CANCELLATIONS
@@ -3433,9 +3472,14 @@ function parseGygMessage_(msg, mode) {
 
   const f = gygFields_(text);
 
-  // Confirmations carry one date; if several are present (modifications) the
-  // first is the current/new one.
-  const dateTok = f.dateTokens[0] || valueAfterLabel_(text, [/^Fecha\b/i, /^Date\b/i]);
+  // The TOUR date is the one labelled "Fecha" / "Date" (NOT "Fecha de la
+  // reserva" = when the booking was made). A GYG email contains several dates;
+  // taking the first one in the text could pick an earlier date and make an
+  // upcoming tour look already completed — so it gets Processed but never lands
+  // on the list. Prefer the labelled tour date; fall back to the first token.
+  const labeledDate = valueAfterLabel_(text, [/^Fecha\b(?!\s+de\b)/i, /^Date\b(?!\s+of\b)/i, /^Tour date\b/i]);
+  const dateTok = gygDateTokens_(labeledDate)[0] || f.dateTokens[0] ||
+                  valueAfterLabel_(text, [/^Fecha\b/i, /^Date\b/i]);
   const time = extractGygTime_(dateTok);
   const income = gygNetIncome_(f.price);
   const pp = f.participants || { adults: f.guests || 1, children: 0, infants: 0 };
