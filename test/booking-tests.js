@@ -114,6 +114,24 @@ const anyValid=uniqueBookings_(parseThread_(mixedThread, RNR.SOURCE.GYG, 'any'))
 check('reconcile (any mode) surfaces the confirmation for recovery',
   anyValid.some(b=>b.bookingId==='GYGN6BZYAAHH'), anyValid.map(b=>b.bookingId));
 
+console.log('--- GYG: the TOUR date (labelled Fecha) wins over an earlier stray date ---');
+// An email carrying an earlier "booking made" date must not make an upcoming
+// tour look completed (which is what marked it Processed but never listed it).
+const strayBody=[
+ 'Reserva realizada el August 1, 2026',      // earlier, past date (booking made)
+ 'Número de referencia GYGSTRAY99',
+ 'Fecha August 4, 2027 10:00 AM',            // the real, future tour date
+ 'Número de participantes','3 x Adults (Edad 14 - 99)',
+ 'Cliente principal','Test Guest Teléfono: +34600000000 Idioma: English',
+ 'Idioma del tour','Inglés (Live tour guide)'
+].join('\n');
+const strayB=parseGygMessage_(makeFakeMsg_('Booking - S999 - GYGSTRAY99', strayBody),'confirm');
+check('GYG picks the labelled Fecha (Aug 4 2027), not the earlier Aug 1 date',
+  strayB && dateKey_(strayB.date)==='2027-08-04', strayB && (strayB.date&&dateKey_(strayB.date)));
+check('so the upcoming tour is NOT wrongly treated as completed',
+  strayB && isCompleted_(strayB)===false, strayB && isCompleted_(strayB));
+check('it is still a valid, registerable booking', strayB && isValidBooking_(strayB), strayB);
+
 console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
 const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;
 const idEn=idSS.insertSheet('English Tours');
