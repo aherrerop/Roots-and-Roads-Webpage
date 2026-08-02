@@ -327,6 +327,12 @@ const _kept=_closeFilter([_s1,_s2],_closed,_bbk);
 check('closed shift with NO booking stays hidden', !_kept.some(s=>s.dateKey==='2026-07-30'), _kept);
 check('closed shift WITH a booking comes back', _kept.some(s=>s.dateKey==='2026-07-31'), _kept);
 
+console.log('--- Token signing: secret resolves, tokens round-trip, tampering fails ---');
+check('tokenSecret_ falls back to the constant when no Script Property is set', tokenSecret_() === PORTAL.TOKEN_SECRET, tokenSecret_());
+check('a freshly minted token validates back to its guide', requireToken_(makeToken_('Dana Ortiz')) === 'Dana Ortiz', requireToken_(makeToken_('Dana Ortiz')));
+check('a tampered token is rejected', requireToken_(makeToken_('Dana Ortiz').replace(/.$/, m => m === 'A' ? 'B' : 'A')) === null, 'should reject');
+check('a malformed token is rejected', requireToken_('garbage') === null, 'should reject');
+
 console.log('--- Portal timing report: percentiles + per-action stats ---');
 check('percentile_ p50 (nearest-rank)', percentile_([10,20,30,40,50],50)===30, percentile_([10,20,30,40,50],50));
 check('percentile_ p95', percentile_([10,20,30,40,50],95)===50, percentile_([10,20,30,40,50],95));
