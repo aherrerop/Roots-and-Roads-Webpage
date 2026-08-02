@@ -475,6 +475,10 @@ function runBookingCore_(skipProcessed) {
     if (runHasTimeLeft_()) reconcileCancelledThreadLabels_();
     if (runHasTimeLeft_()) removeActiveBookingsThatHaveCancellationEmails_();
     if (runHasTimeLeft_()) processCancellations_();
+    // Audit catch-up: guarantee no cancelled booking still has its confirmation
+    // sitting in the inbox (covers confirmations that were Processed before the
+    // cancellation arrived, which the frequent-run sweeps cannot see).
+    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) archiveAllCancelledConfirmations_();
 
     // 4. Finished tours -> Done. Sheet rows move every run (cheap, Sheets
     //    only). The Gmail side (archive + relabel to Done) runs every run too
@@ -1406,6 +1410,11 @@ function processCancellationLabel_(labelName, source) {
         removeActiveBooking_(cancelled);
         if (cancelled.bookingId) {
           removeActiveBookingBySourceAndId_(source, cancelled.bookingId);
+          // The tour will never run: pull its confirmation email out of the
+          // inbox too (targeted search, so it works even if that confirmation
+          // was already marked Processed). This runs the moment the
+          // cancellation is first seen — no wait for the twice-daily audit.
+          archiveConfirmationThreadsById_(source, cancelled.bookingId);
         }
       }
 
@@ -1678,6 +1687,90 @@ function moveMatchingThreadsToCancellationById_(source, bookingId) {
     stripSourceLabelsExcept_(thread, cfg, [cfg.cancel]);
     finalizeThreadCancelled_(thread);
   });
+}
+
+
+/**
+ * Pull the CONFIRMATION (and modification) email of a cancelled booking OUT of
+ * the inbox — relabel it to Cancellations, mark Processed, archive. Uses a
+ * TARGETED Gmail search by id, which finds the thread even when it is already
+ * marked Processed (the thread indexes and the frequent-run sweeps deliberately
+ * skip Processed threads, which is exactly why a cancelled booking's
+ * confirmation used to linger in the inbox forever). Works on every run.
+ */
+function archiveConfirmationThreadsById_(source, bookingId) {
+  const cfg = sourceConfigs_().find(c => c.source === source);
+  if (!cfg) return 0;
+  const id = normalizeId_(bookingId);
+  if (!id || isReinstated_(source, id)) return 0;
+
+  let archived = 0;
+  [cfg.confirm, cfg.modify].filter(Boolean).forEach(labelName => {
+    let threads = [];
+    try { threads = GmailApp.search(searchTokenForLabel_(labelName) + ' "' + bookingId + '"', 0, 5) || []; }
+    catch (e) { return; }
+    threads.forEach(thread => {
+      try {
+        const ids = new Set(parseThread_(thread, source, 'any')
+          .map(b => normalizeId_(b.bookingId)).filter(Boolean));
+        const tid = normalizeId_(extractBookingIdFromThread_(thread, source));
+        if (tid) ids.add(tid);
+        if (!ids.has(id)) return;                 // guard against a fuzzy search hit
+        stripSourceLabelsExcept_(thread, cfg, [cfg.cancel]);
+        finalizeThreadCancelled_(thread);
+        archived++;
+      } catch (e) { /* skip a bad thread */ }
+    });
+  });
+  return archived;
+}
+
+
+/**
+ * Catch-up sweep: for every cancelled booking, make sure its confirmation email
+ * has left the inbox. Runs on audits and can be run manually
+ * (cleanupCancelledBookings). Scans ALL cancellation threads (including
+ * Processed ones) to build the cancelled-id set, then archives each id's
+ * confirmation via the targeted search above.
+ */
+function archiveAllCancelledConfirmations_() {
+  let total = 0;
+  cancellationConfigs_().forEach(cfg => {
+    if (!runHasTimeLeft_()) return;
+    let label; try { label = GmailApp.getUserLabelByName(cfg.cancel); } catch (e) { return; }
+    if (!label) return;
+    let threads = []; try { threads = label.getThreads(0, RNR.MAX_THREADS_AUDIT) || []; } catch (e) { return; }
+
+    const ids = new Set();
+    threads.forEach(thread => {
+      try {
+        cancellationBookingsFromThread_(thread, cfg.source).forEach(b => {
+          const id = normalizeId_(b.bookingId); if (id) ids.add(id);
+        });
+        const tid = normalizeId_(extractBookingIdFromThread_(thread, cfg.source));
+        if (tid) ids.add(tid);
+      } catch (e) { /* skip */ }
+    });
+
+    ids.forEach(id => { if (runHasTimeLeft_()) total += archiveConfirmationThreadsById_(cfg.source, id); });
+  });
+  if (total) console.log('Archived ' + total + ' confirmation/modification email(s) for cancelled bookings.');
+  return total;
+}
+
+
+/**
+ * RUN THIS NOW (from the editor) to pull every cancelled booking's confirmation
+ * email out of the inbox immediately, without waiting for the twice-daily audit.
+ */
+function cleanupCancelledBookings() {
+  RNR_RUN_STARTED_AT_ = Date.now();
+  resetRunCaches_();
+  const n = archiveAllCancelledConfirmations_();
+  const msg = n ? ('Archived ' + n + ' confirmation email(s) for cancelled bookings.')
+                : 'Nothing to clean up — no cancelled booking still has its confirmation in the inbox.';
+  console.log(msg);
+  return msg;
 }
 
 
