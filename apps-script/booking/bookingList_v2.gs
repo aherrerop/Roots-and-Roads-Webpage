@@ -1970,10 +1970,14 @@ function processGygModificationsLabel_() {
         findConfirmationBookingBySourceAndId_(RNR.SOURCE.GYG, id) ||
         findGygBookingInLabelById_(RNR.LABELS.GYG_DONE, id);
 
-      // Choose the NEW date. The email holds both new and old (struck) dates;
-      // prefer the one that differs from the booking's current date, else first.
-      let dateTok = f.dateTokens[0] || '';
-      if (base && f.dateTokens.length > 1) {
+      // Choose the NEW date. Prefer the labelled tour date (same rule as the
+      // confirmation parser, so a stray earlier date can't be mistaken for the
+      // tour date). Otherwise the email holds both new and old (struck) dates —
+      // take the one that differs from the booking's current date, else first.
+      const labeledMod = gygDateTokens_(valueAfterLabel_(item.text,
+        [/^Fecha\b(?!\s+de\b)/i, /^Date\b(?!\s+of\b)/i, /^Tour date\b/i]))[0] || '';
+      let dateTok = labeledMod || f.dateTokens[0] || '';
+      if (!labeledMod && base && f.dateTokens.length > 1) {
         const changed = f.dateTokens.find(t => dateKey_(normalizeDate_(t)) !== base.dateKey);
         if (changed) dateTok = changed;
       }
