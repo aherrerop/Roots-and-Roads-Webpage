@@ -874,6 +874,10 @@ function safeMarkRead_(thread) {
   try { if (thread) thread.markRead(); } catch (e) { /* ignore */ }
 }
 
+function safeMarkUnread_(thread) {
+  try { if (thread) thread.markUnread(); } catch (e) { /* ignore */ }
+}
+
 function safeArchive_(thread) {
   try { if (thread) thread.moveToArchive(); } catch (e) { /* ignore */ }
 }
@@ -1246,6 +1250,16 @@ function processConfirmationLabel_(labelName, source) {
       // place; it only changes on cancel or done.
       finalizeThreadProcessed_(thread);
 
+      // LANGUAGE SAFETY: if a booking's stated language matched nothing we run,
+      // it was defaulted to English and may be on the wrong tour. Keep the email
+      // UNREAD in the inbox and log it, so management notices and can move the
+      // guest to the right language from the portal.
+      if (bookings.some(b => b.languageUncertain)) {
+        safeMarkUnread_(thread);
+        logError_('Language could not be determined — defaulted to English, please verify',
+          'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
+      }
+
     } catch (e) {
       // Log-and-continue: never let one thread kill the whole label pass.
       logError_('processConfirmationLabel_ ' + source, e, labelName);
@@ -1400,14 +1414,21 @@ function processCancellationLabel_(labelName, source) {
     try {
       const cancellations = cancellationBookingsFromThread_(thread, source);
 
+      // PROCESSED MUST MEAN PROCESSED: only finalise the cancellation once we
+      // have actually identified the booking it cancels (by id or name) and
+      // removed it. A cancellation email we cannot pin to a booking is left
+      // unprocessed and logged, so it is visible and retried — never hidden
+      // behind a green label.
+      let acted = 0;
       for (const cancelled of cancellations) {
         if (!cancelled.bookingId && !cancelled.name) continue;
 
         // A booking rebooked THIS run (GYG "reprogramada" reuses the same
         // code) must survive a stale cancellation email for that code.
-        if (isReinstated_(source, cancelled.bookingId)) continue;
+        if (isReinstated_(source, cancelled.bookingId)) { acted++; continue; }
 
         removeActiveBooking_(cancelled);
+        acted++;
         if (cancelled.bookingId) {
           removeActiveBookingBySourceAndId_(source, cancelled.bookingId);
           // The tour will never run: pull its confirmation email out of the
@@ -1418,14 +1439,17 @@ function processCancellationLabel_(labelName, source) {
         }
       }
 
-      // Even if the thread carried no usable cancellation signal, finalise
-      // it: a cancellation-labelled thread should not create manual work.
-      // Cancelled => leaves the inbox now (that tour will never run).
-      // NOTE: this only finalises the CANCELLATION thread itself (mark
-      // Processed + archive). Relabelling the matching Confirm/Modify
-      // threads to Cancel happens later in reconcileCancelledThreadLabels_,
-      // after modifications have run, so a same-run GYG reinstatement is
-      // already known and can't be wrongly cancelled.
+      if (!acted) {
+        if (!RNR_SKIP_PROCESSED_) {
+          logError_('Cancellation NOT applied (no booking identified) — left unprocessed',
+            'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
+        }
+        continue;   // do NOT mark Processed — we cannot say what was cancelled
+      }
+
+      // Cancelled => the thread leaves the inbox now (that tour will never run).
+      // Relabelling the matching Confirm/Modify threads to Cancel happens later
+      // in reconcileCancelledThreadLabels_, after modifications have run.
       finalizeThreadCancelled_(thread);
 
     } catch (e) {
@@ -1959,6 +1983,7 @@ function processGygModificationsLabel_() {
   });
 
   latest.forEach((item, id) => {
+    let handled = false;   // Processed must mean the modification was applied
     try {
       const f = gygFields_(item.text);
 
@@ -2008,8 +2033,8 @@ function processGygModificationsLabel_() {
         hasExplicitIncome: true
       });
 
-      if (!isValidBooking_(finalBooking)) return;   // no existing row + no name -> skip
-      if (isCompleted_(finalBooking)) return;
+      if (!isValidBooking_(finalBooking)) return;   // no existing row + no name -> NOT applied
+      if (isCompleted_(finalBooking)) { handled = true; return; }  // tour already ran -> nothing to change
 
       // A rescheduled booking is active. Neutralise any stale cancellation for
       // this code for the rest of the run.
@@ -2017,17 +2042,27 @@ function processGygModificationsLabel_() {
 
       upsertActiveBooking_(finalBooking);
       moveMatchingConfirmationOutOfInbox_(finalBooking);
+      handled = true;
     } catch (e) {
       logError_('processGygModificationsLabel_ apply', e, String(id));
     } finally {
       const ts = threadsByCode.get(id);
-      if (ts) ts.forEach(t => finalizeThreadProcessed_(t));
+      if (ts && handled) {
+        ts.forEach(t => finalizeThreadProcessed_(t));
+      } else if (ts && !RNR_SKIP_PROCESSED_) {
+        logError_('GYG modification NOT applied (booking ' + id + ' not resolved) — left unprocessed',
+          'code ' + id, RNR.LABELS.GYG_MODIFY);
+      }
     }
   });
 
-  // Any thread that carried no recognisable booking code still needs to be
-  // considered handled, or it will be re-read every fast run forever.
+  // Threads with NO recognisable booking code carry nothing a modification
+  // could change -> honestly handled (mark Processed so junk is not re-read
+  // forever). Threads that HAD a code were decided (applied or logged) above.
+  const decided = new Set();
+  threadsByCode.forEach(set => set.forEach(t => decided.add(t)));
   threads.forEach(thread => {
+    if (decided.has(thread)) return;
     if (!threadHasProcessedLabel_(thread)) finalizeThreadProcessed_(thread);
   });
 }
@@ -2045,8 +2080,16 @@ function processModificationLabel_(labelName, source) {
     if (!runHasTimeLeft_()) break;
 
     try {
-      processModificationThread_(thread, source);
-      finalizeThreadProcessed_(thread);
+      // PROCESSED MUST MEAN APPLIED: only finalise once the change actually
+      // landed on a booking. A modification we cannot resolve stays unprocessed
+      // and is logged, so it is visible and retried, not hidden.
+      const applied = processModificationThread_(thread, source);
+      if (applied) {
+        finalizeThreadProcessed_(thread);
+      } else if (!RNR_SKIP_PROCESSED_) {
+        logError_('Modification NOT applied (booking not resolved) — left unprocessed',
+          'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
+      }
     } catch (e) {
       logError_('processModificationLabel_ ' + source, e, labelName);
     }
@@ -2056,6 +2099,7 @@ function processModificationLabel_(labelName, source) {
 
 function processModificationThread_(thread, source) {
   const messages = thread.getMessages();
+  let applied = false;
 
   for (const msg of messages) {
     const parsed = parseModificationMessage_(msg, source);
@@ -2063,6 +2107,7 @@ function processModificationThread_(thread, source) {
     if (parsed.oldBooking) {
       removeActiveBooking_(parsed.oldBooking);
       moveMatchingConfirmationOutOfInbox_(parsed.oldBooking);
+      applied = true;
     }
 
     if (parsed.newBooking) {
@@ -2076,9 +2121,11 @@ function processModificationThread_(thread, source) {
           removeActiveBookingBySourceAndId_(completedBooking.source, completedBooking.bookingId);
           moveMatchingThreadsToCancellationById_(completedBooking.source, completedBooking.bookingId);
         }
+        applied = true;
       }
     }
   }
+  return applied;
 }
 
 
@@ -3062,6 +3109,14 @@ function sameBooking_(a, b) {
   // match alone is authoritative even if the name text differs slightly.
   if (sameId && (A.source === RNR.SOURCE.VIATOR || A.source === RNR.SOURCE.GYG)) return true;
 
+  // DIFFERENT ids => DIFFERENT bookings. Never merge two rows that both carry a
+  // platform id when those ids differ, even if the name/phone/date/time line up
+  // (the same guest can book the same slot twice, or two people share a phone).
+  // Merging them would silently drop a real booking.
+  const bothHaveIds = A.bookingId && B.bookingId;
+  if (bothHaveIds && !sameId) return false;
+
+  // Soft match only when at least one side has no id to compare.
   const samePhone = A.phoneKey && B.phoneKey && A.phoneKey === B.phoneKey;
   const sameDate = A.dateKey && B.dateKey && A.dateKey === B.dateKey;
   const sameTime = normalizeTime_(A.time) === normalizeTime_(B.time);
@@ -3525,9 +3580,14 @@ function normalizeAirbnbDate_(dateText, fallbackMsgDate) {
 
   const m = s.match(/^([A-Za-z]+)\s+(\d{1,2})$/);
   if (m) {
-    const y = fallbackMsgDate instanceof Date ? fallbackMsgDate.getFullYear() : new Date().getFullYear();
-    const d = new Date(`${m[1]} ${m[2]}, ${y}`);
-    if (!isNaN(d)) return stripTime_(d);
+    const base = fallbackMsgDate instanceof Date ? fallbackMsgDate : new Date();
+    let d = new Date(`${m[1]} ${m[2]}, ${base.getFullYear()}`);
+    if (!isNaN(d)) {
+      // A tour is on/after the booking email; if a year-less date lands before
+      // it, it belongs to next year (year-boundary safety) — never behind it.
+      if (stripTime_(d) < stripTime_(base)) d = new Date(`${m[1]} ${m[2]}, ${base.getFullYear() + 1}`);
+      if (!isNaN(d)) return stripTime_(d);
+    }
   }
   return null;
 }
@@ -3590,6 +3650,7 @@ function parseGygMessage_(msg, mode) {
     date: normalizeDate_(dateTok),
     time,
     language: f.langRaw ? normalizeLanguage_(f.langRaw) : RNR.LANGUAGE.ENGLISH,
+    languageUncertain: !languageRecognised_(f.langRaw),   // flag if it didn't match a language we run
     source: RNR.SOURCE.GYG,
     income,
     notes: composeNotes_(f.isPrivate, pp.children, pp.infants, ''),
@@ -4065,6 +4126,7 @@ function normalizeBooking_(x) {
     hasExplicitDate: Boolean(x && x.hasExplicitDate),
     hasExplicitTime: Boolean(x && x.hasExplicitTime),
     hasExplicitIncome: Boolean(x && x.hasExplicitIncome),
+    languageUncertain: Boolean(x && x.languageUncertain),  // raw language didn't match any we run
     nameKey: normalizeNameKey_(name),
     phoneKey: cleanPhoneKey_(phone),
     dateKey: dateKey_(date)
@@ -4156,6 +4218,19 @@ function normalizeLanguage_(x) {
   }
   // Genuinely unknown languages default to English (unchanged legacy behaviour).
   return RNR.LANGUAGE.ENGLISH;
+}
+
+/**
+ * True only when the raw language string actually matched a language we run.
+ * An empty string is treated as recognised (mono-language platforms simply omit
+ * it — that is normal). A NON-empty string that matches nothing is the danger
+ * case: it would silently default to English and could go to the wrong tour.
+ */
+function languageRecognised_(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return true;                    // no language stated -> platform default, fine
+  const l = s.toLowerCase();
+  return /spanish|español|espanol|castellano|spanisch|espagnol|german|deutsch|alem[aá]n|alemao|allemand|italian|italiano|italiana|italien|italienisch|french|fran[çc]ais|francese|franc[eé]s|franz[oö]sisch|english|ingl[eé]s|anglais|englisch/.test(l);
 }
 
 

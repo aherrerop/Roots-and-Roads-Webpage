@@ -200,6 +200,22 @@ const _act=mvEn.getDataRange().getDisplayValues().map(r=>r[0]);
 check('the manual past row was removed from the active tab', _act.indexOf('Kleiton Reis')===-1, _act);
 check('the upcoming tour stays active', _act.indexOf('Future Guest')!==-1, _act);
 
+console.log('--- Deduplication: different ids are DIFFERENT bookings (never merged) ---');
+const _b1=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGAAA1',name:'Jon Doe',phone:'+34600',date:'2027-08-04',time:'11:00 AM'});
+const _b2=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGBBB2',name:'Jon Doe',phone:'+34600',date:'2027-08-04',time:'11:00 AM'});
+check('same guest + same slot but DIFFERENT ids -> NOT the same booking', sameBooking_(_b1,_b2)===false, null);
+const _b3=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGAAA1',name:'Jonathan Doe',phone:'+34600',date:'2027-08-04',time:'11:00 AM'});
+check('same GYG id -> same booking even if the name text differs', sameBooking_(_b1,_b3)===true, null);
+const _n1=normalizeBooking_({source:'Free Tour',name:'Ann Lee',phone:'+34611',date:'2027-08-04',time:'11:00 AM'});
+const _n2=normalizeBooking_({source:'Free Tour',name:'Ann Lee',phone:'+34611',date:'2027-08-04',time:'11:00 AM'});
+check('no ids: same name+phone+date+time -> same booking (soft match still works)', sameBooking_(_n1,_n2)===true, null);
+
+console.log('--- Language recognition flag ---');
+check('recognised: Inglés', languageRecognised_('Inglés (Live tour guide)')===true, null);
+check('recognised: empty means platform-default, treated as fine', languageRecognised_('')===true, null);
+check('NOT recognised: Portuguese', languageRecognised_('Portuguese')===false, null);
+check('NOT recognised: gibberish', languageRecognised_('Xyzzy 123')===false, null);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
