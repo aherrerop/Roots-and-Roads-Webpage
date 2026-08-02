@@ -47,6 +47,8 @@ const SUITES = [
 
 // Gmail-side integration suite needs the stateful Gmail mock layered on top.
 const GMAIL_SUITE = [BOOKING, 'gmail-tests.js', 'gmail-mock.js'];
+// Portal end-to-end runs the real apiTours_/apiAssign_/apiSave_ chain.
+const PORTAL_E2E = [CONTROL, 'portal-e2e-tests.js'];
 
 let failed = 0;
 for (const [sources, suite] of SUITES) {
@@ -68,6 +70,15 @@ for (const [sources, suite] of SUITES) {
   const bundle = [path.join(testDir, 'mock.js'), path.join(testDir, gmailMock), ...sources, path.join(testDir, suite)]
     .map(read).join('\n');
   const tmp = path.join(os.tmpdir(), 'rr_gmail.js');
+  fs.writeFileSync(tmp, bundle);
+  try { execFileSync(node, [tmp], { stdio: 'inherit' }); } catch (e) { failed = 1; }
+}
+
+// Portal end-to-end: control sources + the real API chain.
+{
+  const [sources, suite] = PORTAL_E2E;
+  const bundle = [path.join(testDir, 'mock.js'), ...sources, path.join(testDir, suite)].map(read).join('\n');
+  const tmp = path.join(os.tmpdir(), 'rr_portal_e2e.js');
   fs.writeFileSync(tmp, bundle);
   try { execFileSync(node, [tmp], { stdio: 'inherit' }); } catch (e) { failed = 1; }
 }
