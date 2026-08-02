@@ -39,7 +39,9 @@ check('re-save removes even Date-coerced old row for same booking', ids.filter(x
 
 const cks=readGuideCheckins_('Albert');
 check('readGuideCheckins_ finds both check-ins', Object.keys(cks).length===2, cks);
-check('checked-in count read back', cks[Object.keys(cks).find(k=>k.endsWith('GYG1'))]===2, cks);
+const _gyg1=cks[Object.keys(cks).find(k=>k.endsWith('GYG1'))];
+check('checked-in count read back', _gyg1 && _gyg1.n===2, _gyg1);
+check('check-in TIME is read back (HH:mm)', _gyg1 && /^\d{1,2}:\d{2}$/.test(_gyg1.at||''), _gyg1);
 
 /* ============ TEST GROUP 2: GRID round trip (writer -> portal reader) ============ */
 console.log('\n--- Schedule grid round trip ---');

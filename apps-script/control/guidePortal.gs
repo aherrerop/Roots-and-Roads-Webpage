@@ -247,7 +247,8 @@ function apiTours_(p) {
       .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''))
       .map(b => {
         const kk = key + '|' + b.bookingId;
-        const isCk = Object.prototype.hasOwnProperty.call(priorCheckins, kk); // ledger row exists = checked in
+        const ck = priorCheckins[kk];                 // {n, at} if a ledger row exists
+        const isCk = !!ck;
         return {
           bookingId: b.bookingId,
           name: b.name,
@@ -262,8 +263,9 @@ function apiTours_(p) {
           note: String(b.note || ''),
           manualNote: String(b.manualNote || ''),   // editable per-booking note
           checked: isCk || (b.checkedIn != null && Number(b.checkedIn) > 0),
-          checkedIn: isCk ? Number(priorCheckins[kk])
-                          : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0)) // ledger value, or booked default
+          checkedIn: isCk ? Number(ck.n)
+                          : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0)), // ledger value, or booked default
+          checkedAt: isCk ? (ck.at || '') : ''       // when they were checked in ("HH:mm")
         };
       });
 
@@ -346,7 +348,8 @@ function apiTours_(p) {
         .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''))
         .map(b => {
           const kk = key + '|' + b.bookingId;
-          const isCk = Object.prototype.hasOwnProperty.call(ck, kk);
+          const cke = ck[kk];                         // {n, at} if checked in
+          const isCk = !!cke;
           return {
             bookingId: b.bookingId, name: b.name, phone: b.phone, source: b.source, guests: b.guests,
             children: Number(b.children || 0), infants: Number(b.infants || 0),
@@ -355,8 +358,9 @@ function apiTours_(p) {
             note: String(b.note || ''),
             manualNote: String(b.manualNote || ''),
             checked: isCk || (b.checkedIn != null && Number(b.checkedIn) > 0),
-            checkedIn: isCk ? Number(ck[kk])
-                            : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0))
+            checkedIn: isCk ? Number(cke.n)
+                            : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0)),
+            checkedAt: isCk ? (cke.at || '') : ''
           };
         });
       const aid = shift.private ? key + '|P' + (shift.privIndex || 1) : key;
@@ -1394,9 +1398,23 @@ function readGuideCheckins_(name) {
     const language = String(r[3] || '').trim();
     const bookingId = String(r[LEDGER_BOOKINGID_COL] || '').trim();
     if (!dateKey || !bookingId) return;
-    out[shiftKey_(dateKey, minutes, language) + '|' + bookingId] = Number(r[LEDGER_CHECKEDIN_COL] || 0);
+    // { n: checked-in count, at: "HH:mm" when it was saved } — the time is the
+    // Updated stamp, so the portal can show WHEN a guest was checked in.
+    out[shiftKey_(dateKey, minutes, language) + '|' + bookingId] = {
+      n: Number(r[LEDGER_CHECKEDIN_COL] || 0),
+      at: hhmmFromStamp_(r[LEDGER_UPDATED_COL])
+    };
   });
   return out;
+}
+
+/** "2026-08-04 10:03" (or a Date) -> "10:03"; '' if no time is present. */
+function hhmmFromStamp_(v) {
+  if (v instanceof Date && !isNaN(v)) {
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), 'HH:mm');
+  }
+  const m = String(v || '').match(/(\d{1,2}:\d{2})(?::\d{2})?\s*$/);
+  return m ? m[1] : '';
 }
 
 /**
@@ -2925,9 +2943,10 @@ function runPortalSelfTest(opts) {
       step('[' + lang + '] the check-in PERSISTS on reload', () => {
         const ck = readGuideCheckins_(guide);
         const kk = shiftKey_(dateKey, minutes, lang) + '|' + bid;
-        if (!Object.prototype.hasOwnProperty.call(ck, kk)) throw new Error('no ledger check-in stored');
-        if (Number(ck[kk]) !== 2) throw new Error('checkedIn=' + ck[kk] + ', expected 2');
-        return 'persisted';
+        const cke = ck[kk];
+        if (!cke) throw new Error('no ledger check-in stored');
+        if (Number(cke.n) !== 2) throw new Error('checkedIn=' + JSON.stringify(cke) + ', expected 2');
+        return 'persisted at ' + (cke.at || '?');
       });
     });
   } finally {
