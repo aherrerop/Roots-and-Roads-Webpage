@@ -323,6 +323,15 @@ check('Guruwalk cancel real: isCancellation + date + time', gwc && gwc.isCancell
 check('Guruwalk cancel real: thread-id fallback also finds BAR id',
   extractBookingIdFromThread_({getFirstMessageSubject:()=>'Sebastian has canceled booking BAR12441706 for the event',getMessages:()=>[makeFakeMsg_('','')] }, RNR.SOURCE.GURUWALK)==='BAR12441706', null);
 
+// Viator CANCELLATION (real): "Booking Canceled", #BR-…, Italian Tour 17:00.
+const viCancelReal = ['Booking Canceled', 'Booking Details', 'Booking Reference: #BR-1429181493', 'Canceled',
+  'Barcelona Walking Tour: Sagrada Familia, Gaudi and Gothic Quarter', 'Tour Option: Italian Tour 17:00',
+  'Location: Barcelona, Spain', 'Travel Date: Sun, Aug 30, 2026', 'Travelers: 2 Adults',
+  'Lead Traveler Name: VALERIA TORRE'].join('\n');
+const vic = parseViatorMessage_(makeFakeMsg_('Cancelled Booking: Sun, Aug 30, 2026', viCancelReal), 'cancel');
+check('Viator cancel real: id + isCancellation', vic && vic.bookingId==='BR-1429181493' && vic.isCancellation===true, vic);
+check('Viator cancel real: rejected in confirm mode', parseViatorMessage_(makeFakeMsg_('Cancelled Booking: Sun, Aug 30, 2026', viCancelReal), 'confirm')===null, null);
+
 console.log('--- Deduplication: different ids are DIFFERENT bookings (never merged) ---');
 const _b1=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGAAA1',name:'Jon Doe',phone:'+34600',date:'2027-08-04',time:'11:00 AM'});
 const _b2=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGBBB2',name:'Jon Doe',phone:'+34600',date:'2027-08-04',time:'11:00 AM'});
