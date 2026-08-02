@@ -294,6 +294,35 @@ check('Guruwalk real: routes to German Tours', gw && languageToSheet_(gw.languag
 check('Guruwalk real: date 2026-08-07',       gw && dateKey_(gw.date)==='2026-08-07', gw && (gw.date&&dateKey_(gw.date)));
 check('Guruwalk real: time 10:00 AM',         gw && gw.time==='10:00 AM', gw && gw.time);
 
+console.log('--- REAL cancellation / modification emails (per source) ---');
+// GYG cancellation (real format).
+const gygCancelReal = ['GYGRFQLWK73H ha sido cancelada', 'Hola, proveedor:',
+  'Te escribimos para informarte de que la siguiente reserva ha sido cancelada.',
+  'Número de referencia: GYGRFQLWK73H', 'Tour: Tour definitivo por Barcelona'].join('\n');
+const gyc = parseGygMessage_(makeFakeMsg_('Se ha cancelado una reserva - S779080 - GYGRFQLWK73H', gygCancelReal), 'cancel');
+check('GYG cancel real: id + isCancellation', gyc && gyc.bookingId==='GYGRFQLWK73H' && gyc.isCancellation===true, gyc);
+check('GYG cancel real: rejected in confirm mode', parseGygMessage_(makeFakeMsg_('Se ha cancelado una reserva - S779080 - GYGRFQLWK73H', gygCancelReal), 'confirm')===null, null);
+
+// GYG MODIFICATION (real): date change 16 Aug -> 15 Aug; must pick the NEW date.
+const gygModReal = ['Hola, Albert', 'Nos gustaría informarte de que la siguiente reserva se ha modificado.',
+  'Italian Tour', 'Código de reserva', 'GYGBLHHH3G2Y',
+  'Fecha Nuevo', '15 de agosto de 2026 a las 17:00', '16 de agosto de 2026 a las 17:00',
+  'Número de participantes', '4', 'Idioma', 'Italiano'].join('\n');
+const gym = parseGygMessage_(makeFakeMsg_('Booking detail change: - S779080 - GYGBLHHH3G2Y', gygModReal), 'modify');
+check('GYG modify real: picks the NEW date 2026-08-15 (not the struck 08-16)', gym && dateKey_(gym.date)==='2026-08-15', gym && (gym.date&&dateKey_(gym.date)));
+check('GYG modify real: 5:00 PM, 4 adults, Italian, not a cancellation',
+  gym && gym.time==='5:00 PM' && gym.guests===4 && gym.language==='Italian' && gym.isCancellation===false, gym);
+
+// Guruwalk CANCELLATION (real, label-then-newline format) — used to be dropped.
+const gwCancelReal = ['SEBASTIAN HAS CANCELED A BOOKING FOR TUESDAY, JULY 28, 2026, 11:00H', 'Cancelled',
+  'BOOKING DETAILS', 'Walker', 'Sebastian', 'Booking code', 'BAR12441706', 'Phone', '+49 17664031469',
+  'Attendees', '1', 'Language', 'German', 'Date and time', 'Tuesday, July 28, 2026, 11:00h'].join('\n');
+const gwc = parseGuruwalkMessage_(makeFakeMsg_('Sebastian has canceled booking BAR12441706 for the event on Tuesday, July 28, 2026, 11:00h', gwCancelReal), 'cancel')[0];
+check('Guruwalk cancel real: parses the booking id (was DROPPED before)', gwc && gwc.bookingId==='BAR12441706', gwc && (gwc && gwc.bookingId));
+check('Guruwalk cancel real: isCancellation + date + time', gwc && gwc.isCancellation===true && dateKey_(gwc.date)==='2026-07-28' && gwc.time==='11:00 AM', gwc);
+check('Guruwalk cancel real: thread-id fallback also finds BAR id',
+  extractBookingIdFromThread_({getFirstMessageSubject:()=>'Sebastian has canceled booking BAR12441706 for the event',getMessages:()=>[makeFakeMsg_('','')] }, RNR.SOURCE.GURUWALK)==='BAR12441706', null);
+
 console.log('--- Deduplication: different ids are DIFFERENT bookings (never merged) ---');
 const _b1=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGAAA1',name:'Jon Doe',phone:'+34600',date:'2027-08-04',time:'11:00 AM'});
 const _b2=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGBBB2',name:'Jon Doe',phone:'+34600',date:'2027-08-04',time:'11:00 AM'});
