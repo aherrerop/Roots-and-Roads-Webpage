@@ -285,8 +285,12 @@ function apiTours_(p) {
   // management and guides keep full reservation info after the tour has run,
   // INCLUDING guests who were never checked in. The Completed Log has every
   // completed booking; the guide ledger is a backup for anything it misses.
+  // One sweep of the ledger gives both durable reservations (for done tours)
+  // AND every guide's check-ins keyed by shift+booking (so a co-guide's
+  // check-in is visible to everyone, and we read each tab only once).
+  const ledgerByShift = readLedgerByShift_();
   const doneByKey = readCompletedLogReservations_();
-  const ledgerByKey = readLedgerReservations_();
+  const ledgerByKey = ledgerByShift.reservations;
   new Set(Object.keys(doneByKey).concat(Object.keys(ledgerByKey))).forEach(k => {
     if (!bookingsByKey[k] || !bookingsByKey[k].length) {
       bookingsByKey[k] = doneByKey[k] || ledgerByKey[k];
@@ -306,7 +310,7 @@ function apiTours_(p) {
 
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
-  const priorCheckins = readGuideCheckins_(name);   // key|bookingId -> checkedIn
+  const priorCheckins = ledgerByShift.checkins;   // key|bookingId -> {n, at} across all guides
 
   const tours = mine.map(shift => {
     const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
@@ -405,19 +409,18 @@ function apiTours_(p) {
     busyMap = buildBusyMap_(schedule);
   }
   if (isManager) {
-    const ckCache = {};
-    const getCk = g => (ckCache[g] || (ckCache[g] = readGuideCheckins_(g)));
     // Managers see EVERY upcoming tour (full UPCOMING_DAYS window), not just
-    // this week, so they can plan and assign ahead.
+    // this week, so they can plan and assign ahead. Check-ins come from the
+    // single cross-guide sweep above, so a check-in shows no matter which guide
+    // on the tour tapped it (not only the primary one).
     allTours = schedule.map(shift => {
       const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
       const primary = shift.assigned[0] || '';
-      const ck = primary ? getCk(primary) : {};
       const bookings = (bookingsByKey[key] || [])
         .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''))
         .map(b => {
           const kk = key + '|' + b.bookingId;
-          const cke = ck[kk];                         // {n, at} if checked in
+          const cke = priorCheckins[kk];              // {n, at} if checked in by ANY guide
           const isCk = !!cke;
           return {
             bookingId: b.bookingId, name: b.name, phone: b.phone, source: b.source, guests: b.guests,
@@ -1535,6 +1538,73 @@ function readLedgerReservations_() {
 }
 
 /**
+ * ONE pass over every guide ledger tab, returning BOTH:
+ *   reservations: shiftKey -> [booking...]         (durable detail for done tours)
+ *   checkins:     shiftKey|bookingId -> { n, at }   (across ALL guides, newest wins)
+ *
+ * Why this exists:
+ *   1. CORRECTNESS — the old code read check-ins from a SINGLE guide tab (your
+ *      own for My-tours, the primary guide's for the manager view). A check-in
+ *      done by a CO-GUIDE (or any non-primary guide on the tour) was therefore
+ *      invisible to the manager and to co-guides. Reading every tab and keying
+ *      by shift+booking makes a check-in visible no matter who tapped it.
+ *   2. SPEED — the portal auto-refreshes every 8 s. The old path swept the
+ *      ledger for reservations AND then once per guide for check-ins (~2N tab
+ *      reads). One combined sweep is ~N, roughly halving the ledger work per
+ *      poll — the dominant cost on the manager view.
+ */
+function readLedgerByShift_() {
+  const out = { reservations: {}, checkins: {} };
+  let names = [];
+  try {
+    const raw = readGuidesRaw_();
+    const cols = guideColumns_(raw.header);
+    names = raw.rows.map(r => String(r[cols.nameCol] || '').trim()).filter(Boolean);
+  } catch (e) { return out; }
+  let ss; try { ss = ledgerSS_(); } catch (e) { return out; }
+  names.forEach(name => {
+    const sh = ss.getSheetByName(name.substring(0, 90));
+    if (!sh || sh.getLastRow() < 2) return;
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
+    v.forEach(r => {
+      const dateKey = toDateKey_(r[0]);
+      const minutes = timeToMinutes_(normTime24_(r[2]));
+      const language = String(r[3] || '').trim();
+      const bookingId = String(r[LEDGER_BOOKINGID_COL] || '').trim();
+      if (!dateKey || !bookingId) return;
+      const key = shiftKey_(dateKey, minutes, language);
+
+      // Durable reservation detail (dedupe by booking id per shift).
+      const arr = out.reservations[key] || (out.reservations[key] = []);
+      if (!arr.some(b => b.bookingId === bookingId)) {
+        arr.push({
+          bookingId,
+          name: String(r[4] || '').trim(),
+          phone: String(r[5] || '').trim(),
+          source: String(r[6] || '').trim(),
+          guests: Number(r[7] || 0),
+          children: Number(r[8] || 0),
+          infants: 0, income: 0,
+          note: /priv/i.test(String(r[13] || '')) ? 'Private' : '',
+          manualNote: String(r[LEDGER_NOTE_COL] || ''),
+          checkedIn: Number(r[LEDGER_CHECKEDIN_COL] || 0)
+        });
+      }
+
+      // Check-in across ALL guides — newest 'Updated' wins if two tabs collide.
+      const ckKey = key + '|' + bookingId;
+      const updated = String(r[LEDGER_UPDATED_COL] || '');
+      const prev = out.checkins[ckKey];
+      if (!prev || updated >= prev._u) {
+        out.checkins[ckKey] = { n: Number(r[LEDGER_CHECKEDIN_COL] || 0),
+                                at: hhmmFromStamp_(r[LEDGER_UPDATED_COL]), _u: updated };
+      }
+    });
+  });
+  return out;
+}
+
+/**
  * Full reservation detail from the BookingSheet's "Completed Log", keyed by
  * shift. The Completed Log records EVERY completed booking with full detail
  * (name, phone, adults, children, source, booking id) whether or not anyone was
@@ -1694,6 +1764,28 @@ function makeLedgerRow_(o) {
  * 7. TOKENS  (simple signed session)
  ******************************************************/
 
+/**
+ * The signing secret. Prefer a Script Property named TOKEN_SECRET (set once via
+ * Project Settings > Script properties, or setTokenSecret()), so the real key
+ * lives OUTSIDE the public GitHub repo. Falls back to the in-code constant only
+ * until a property is set, so existing logins keep working during the switch.
+ */
+function tokenSecret_() {
+  try {
+    const p = PropertiesService.getScriptProperties().getProperty('TOKEN_SECRET');
+    if (p && p.length >= 16) return p;
+  } catch (e) { /* fall through to the constant */ }
+  return PORTAL.TOKEN_SECRET;
+}
+
+/** Set a strong signing secret from the editor: setTokenSecret('a-long-random-string'). */
+function setTokenSecret(secret) {
+  const s = String(secret || '');
+  if (s.length < 16) throw new Error('Use at least 16 characters.');
+  PropertiesService.getScriptProperties().setProperty('TOKEN_SECRET', s);
+  return 'TOKEN_SECRET set (' + s.length + ' chars). Guides will re-login once.';
+}
+
 function makeToken_(guideName) {
   const exp = Date.now() + PORTAL.TOKEN_TTL_HOURS * 3600 * 1000;
   const payload = Utilities.base64EncodeWebSafe(guideName + '|' + exp);
@@ -1712,7 +1804,7 @@ function requireToken_(token) {
 }
 
 function sign_(s) {
-  const raw = Utilities.computeHmacSha256Signature(s, PORTAL.TOKEN_SECRET);
+  const raw = Utilities.computeHmacSha256Signature(s, tokenSecret_());
   return Utilities.base64EncodeWebSafe(raw);
 }
 
@@ -2734,9 +2826,10 @@ function fullSystemTest() {
                          : warn('Script property ' + k + ' MISSING',
                                 k === 'LEDGER_ID' ? 'run setupLedger' : 'phone booking controls will not work');
   });
-  if (PORTAL.TOKEN_SECRET.indexOf('CHANGE_ME') === 0) {
-    warn('TOKEN_SECRET is still the placeholder', 'edit guidePortal.gs section 1');
-  } else { ok('TOKEN_SECRET customised'); }
+  if (tokenSecret_().indexOf('CHANGE_ME') === 0) {
+    warn('TOKEN_SECRET is still the placeholder — login tokens are forgeable',
+         'run setTokenSecret(\'a-long-random-string\') so the key lives outside the public repo');
+  } else { ok('TOKEN_SECRET customised (from Script Properties)'); }
 
   /* --- 2. Spreadsheets + tabs --- */
   let control, booking, ledger;

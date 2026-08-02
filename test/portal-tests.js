@@ -16,6 +16,10 @@ const block = html.slice(start, end);
 // Run the extracted block in its own scope and expose the functions for testing.
 const A = (new Function(block + '\n;return { shiftIdKey, setPendingAssign, applyPendingAssigns, pending: () => PENDING_ASSIGN };'))();
 
+console.log('--- The save payload carries children (so the ledger records them) ---');
+const saveFn = html.slice(html.indexOf('async function saveTour('), html.indexOf('/* ================== ALL GUIDES'));
+check('saveTour sends children in each booking', /children:\s*b\.children/.test(saveFn), saveFn.slice(0, 0));
+
 console.log('--- Pending assignment survives a stale read (the Albert->Carlos bug) ---');
 const shift = g => ({ dateKey: '2026-07-31', time: '17:00', language: 'English', isPrivate: false, assigned: g ? [g] : [], guide: g || '', status: g ? 'OK' : 'Not assigned' });
 const info = { dateKey: '2026-07-31', time: '17:00', language: 'English', isPrivate: '' };
