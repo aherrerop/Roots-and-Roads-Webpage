@@ -101,6 +101,19 @@ const carlosRows = carlosTab ? carlosTab.getRange(2, 1, Math.max(0, carlosTab.ge
 const ivanRow = carlosRows.find(x => String(x[LEDGER_BOOKINGID_COL] || '') === 'GYGE2E002');
 check('the ledger records the children count from the save payload', ivanRow && Number(ivanRow[8]) === 2, ivanRow && ivanRow[8]);
 
+console.log('--- Manager window: near tours load first, far tours behind "Load more" ---');
+const FAR = dayKey(40);
+en.getRange(4, 1, 1, 9).setValues([
+  ['Far Future', '+34600555000', 2, new Date(FAR + 'T12:00:00'), '10:00 AM', 'GetYourGuide', 30, 'GYGE2EFAR', '']]);
+const rw = apiTours_({ token: token });                       // default 7-day window
+check('response carries a freshness timestamp (HH:mm:ss)', /^\d{1,2}:\d{2}:\d{2}$/.test(rw.now || ''), rw.now);
+check('default manager window is 7 days', rw.windowDays === 7, rw.windowDays);
+check('a 40-day-out tour is NOT in the default window', !(rw.allTours || []).some(s => s.dateKey === FAR), FAR);
+check('hasMore flags there are tours beyond the window', rw.hasMore === true, rw.hasMore);
+const rw2 = apiTours_({ token: token, days: 45 });            // "Load more"
+check('Load more (days=45) brings the far tour in', (rw2.allTours || []).some(s => s.dateKey === FAR), FAR);
+check('with the full window there is nothing more to load', rw2.hasMore === false, rw2.hasMore);
+
 console.log('--- Timing: each real portal operation is bounded, and repeats do not grow the grid ---');
 const time = fn => { const t = Date.now(); fn(); return Date.now() - t; };
 const p95 = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.ceil(0.95 * s.length) - 1)]; };

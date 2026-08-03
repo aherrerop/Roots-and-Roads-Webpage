@@ -131,6 +131,12 @@
   .bnote{font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
   .mvsel{margin-top:4px;padding:3px 6px;border:1px solid #e2e6ea;border-radius:7px;font-size:11px;color:var(--muted);background:#fff}
   .ver{text-align:center;color:var(--muted);font-size:11px;padding:14px 0 22px;opacity:.7}
+  .fresh{font-size:11px;font-weight:700;color:var(--muted);margin:0 4px 10px;display:flex;align-items:center;gap:6px}
+  .fresh::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+  .fresh.loading::before{background:var(--amber)}
+  .fresh.stale{color:var(--danger)} .fresh.stale::before{background:var(--danger)}
+  .loadmore{display:block;width:100%;padding:12px;margin:6px 0 20px;border:1px dashed #c3ccdb;border-radius:12px;background:#f4f7ff;color:#2547a0;font-weight:800;font-size:14px;cursor:pointer}
+  .loadmore:disabled{opacity:.6;cursor:default}
 </style>
 </head>
 <body>
@@ -154,6 +160,7 @@
       <button id="tabTours" class="tab active">My tours</button>
       <button id="tabSched" class="tab">All guides</button>
     </div>
+    <div id="fresh" class="fresh"></div>
     <div id="toursPane"><div class="spin">Loading…</div></div>
     <div id="schedPane" class="hidden"></div>
     <div id="ver" class="ver"></div>
@@ -167,7 +174,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-03-fast-portal";
+const PORTAL_VERSION = "2026-08-03-window-freshness";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -246,6 +253,14 @@ const store = {
   set cache(v){ try{ v?localStorage.setItem("rr_tours",JSON.stringify(v)):localStorage.removeItem("rr_tours"); }catch(e){} }
 };
 let RATES={paid:10,free:6}, DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
+let HAS_MORE=false, WINDOW_DAYS=7, MANAGER_DAYS=0; const MORE_DAYS=14;   // manager All-tours window
+let LAST_FRESH="";                                                       // last successful refresh time
+function setFresh(state,t){
+  const el=$("fresh"); if(!el) return;
+  if(state==="loading"){ el.className="fresh loading"; el.textContent=LAST_FRESH?("Updating… (was "+LAST_FRESH+")"):"Updating…"; return; }
+  if(state==="ok"){ if(t) LAST_FRESH=t; el.className="fresh"; el.textContent="Up to date · "+(LAST_FRESH||""); return; }
+  el.className="fresh stale"; el.textContent=LAST_FRESH?("Can't refresh — showing "+LAST_FRESH):"Can't reach the server";
+}
 const POSTIT='<svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 3h16v12l-5 5H4z" fill="#fde047" stroke="#ca8a04" stroke-width="1.2"/><path d="M15 20v-5h5z" fill="#facc15" stroke="#ca8a04" stroke-width="1.2"/></svg>';
 
 const LANG={
@@ -383,16 +398,19 @@ async function loadTours(){
   // requests stack up, serialize on the server, and each gets slower — which is
   // exactly what turned ~8s loads into 60-120s ones. Skip if one is in flight.
   if(LOADING) return;
-  LOADING = true;
+  LOADING = true; setFresh("loading");
   const seq = ++LOAD_SEQ;
   if(!store.cache) $("toursPane").innerHTML='<div class="spin">Loading…</div>';
-  let r; try{ r=await api("tours",{token:store.token}); }
-  catch(err){ LOADING=false; if(seq!==LOAD_SEQ) return; await showLoadError(err); return; }
+  const params={token:store.token}; if(MANAGER_DAYS>0) params.days=MANAGER_DAYS;
+  let r; try{ r=await api("tours",params); }
+  catch(err){ LOADING=false; if(seq!==LOAD_SEQ) return; setFresh("stale"); await showLoadError(err); return; }
   LOADING = false;
   if(seq!==LOAD_SEQ) return;                 // a newer load has superseded this one
   if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
+    setFresh("stale");
     $("toursPane").innerHTML='<div class="loaderr"><b>Server error</b>'+esc(r.error||"Unknown error")+
       '<br><button class="retry" onclick="loadTours()">Retry</button></div>'; return; }
+  setFresh("ok", r.now);
   store.cache=r;
   renderAll(r);
 }
@@ -432,6 +450,7 @@ function renderAll(r){
   applyPendingAssigns(r);                // stale reads can never undo your last action
   RATES=r.rates||RATES;
   MANAGER=!!r.manager;
+  HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||7;
   GUIDES_BY_LANG=r.guidesByLanguage||{};
   const all=r.allTours||[];
   renderTours(r.tours||[], "toursPane");
@@ -477,8 +496,13 @@ function renderTours(tours, paneId, canAssign){
     html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
     day.items.forEach(t=> html+=tourCard(t, canAssign));
   });
+  // Manager All-tours loads the near window first; "Load more" pulls the next
+  // block of days on demand (far-out tours are costly and rarely needed now).
+  if(canAssign && paneId==="schedPane" && HAS_MORE)
+    html+='<button class="loadmore" id="loadMoreBtn">Load more (next '+MORE_DAYS+' days)</button>';
   pane.innerHTML=html;
   bindOpenForm();
+  if(canAssign && paneId==="schedPane"){ const lm=$("loadMoreBtn"); if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||7)+MORE_DAYS; loadTours(); }; }
 }
 /* Manager-only: open a brand-new schedule (pick day/date, time, language and,
    optionally, a guide). Reuses the assign action, which creates the grid slot
