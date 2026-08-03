@@ -327,8 +327,10 @@ const _kept=_closeFilter([_s1,_s2],_closed,_bbk);
 check('closed shift with NO booking stays hidden', !_kept.some(s=>s.dateKey==='2026-07-30'), _kept);
 check('closed shift WITH a booking comes back', _kept.some(s=>s.dateKey==='2026-07-31'), _kept);
 
-console.log('--- Token signing: secret resolves, tokens round-trip, tampering fails ---');
-check('tokenSecret_ falls back to the constant when no Script Property is set', tokenSecret_() === PORTAL.TOKEN_SECRET, tokenSecret_());
+console.log('--- Token signing: auto-provisioned secret, round-trip, tampering fails ---');
+const _secret = tokenSecret_();
+check('tokenSecret_ auto-provisions a strong secret (not the public placeholder)', _secret.length >= 24 && _secret.indexOf('CHANGE_ME') !== 0, _secret);
+check('the provisioned secret is stable across calls', tokenSecret_() === _secret, tokenSecret_());
 check('a freshly minted token validates back to its guide', requireToken_(makeToken_('Dana Ortiz')) === 'Dana Ortiz', requireToken_(makeToken_('Dana Ortiz')));
 check('a tampered token is rejected', requireToken_(makeToken_('Dana Ortiz').replace(/.$/, m => m === 'A' ? 'B' : 'A')) === null, 'should reject');
 check('a malformed token is rejected', requireToken_('garbage') === null, 'should reject');

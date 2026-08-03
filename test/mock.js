@@ -22,12 +22,16 @@ global.Utilities={
   base64DecodeWebSafe:x=>Buffer.from(String(x),'base64url'),
   computeDigest:(a,s)=>require('crypto').createHash('md5').update(String(s)).digest(), DigestAlgorithm:{MD5:'md5'},
   computeHmacSha256Signature:(s,key)=>require('crypto').createHmac('sha256',String(key)).update(String(s)).digest(),
+  getUuid:()=>require('crypto').randomUUID(),
   newBlob:b=>({getDataAsString:()=>Buffer.from(b).toString()})
 };
 global.Session={getScriptTimeZone:()=>'Europe/Madrid'};
 global.Logger={log:m=>console.log('[Logger] '+m)};
 global.console.error=console.log;
-global.LockService={getScriptLock:()=>({tryLock:()=>true,releaseLock:()=>{}})};
+global.LockService={getScriptLock:()=>({tryLock:()=>true,waitLock:()=>true,releaseLock:()=>{}})};
+// No-op cache: get always misses, so tests always exercise the LIVE read path
+// (production gets a real CacheService, which cachedRead_ uses fail-open).
+global.CacheService={getScriptCache:()=>({get:()=>null,put:()=>{},remove:()=>{}})};
 global.MailApp={sendEmail:()=>{},getRemainingDailyQuota:()=>99};
 global.ContentService={createTextOutput:t=>({setMimeType:()=>({})}),MimeType:{TEXT:1,JSON:2,JAVASCRIPT:3}};
 global.UrlFetchApp={fetch:()=>({getResponseCode:()=>200,getContentText:()=>'{}'})};
