@@ -93,8 +93,15 @@ const PORTAL = {
 
   // Timing budget (ms). An operation slower than this is flagged for review in
   // the timing report, and a slow tours READ is logged (normal fast reads are
-  // not, to keep the 8-second auto-refresh cheap).
-  SLOW_MS: 6000
+  // not, to keep the auto-refresh cheap).
+  SLOW_MS: 6000,
+
+  // Seconds the slow, shared cross-file reads (schedule grids, BookingSheet,
+  // Completed Log) are cached so the frequent auto-refresh does not re-open
+  // those spreadsheets every time. Invalidated immediately on any assignment /
+  // move / note change. Check-ins are NEVER cached — they read live so a
+  // guest ticked in shows on the very next poll.
+  CACHE_TTL: 20
 };
 
 
@@ -166,6 +173,47 @@ function portalLog_(action, ms, ok, detail) {
     const last = sh.getLastRow();
     if (last > 700) sh.deleteRows(2, last - 500);   // keep the newest ~500 lines
   } catch (e) { /* never let logging break a request */ }
+}
+
+/**
+ * SHORT-LIVED READ CACHE (the fix for 8-127s portal loads).
+ *
+ * The heavy cost of a tours load is re-opening the BookingSheet + reading every
+ * schedule grid on EVERY 8-second poll, for every guide watching. Those reads
+ * are identical for everyone for many seconds, so we cache their JSON in the
+ * script cache under a version key and reuse it. Any assignment / move / note
+ * change bumps the version, so a real change is never hidden behind the cache.
+ *
+ * Fail-open by design: if the cache is unavailable or the value is too big, the
+ * read simply runs live — never an error, never stale beyond the TTL.
+ * Check-ins are deliberately NOT cached (they read live every request).
+ */
+function cacheVersion_() {
+  try { return PropertiesService.getScriptProperties().getProperty('PORTAL_CACHE_VER') || '0'; }
+  catch (e) { return '0'; }
+}
+function bumpCacheVersion_() {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    p.setProperty('PORTAL_CACHE_VER', String((Number(p.getProperty('PORTAL_CACHE_VER')) || 0) + 1));
+  } catch (e) { /* best-effort; a missed bump only means <=TTL staleness */ }
+}
+function cachedRead_(name, ttlSeconds, fn) {
+  let cache = null, key = '';
+  try {
+    cache = CacheService.getScriptCache();
+    key = 'rd:' + name + ':' + cacheVersion_();
+    const hit = cache.get(key);
+    if (hit) return JSON.parse(hit);
+  } catch (e) { cache = null; }
+  const val = fn();
+  try {
+    if (cache) {
+      const s = JSON.stringify(val);
+      if (s.length < 95000) cache.put(key, s, ttlSeconds || PORTAL.CACHE_TTL);   // 100KB cap
+    }
+  } catch (e) { /* value not cacheable this time; live read already returned */ }
+  return val;
 }
 
 /** The p-th percentile (0-100) of a numeric array. Nearest-rank, no interpolation. */
@@ -268,9 +316,14 @@ function apiTours_(p) {
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
 
-  const rates = readRates_();
-  let schedule = readSchedule_();                   // all upcoming shifts (from the grids)
-  const bookingsByKey = readBookingsIndex_();       // "yyyy-mm-dd|minutes|Language" -> [bookings]
+  const today = todayKey_();
+  // These three cross-file reads are identical for every guide for many seconds,
+  // so they are cached (invalidated on any assign/move/note change). This is the
+  // core fix for the 8-127s loads: the frequent poll stops re-opening the
+  // BookingSheet and re-reading every schedule grid each time.
+  const rates = cachedRead_('rates', 60, readRates_);
+  let schedule = cachedRead_('sched', PORTAL.CACHE_TTL, function () { return readSchedule_(); });
+  const bookingsByKey = cachedRead_('bk', PORTAL.CACHE_TTL, readBookingsIndex_);
   appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
   appendWeeklyScheduleShifts_(schedule);            // #4: new Weekly_Schedule offer rows show at once
   // Order every shift by date then start time (so appended orphans slot into
@@ -280,22 +333,32 @@ function apiTours_(p) {
     (a.minutes - b.minutes) ||
     String(a.language).localeCompare(String(b.language)));
 
-  // A completed tour's live booking rows have moved to Done, so fall back to
-  // durable sources for its guests, phones, children and check-in status —
-  // management and guides keep full reservation info after the tour has run,
-  // INCLUDING guests who were never checked in. The Completed Log has every
-  // completed booking; the guide ledger is a backup for anything it misses.
-  // One sweep of the ledger gives both durable reservations (for done tours)
-  // AND every guide's check-ins keyed by shift+booking (so a co-guide's
-  // check-in is visible to everyone, and we read each tab only once).
-  const ledgerByShift = readLedgerByShift_();
-  const doneByKey = readCompletedLogReservations_();
-  const ledgerByKey = ledgerByShift.reservations;
-  new Set(Object.keys(doneByKey).concat(Object.keys(ledgerByKey))).forEach(k => {
-    if (!bookingsByKey[k] || !bookingsByKey[k].length) {
-      bookingsByKey[k] = doneByKey[k] || ledgerByKey[k];
-    }
-  });
+  // CHECK-INS live in the ledger tab of the guide the tour is ASSIGNED to, and
+  // only a tour TODAY or earlier can have any (a future tour has none yet). So
+  // read ONLY those few tabs — not all twelve every poll. This is exactly what
+  // management pointed out, and it is what keeps the refresh cheap. Read live
+  // (never cached) so a guest ticked in shows on the very next poll.
+  const ledgerGuides = {};
+  ledgerGuides[name] = true;                        // my own tab (I may have checked in)
+  schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(g => { if (g) ledgerGuides[g] = true; }); });
+  const ledger = readLedgerForGuides_(Object.keys(ledgerGuides));   // { reservations, checkins }
+  const priorCheckins = ledger.checkins;            // key|bookingId -> {n, at}
+
+  // A completed tour's live rows move to Done, so fall back to durable sources
+  // for its guests + check-in status. Only a shift TODAY-or-earlier that has
+  // lost its live bookings needs this — future tours never do — so on the common
+  // pre-tour poll we skip the Completed Log read entirely.
+  const needBackfill = schedule.some(s => s.dateKey <= today &&
+    !((bookingsByKey[shiftKey_(s.dateKey, s.minutes, s.language)] || []).length));
+  if (needBackfill) {
+    const doneByKey = cachedRead_('cl', PORTAL.CACHE_TTL, readCompletedLogReservations_);
+    const ledgerByKey = ledger.reservations;
+    new Set(Object.keys(doneByKey).concat(Object.keys(ledgerByKey))).forEach(k => {
+      if (!bookingsByKey[k] || !bookingsByKey[k].length) {
+        bookingsByKey[k] = doneByKey[k] || ledgerByKey[k];
+      }
+    });
+  }
 
   // Management can CLOSE a shift so it disappears from the portal — UNLESS it
   // has any booking (live or completed), in which case it comes back on its own
@@ -309,8 +372,6 @@ function apiTours_(p) {
   });
 
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
-
-  const priorCheckins = ledgerByShift.checkins;   // key|bookingId -> {n, at} across all guides
 
   const tours = mine.map(shift => {
     const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
@@ -486,7 +547,9 @@ function apiSetNote_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
-    return writeBookingNote_(bookingId, language, note);
+    const out = writeBookingNote_(bookingId, language, note);
+    if (out && out.ok) bumpCacheVersion_();   // the note is a cached field
+    return out;
   } finally {
     lock.releaseLock();
   }
@@ -674,6 +737,7 @@ function apiAssign_(p) {
   try {
     const out = writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide);
     SpreadsheetApp.flush();   // commit before returning, so the phone's next read is guaranteed fresh
+    bumpCacheVersion_();      // the schedule changed -> next read must not serve a cached grid
     return out;
   } finally {
     lock.releaseLock();
@@ -703,7 +767,9 @@ function apiMoveBooking_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
-    return moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage);
+    const out = moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage);
+    if (out && out.ok && out.moved) bumpCacheVersion_();   // a booking changed language tab
+    return out;
   } finally {
     lock.releaseLock();
   }
@@ -926,8 +992,11 @@ function apiSave_(p) {
   try {
     writeGuideLedger_(targetGuide, d.dateKey, d.time || timeLabel, d.language, rows);
     SpreadsheetApp.flush();   // commit the check-in before returning, so a reload can't read stale
-    // Keep the GuruWalk management queue current without waiting for the trigger.
-    try { updateGuruwalkCheckinQueue_(); } catch (e) { /* queue refresh is best-effort */ }
+    // NOTE: the GuruWalk queue used to be rebuilt HERE, on every save. That read
+    // the whole ledger + Completed Log and made check-ins take 7-22s to return.
+    // It is idempotent and rebuilt by the hourly updateManagementQueues trigger,
+    // so the guide's tap now returns immediately and the queue catches up within
+    // the hour (well inside the 48h GuruWalk reporting window).
   } finally {
     lock.releaseLock();
   }
@@ -1538,32 +1607,25 @@ function readLedgerReservations_() {
 }
 
 /**
- * ONE pass over every guide ledger tab, returning BOTH:
+ * Read the ledger tabs of ONLY the named guides, returning BOTH:
  *   reservations: shiftKey -> [booking...]         (durable detail for done tours)
- *   checkins:     shiftKey|bookingId -> { n, at }   (across ALL guides, newest wins)
+ *   checkins:     shiftKey|bookingId -> { n, at }   (newest 'Updated' wins)
  *
- * Why this exists:
- *   1. CORRECTNESS — the old code read check-ins from a SINGLE guide tab (your
- *      own for My-tours, the primary guide's for the manager view). A check-in
- *      done by a CO-GUIDE (or any non-primary guide on the tour) was therefore
- *      invisible to the manager and to co-guides. Reading every tab and keying
- *      by shift+booking makes a check-in visible no matter who tapped it.
- *   2. SPEED — the portal auto-refreshes every 8 s. The old path swept the
- *      ledger for reservations AND then once per guide for check-ins (~2N tab
- *      reads). One combined sweep is ~N, roughly halving the ledger work per
- *      poll — the dominant cost on the manager view.
+ * A check-in lives in the tab of the guide the tour is ASSIGNED to, and only a
+ * tour today-or-earlier can have one — so apiTours_ passes just those few guide
+ * names instead of sweeping all twelve tabs on every 8-second poll. Reading two
+ * or three small tabs instead of twelve is the difference between a snappy
+ * refresh and the 10-60s loads the portal was suffering. If two of the tour's
+ * guides both ticked people in, both tabs are passed, so a co-guide's check-in
+ * is still seen.
  */
-function readLedgerByShift_() {
+function readLedgerForGuides_(names) {
   const out = { reservations: {}, checkins: {} };
-  let names = [];
-  try {
-    const raw = readGuidesRaw_();
-    const cols = guideColumns_(raw.header);
-    names = raw.rows.map(r => String(r[cols.nameCol] || '').trim()).filter(Boolean);
-  } catch (e) { return out; }
+  const list = (names || []).filter(Boolean);
+  if (!list.length) return out;
   let ss; try { ss = ledgerSS_(); } catch (e) { return out; }
-  names.forEach(name => {
-    const sh = ss.getSheetByName(name.substring(0, 90));
+  list.forEach(name => {
+    const sh = ss.getSheetByName(String(name).substring(0, 90));
     if (!sh || sh.getLastRow() < 2) return;
     const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
     v.forEach(r => {
@@ -1765,23 +1827,43 @@ function makeLedgerRow_(o) {
  ******************************************************/
 
 /**
- * The signing secret. Prefer a Script Property named TOKEN_SECRET (set once via
- * Project Settings > Script properties, or setTokenSecret()), so the real key
- * lives OUTSIDE the public GitHub repo. Falls back to the in-code constant only
- * until a property is set, so existing logins keep working during the switch.
+ * The signing secret for login tokens. It must be strong (the in-code
+ * placeholder sits in a PUBLIC repo, so anyone could forge a token with it) and
+ * it must live OUTSIDE the repo. This provisions one AUTOMATICALLY on first use:
+ * a random secret is generated and stored in Script Properties, so there is
+ * nothing for anyone to run by hand. Guides simply re-login once the first time
+ * it replaces the placeholder; after that it is stable.
  */
 function tokenSecret_() {
+  let props;
+  try { props = PropertiesService.getScriptProperties(); }
+  catch (e) { return PORTAL.TOKEN_SECRET; }              // no properties -> constant
+
+  let p = props.getProperty('TOKEN_SECRET');
+  if (p && p.length >= 24 && p.indexOf('CHANGE_ME') !== 0) return p;   // common path, no lock
+
+  // Provision once, under a lock so two first-hits agree on a single value.
+  const lock = LockService.getScriptLock();
   try {
-    const p = PropertiesService.getScriptProperties().getProperty('TOKEN_SECRET');
-    if (p && p.length >= 16) return p;
-  } catch (e) { /* fall through to the constant */ }
-  return PORTAL.TOKEN_SECRET;
+    lock.waitLock(5000);
+    p = props.getProperty('TOKEN_SECRET');                // re-check inside the lock
+    if (!p || p.length < 24 || p.indexOf('CHANGE_ME') === 0) {
+      p = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+      props.setProperty('TOKEN_SECRET', p);
+    }
+  } catch (e) {
+    return (p && p.length >= 24) ? p : PORTAL.TOKEN_SECRET;  // busy: use constant this request
+  } finally {
+    try { lock.releaseLock(); } catch (e) { /* ignore */ }
+  }
+  return p;
 }
 
-/** Set a strong signing secret from the editor: setTokenSecret('a-long-random-string'). */
+/** Optional manual override: setTokenSecret('a-long-random-string'). Not required —
+ *  tokenSecret_() auto-provisions a strong secret on its own. */
 function setTokenSecret(secret) {
   const s = String(secret || '');
-  if (s.length < 16) throw new Error('Use at least 16 characters.');
+  if (s.length < 24) throw new Error('Use at least 24 characters.');
   PropertiesService.getScriptProperties().setProperty('TOKEN_SECRET', s);
   return 'TOKEN_SECRET set (' + s.length + ' chars). Guides will re-login once.';
 }

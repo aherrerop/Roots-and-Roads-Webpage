@@ -167,7 +167,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-02-coguide-checkins";
+const PORTAL_VERSION = "2026-08-03-fast-portal";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -195,8 +195,15 @@ function mkErr(kind,msg){ const e=new Error(msg); e.kind=kind; return e; }
 async function api(action, params){
   const url = buildUrl(action, params);
   try{
-    const res = await fetch(url, {method:"GET", redirect:"follow", cache:"no-store"});
-    const text = await res.text();
+    // Abort a hung request after 30s so the inflight guard is always released
+    // and the next poll can try again (a dead network shouldn't freeze the app).
+    const ctrl = (typeof AbortController!=="undefined") ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(()=>ctrl.abort(), 30000) : null;
+    let res, text;
+    try{
+      res = await fetch(url, {method:"GET", redirect:"follow", cache:"no-store", signal: ctrl?ctrl.signal:undefined});
+      text = await res.text();
+    } finally { if(timer) clearTimeout(timer); }
     try{ return JSON.parse(text); }
     catch(_){
       if(/accounts\.google\.com/.test(res.url||"") || /ServiceLogin|Sign in - Google/i.test(text))
@@ -354,9 +361,11 @@ function canAutoRefresh(){
 }
 function startAutoRefresh(){
   if(window._rrRefresh) return;
-  // Poll every 8s: a guide not checking people in at the start of a tour is an
-  // operational alarm management must see NOW, not minutes later.
-  window._rrRefresh = setInterval(()=>{ if(canAutoRefresh()) loadTours(); }, 8000);
+  // Poll every 20s. Fast enough that a co-guide's check-in shows within seconds,
+  // but slow enough that loads never overlap (the inflight guard drops any that
+  // would). The old 8s poll fired faster than loads completed, so requests piled
+  // up and each got slower.
+  window._rrRefresh = setInterval(()=>{ if(canAutoRefresh()) loadTours(); }, 20000);
   // Check for a newer deployed build every 2 min and when the tab regains focus.
   window._rrVerCheck = setInterval(checkForUpdate, 120000);
   document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); if(canAutoRefresh()) loadTours(); } });
@@ -367,11 +376,19 @@ function startAutoRefresh(){
 // can never land late and revert the screen. This is what made assignments
 // look like they "didn't stick, then kicked in later".
 let LOAD_SEQ = 0;
+let LOADING = false;   // one tours request at a time — never let polls pile up
 async function loadTours(){
+  // A tours load can take several seconds. The 20s poll (and focus/visibility
+  // events) must NOT start a second one while the first is still running, or
+  // requests stack up, serialize on the server, and each gets slower — which is
+  // exactly what turned ~8s loads into 60-120s ones. Skip if one is in flight.
+  if(LOADING) return;
+  LOADING = true;
   const seq = ++LOAD_SEQ;
   if(!store.cache) $("toursPane").innerHTML='<div class="spin">Loading…</div>';
   let r; try{ r=await api("tours",{token:store.token}); }
-  catch(err){ if(seq!==LOAD_SEQ) return; await showLoadError(err); return; }
+  catch(err){ LOADING=false; if(seq!==LOAD_SEQ) return; await showLoadError(err); return; }
+  LOADING = false;
   if(seq!==LOAD_SEQ) return;                 // a newer load has superseded this one
   if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
     $("toursPane").innerHTML='<div class="loaderr"><b>Server error</b>'+esc(r.error||"Unknown error")+

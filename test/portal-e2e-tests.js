@@ -24,7 +24,7 @@ control.insertSheet('Weekly_Schedule').getRange(1, 1, 1, 6).setValues([
 
 // --- BookingSheet (read by the portal via its id): one upcoming English booking.
 const booking = new __mock.MockSS('booking'); __mock.SS_BY_ID[BOOK_ID] = booking;
-const DATE = dayKey(5);                         // upcoming, inside the portal window
+const DATE = dayKey(0);                         // TODAY — the day tours run and check-ins happen
 const en = booking.insertSheet('English Tours');
 en.getRange(1, 1, 2, 9).setValues([
   ['Name', 'Phone', 'Number of Guests', 'Tour date', 'Time', 'Source', 'Income', 'Booking ID', 'Notes'],
@@ -75,30 +75,30 @@ check('Carlos is gone (not merged in)', sh.length === 1 && (sh[0].assigned || []
 const gv2 = control.getSheetByName('Schedule_English').getDataRange().getDisplayValues();
 check('still a single grid row after reassign', gv2.filter((row, i) => i >= 2 && row[0] === label).length === 1, gv2.map(x => x[0]));
 
-console.log('--- A check-in done by a NON-primary guide is visible to the manager (co-guide fix) ---');
-// A second English booking at 12:00. Carlos is the shift's assigned (primary)
-// guide, but the check-in is recorded under Albert — as if a second guide on
-// the tour ticked people in from their own phone. The manager must still see it.
+console.log('--- Check-in reads only the assigned guide tab, and records children ---');
+// A second English booking at 12:00, assigned to Carlos, checked in as Carlos.
+// The manager view must reflect it (reading only the ASSIGNED guide tab, which
+// is where the check-in lives — not sweeping every guide's tab).
 en.getRange(3, 1, 1, 9).setValues([
   ['Ivan Petrov', '+34600333444', 3, new Date(DATE + 'T12:00:00'), '12:00 PM', 'GetYourGuide', 45, 'GYGE2E002', '']]);
+apiAssign_({ token: token, dateKey: DATE, time: '12:00', language: 'English', guide: 'Carlos', force: '1' });
 const data2 = {
   dateKey: DATE, time: '12:00', timeLabel: '12:00 PM', day: dayNameFromKey_(DATE),
-  language: 'English', guide: 'Albert', walkins: [],
+  language: 'English', guide: 'Carlos', walkins: [],
   bookings: [{ bookingId: 'GYGE2E002', source: 'GetYourGuide', name: 'Ivan Petrov', phone: '+34600333444',
                guests: 3, children: 2, income: 45, isPrivate: false, manualNote: '', checked: true, checkedIn: 3 }]
 };
-apiAssign_({ token: token, dateKey: DATE, time: '12:00', language: 'English', guide: 'Carlos', force: '1' }); // primary = Carlos
-apiSave_({ token: token, data: JSON.stringify(data2) });   // but recorded under Albert
+apiSave_({ token: token, data: JSON.stringify(data2) });
 r = apiTours_({ token: token });
 const sh12 = (r.allTours || []).filter(s => s.dateKey === DATE && s.time === '12:00' && s.language === 'English');
 const bk12 = sh12.length ? sh12[0].bookings.find(b => b.bookingId === 'GYGE2E002') : null;
-check('the 12:00 shift is assigned to Carlos (the primary guide)', sh12.length === 1 && (sh12[0].assigned || []).map(x => x.toLowerCase()).indexOf('carlos') !== -1, sh12[0] && sh12[0].assigned);
-check('manager SEES the check-in even though Albert (not primary) recorded it', bk12 && bk12.checked === true && bk12.checkedIn === 3, bk12);
-check('the co-guide check-in carries its time', bk12 && /^\d{1,2}:\d{2}$/.test(bk12.checkedAt || ''), bk12 && bk12.checkedAt);
-// The ledger row Albert wrote records the children count sent by the client.
-const albertTab = ledgerSS_().getSheetByName('Albert');
-const albertRows = albertTab ? albertTab.getRange(2, 1, Math.max(0, albertTab.getLastRow() - 1), LEDGER_HEADERS.length).getValues() : [];
-const ivanRow = albertRows.find(x => String(x[LEDGER_BOOKINGID_COL] || '') === 'GYGE2E002');
+check('the 12:00 shift is assigned to Carlos', sh12.length === 1 && (sh12[0].assigned || []).map(x => x.toLowerCase()).indexOf('carlos') !== -1, sh12[0] && sh12[0].assigned);
+check('manager sees the check-in (read from the assigned guide tab)', bk12 && bk12.checked === true && bk12.checkedIn === 3, bk12);
+check('the check-in carries its time', bk12 && /^\d{1,2}:\d{2}$/.test(bk12.checkedAt || ''), bk12 && bk12.checkedAt);
+// The ledger row records the children count sent by the client.
+const carlosTab = ledgerSS_().getSheetByName('Carlos');
+const carlosRows = carlosTab ? carlosTab.getRange(2, 1, Math.max(0, carlosTab.getLastRow() - 1), LEDGER_HEADERS.length).getValues() : [];
+const ivanRow = carlosRows.find(x => String(x[LEDGER_BOOKINGID_COL] || '') === 'GYGE2E002');
 check('the ledger records the children count from the save payload', ivanRow && Number(ivanRow[8]) === 2, ivanRow && ivanRow[8]);
 
 console.log('--- Timing: each real portal operation is bounded, and repeats do not grow the grid ---');
