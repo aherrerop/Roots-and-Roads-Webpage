@@ -332,6 +332,7 @@ let RNR_CONFIRMATION_CACHE_ = null;      // "source|id" -> confirmation booking
 let RNR_CONFIRM_THREAD_INDEX_ = null;    // "source|id" -> Gmail thread
 let RNR_MODIFY_THREAD_INDEX_ = null;     // "source|id" -> Gmail thread
 let RNR_REINSTATED_IDS_ = null;          // Set of "source|id" rebooked this run
+let RNR_RESOLVED_SUBJECTS_ = null;       // subjects processed this run (to clear stale Errors rows)
 
 // When true, getThreadsSafe_ skips threads already carrying the PROCESSED
 // label. Set true by the frequent run, false by the twice-daily audit.
@@ -340,6 +341,7 @@ var RNR_SKIP_PROCESSED_ = false;
 
 function resetRunCaches_() {
   RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0 };
+  RNR_RESOLVED_SUBJECTS_ = new Set();
   RNR_LABEL_CACHE_ = new Map();
   RNR_THREADS_CACHE_ = new Map();
   RNR_TEXT_CACHE_ = new Map();
@@ -512,6 +514,7 @@ function runBookingCore_(skipProcessed) {
     console.log(String(err && err.stack ? err.stack : err));
 
   } finally {
+    pruneResolvedErrors_();   // drop Errors rows for emails we resolved this run
     writeRunStatus_(skipProcessed ? 'fast (5-min)' : 'audit (full re-read)');
     lock.releaseLock();
   }
@@ -918,7 +921,40 @@ function moveThreadOutOfInbox_(thread) {
 function finalizeThreadProcessed_(thread) {
   safeAddLabel_(thread, RNR.LABELS.PROCESSED);
   safeMarkRead_(thread);
+  recordResolvedThread_(thread);
   if (RNR_RUN_STATS_) RNR_RUN_STATS_.processed++;
+}
+
+/** Remember a thread's subject once it is successfully processed, so any stale
+ *  Errors-tab row about it can be removed at the end of the run. */
+function recordResolvedThread_(thread) {
+  try {
+    if (!RNR_RESOLVED_SUBJECTS_) return;
+    const s = thread && thread.getFirstMessageSubject ? String(thread.getFirstMessageSubject() || '').trim() : '';
+    if (s) RNR_RESOLVED_SUBJECTS_.add(s);
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * Remove Errors-tab rows whose Details reference a subject we SUCCESSFULLY
+ * processed this run. An error that has since resolved (e.g. a cancellation
+ * whose booking is now handled) should not keep showing. Runs once at the end
+ * of a run, so it is one read + a few deletes, not a scan per thread.
+ */
+function pruneResolvedErrors_() {
+  try {
+    if (!RNR_RESOLVED_SUBJECTS_ || !RNR_RESOLVED_SUBJECTS_.size) return;
+    const subjects = Array.from(RNR_RESOLVED_SUBJECTS_).filter(Boolean);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sh = ss.getSheetByName(RNR.SHEETS.ERRORS);
+    if (!sh || sh.getLastRow() < 2) return;
+    const n = sh.getLastRow() - 1;
+    const details = sh.getRange(2, 3, n, 1).getValues();   // column C = Details
+    for (let i = details.length - 1; i >= 0; i--) {
+      const d = String(details[i][0] || '');
+      if (d && subjects.some(s => d.indexOf(s) !== -1)) sh.deleteRow(i + 2);
+    }
+  } catch (e) { /* best-effort; a leftover error row is harmless */ }
 }
 
 /**
@@ -929,6 +965,7 @@ function finalizeThreadCancelled_(thread) {
   safeAddLabel_(thread, RNR.LABELS.PROCESSED);
   safeMarkRead_(thread);
   if (RNR.ARCHIVE_CANCELLED_IMMEDIATELY) safeArchive_(thread);
+  recordResolvedThread_(thread);
   if (RNR_RUN_STATS_) RNR_RUN_STATS_.processed++;
 }
 
@@ -1921,7 +1958,7 @@ function processViatorModificationsLabel_() {
         }
 
         if (isValidBooking_(finalBooking) && !isCompleted_(finalBooking)) {
-          upsertActiveBooking_(finalBooking);
+          upsertActiveBooking_(finalBooking, true, true);   // modification: lenient match
           moveMatchingConfirmationOutOfInbox_(finalBooking);
         }
       });
@@ -2040,7 +2077,7 @@ function processGygModificationsLabel_() {
       // this code for the rest of the run.
       markReinstated_(RNR.SOURCE.GYG, id);
 
-      upsertActiveBooking_(finalBooking);
+      upsertActiveBooking_(finalBooking, true, true);   // modification: lenient match
       moveMatchingConfirmationOutOfInbox_(finalBooking);
       handled = true;
     } catch (e) {
@@ -2115,7 +2152,7 @@ function processModificationThread_(thread, source) {
 
       if (isValidBooking_(completedBooking)) {
         if (!isBookingCancelledByEmail_(completedBooking)) {
-          if (!isCompleted_(completedBooking)) upsertActiveBooking_(completedBooking);
+          if (!isCompleted_(completedBooking)) upsertActiveBooking_(completedBooking, true, true);   // modification: lenient match
           moveMatchingConfirmationOutOfInbox_(completedBooking);
         } else {
           removeActiveBookingBySourceAndId_(completedBooking.source, completedBooking.bookingId);
@@ -2846,7 +2883,7 @@ function extractBookingIdFromThread_(thread, source) {
  * 11. ACTIVE SHEET WRITE / DELETE
  ******************************************************/
 
-function upsertActiveBooking_(booking, allowUpdate) {
+function upsertActiveBooking_(booking, allowUpdate, lenientMatch) {
   if (allowUpdate === undefined) allowUpdate = true;
   const b = normalizeBooking_(booking);
 
@@ -2895,8 +2932,10 @@ function upsertActiveBooking_(booking, allowUpdate) {
     for (let i = 0; i < rows.length; i++) {
       const existing = rowToBooking_(rows[i], sheetName);
 
-      // Same booking already on the sheet.
-      if (sameBooking_(existing, b)) {
+      // Same booking already on the sheet. Modification emails match leniently
+      // (id, or date+time+phone-or-name) so a tweaked name/dropped phone still
+      // updates the right row instead of duplicating it.
+      if (sameBooking_(existing, b, { lenient: !!lenientMatch })) {
         // MANUAL EDIT AUTHORITY: confirmation re-reads (audits) pass
         // allowUpdate=false — an existing row is never touched, so whatever a
         // manager typed in any column STAYS. Only modification/cancellation
@@ -3100,7 +3139,7 @@ function chooseBetterBooking_(a, b) {
  * 13. MATCHING
  ******************************************************/
 
-function sameBooking_(a, b) {
+function sameBooking_(a, b, opts) {
   const A = normalizeBooking_(a);
   const B = normalizeBooking_(b);
 
@@ -3127,6 +3166,13 @@ function sameBooking_(a, b) {
   const samePhone = A.phoneKey && B.phoneKey && A.phoneKey === B.phoneKey;
   const sameDate = A.dateKey && B.dateKey && A.dateKey === B.dateKey;
   const sameTime = normalizeTime_(A.time) === normalizeTime_(B.time);
+
+  // LENIENT (modifications only): match the way cancellations do — same
+  // date + time and EITHER the phone OR a compatible name. A modification email
+  // often drops the phone or tweaks the name, so requiring both would miss it
+  // and create a duplicate row. Confirmations keep the STRICT rule below (both
+  // phone AND name), so two genuinely different walk-up bookings never merge.
+  if (opts && opts.lenient) return sameDate && sameTime && (samePhone || compatibleName);
 
   return compatibleName && samePhone && sameDate && sameTime;
 }
