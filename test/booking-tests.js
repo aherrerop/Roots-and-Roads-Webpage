@@ -342,6 +342,19 @@ const _n1=normalizeBooking_({source:'Free Tour',name:'Ann Lee',phone:'+34611',da
 const _n2=normalizeBooking_({source:'Free Tour',name:'Ann Lee',phone:'+34611',date:'2027-08-04',time:'11:00 AM'});
 check('no ids: same name+phone+date+time -> same booking (soft match still works)', sameBooking_(_n1,_n2)===true, null);
 
+console.log('--- Modification matching is lenient (id, or date+time+phone-OR-name) ---');
+const _m0=normalizeBooking_({source:'GetYourGuide',name:'Anna Rossi',phone:'+34600111',date:'2027-08-15',time:'11:00 AM',guests:2});
+const _mNoPhone=normalizeBooking_({source:'GetYourGuide',name:'Anna Rossi',phone:'',date:'2027-08-15',time:'11:00 AM',guests:3});
+check('lenient: same date+time+name but NO phone -> match (updates, not duplicates)', sameBooking_(_m0,_mNoPhone,{lenient:true})===true, null);
+check('strict (confirmations) still needs phone too -> no match', !sameBooking_(_m0,_mNoPhone), null);
+const _mNoName=normalizeBooking_({source:'GetYourGuide',name:'A. Rossi typo',phone:'+34600111',date:'2027-08-15',time:'11:00 AM'});
+check('lenient: same date+time+phone but tweaked name -> match', sameBooking_(_m0,_mNoName,{lenient:true})===true, null);
+const _mIdA=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGAAA1',name:'Anna Rossi',phone:'+34600111',date:'2027-08-15',time:'11:00 AM'});
+const _mIdB=normalizeBooking_({source:'GetYourGuide',bookingId:'GYGBBB2',name:'Anna Rossi',phone:'+34600111',date:'2027-08-15',time:'11:00 AM'});
+check('lenient STILL refuses two different platform ids (never merges paid bookings)', sameBooking_(_mIdA,_mIdB,{lenient:true})===false, null);
+const _mOther=normalizeBooking_({source:'GetYourGuide',name:'Bob Other',phone:'+34600999',date:'2027-08-15',time:'11:00 AM'});
+check('lenient does NOT match a different guest at the same slot', sameBooking_(_m0,_mOther,{lenient:true})===false, null);
+
 console.log('--- Language recognition flag ---');
 check('recognised: Inglés', languageRecognised_('Inglés (Live tour guide)')===true, null);
 check('recognised: empty means platform-default, treated as fine', languageRecognised_('')===true, null);
