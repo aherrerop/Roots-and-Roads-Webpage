@@ -11,6 +11,8 @@ function fmtDate(d, tz, pat){
     case 'EEE, MMM d': return DAYS[d.getDay()].slice(0,3)+', '+MONS[d.getMonth()]+' '+d.getDate();
     case 'EEEE': return DAYS[d.getDay()];
     case 'H:mm': return d.getHours()+':'+p2(d.getMinutes());
+    case 'HH:mm': return p2(d.getHours())+':'+p2(d.getMinutes());
+    case 'HH:mm:ss': return p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds());
     case 'EEE, d MMM yyyy': return DAYS[d.getDay()].slice(0,3)+', '+d.getDate()+' '+MONS[d.getMonth()]+' '+d.getFullYear();
     case 'yyyy_MM': return d.getFullYear()+'_'+p2(d.getMonth()+1);
     default: return d.toISOString();

@@ -20,6 +20,12 @@ console.log('--- The save payload carries children (so the ledger records them) 
 const saveFn = html.slice(html.indexOf('async function saveTour('), html.indexOf('/* ================== ALL GUIDES'));
 check('saveTour sends children in each booking', /children:\s*b\.children/.test(saveFn), saveFn.slice(0, 0));
 
+console.log('--- Freshness indicator + manager window controls exist ---');
+check('freshness element is in the page', /id="fresh"/.test(html), null);
+check('setFresh runs on load (loading/ok/stale states)', /setFresh\("loading"\)/.test(html) && /setFresh\("ok"/.test(html) && /setFresh\("stale"\)/.test(html), null);
+check('loadTours passes the manager window days', /params\.days\s*=\s*MANAGER_DAYS/.test(html), null);
+check('a "Load more" button appears when the server says hasMore', /HAS_MORE/.test(html) && /loadMoreBtn/.test(html), null);
+
 console.log('--- Pending assignment survives a stale read (the Albert->Carlos bug) ---');
 const shift = g => ({ dateKey: '2026-07-31', time: '17:00', language: 'English', isPrivate: false, assigned: g ? [g] : [], guide: g || '', status: g ? 'OK' : 'Not assigned' });
 const info = { dateKey: '2026-07-31', time: '17:00', language: 'English', isPrivate: '' };

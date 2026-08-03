@@ -75,6 +75,13 @@ const PORTAL = {
   // Show tours from today up to this many days ahead.
   UPCOMING_DAYS: 45,
 
+  // Manager "All tours" loads only the near-term window first (today .. this many
+  // days). Far-out tours (e.g. next month) load on demand via "Load more", which
+  // adds MANAGER_WINDOW_MORE days each tap — they are costly to build and rarely
+  // needed when assigning this week's tours.
+  MANAGER_WINDOW_DAYS: 7,
+  MANAGER_WINDOW_MORE: 14,
+
   // A tour stays visible on the portal until this hour (24h) of its own day,
   // so management can check prepaid/free guests after it ran.
   TOUR_VISIBLE_UNTIL_HOUR: 23,
@@ -333,14 +340,21 @@ function apiTours_(p) {
     (a.minutes - b.minutes) ||
     String(a.language).localeCompare(String(b.language)));
 
+  // Who is asking — decides how much we load. A regular guide only needs their
+  // OWN check-ins (their My-tours); a manager needs everyone's (they watch all).
+  const me = findGuideByName_(name);
+  const isManager = !!(me && me.manager);
+
   // CHECK-INS live in the ledger tab of the guide the tour is ASSIGNED to, and
   // only a tour TODAY or earlier can have any (a future tour has none yet). So
-  // read ONLY those few tabs — not all twelve every poll. This is exactly what
-  // management pointed out, and it is what keeps the refresh cheap. Read live
-  // (never cached) so a guest ticked in shows on the very next poll.
+  // read ONLY those few tabs — never all twelve. A regular guide reads just their
+  // own tab; a manager reads today's assigned guides. Read live (never cached)
+  // so a guest ticked in shows on the very next poll.
   const ledgerGuides = {};
   ledgerGuides[name] = true;                        // my own tab (I may have checked in)
-  schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(g => { if (g) ledgerGuides[g] = true; }); });
+  if (isManager) {
+    schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(g => { if (g) ledgerGuides[g] = true; }); });
+  }
   const ledger = readLedgerForGuides_(Object.keys(ledgerGuides));   // { reservations, checkins }
   const priorCheckins = ledger.checkins;            // key|bookingId -> {n, at}
 
@@ -426,10 +440,6 @@ function apiTours_(p) {
     };
   });
 
-  // Who is asking — decides what the shared tour list may show.
-  const me = findGuideByName_(name);
-  const isManager = !!(me && me.manager);
-
   // Shared tour list (shown to every guide): only THIS WEEK (today .. Sunday),
   // so the compact list stays scannable. The manager "All tours" tab below uses
   // the full upcoming window instead.
@@ -469,12 +479,18 @@ function apiTours_(p) {
     });
     busyMap = buildBusyMap_(schedule);
   }
+  // The manager "All tours" list loads the near-term window first (today .. +N
+  // days); "Load more" re-requests with a bigger `days`. This keeps the common
+  // refresh light — a manager assigning this week does not pay to build next
+  // month's tours every 20 seconds.
+  const windowDays = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(p.days) || PORTAL.MANAGER_WINDOW_DAYS));
+  const managerHorizon = addDaysKey_(today, windowDays);
+  let hasMore = false;
   if (isManager) {
-    // Managers see EVERY upcoming tour (full UPCOMING_DAYS window), not just
-    // this week, so they can plan and assign ahead. Check-ins come from the
-    // single cross-guide sweep above, so a check-in shows no matter which guide
-    // on the tour tapped it (not only the primary one).
-    allTours = schedule.map(shift => {
+    hasMore = schedule.some(s => s.dateKey > managerHorizon);
+    // Check-ins come from the targeted ledger read above, so a check-in shows no
+    // matter which assigned guide on the tour tapped it.
+    allTours = schedule.filter(s => s.dateKey <= managerHorizon).map(shift => {
       const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
       const primary = shift.assigned[0] || '';
       const bookings = (bookingsByKey[key] || [])
@@ -514,7 +530,11 @@ function apiTours_(p) {
   }
 
   return { ok: true, guide: name, manager: isManager, rates, tours,
-           schedule: scheduleView, allTours, guidesByLanguage };
+           schedule: scheduleView, allTours, guidesByLanguage,
+           hasMore: hasMore, windowDays: windowDays,
+           // Freshness: the server's own clock at the moment this data was built,
+           // so the phone can show "Updated HH:mm:ss" truthfully (not its own clock).
+           now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };
 }
 
 
