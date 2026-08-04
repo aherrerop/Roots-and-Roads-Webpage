@@ -17,7 +17,7 @@ const dayKey = o => { const d = new Date(); d.setDate(d.getDate() + o); return U
 const control = new __mock.MockSS('control'); SpreadsheetApp._active = control;
 control.insertSheet('Guides').getRange(1, 1, 3, 11).setValues([
   ['Guide', 'Active?', 'Seniority', 'English', 'German', 'Spanish', 'French', 'Italian', 'Manager', 'Email', 'Password'],
-  ['Albert', true, 1, true, false, false, false, false, true, 'a@x.com', 'pw'],
+  ['Albert', true, 2, true, false, false, false, false, true, 'a@x.com', 'pw'],
   ['Carlos', true, 1, true, false, false, false, false, false, 'c@x.com', 'pw']]);
 control.insertSheet('Weekly_Schedule').getRange(1, 1, 1, 6).setValues([
   ['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until']]);
@@ -100,6 +100,13 @@ const carlosTab = ledgerSS_().getSheetByName('Carlos');
 const carlosRows = carlosTab ? carlosTab.getRange(2, 1, Math.max(0, carlosTab.getLastRow() - 1), LEDGER_HEADERS.length).getValues() : [];
 const ivanRow = carlosRows.find(x => String(x[LEDGER_BOOKINGID_COL] || '') === 'GYGE2E002');
 check('the ledger records the children count from the save payload', ivanRow && Number(ivanRow[8]) === 2, ivanRow && ivanRow[8]);
+
+console.log('--- Per-phase timings + seniority-ordered eligible list ---');
+const rt = apiTours_({ token: token });
+check('response reports per-phase timings (sched/book/ledger)', rt.timings && typeof rt.timings.sched === 'number' && typeof rt.timings.book === 'number' && typeof rt.timings.ledger === 'number', rt.timings);
+// Carlos is seniority 1, Albert seniority 2 -> Carlos must sort first, even though
+// "Albert" is alphabetically earlier. Proves seniority beats alphabetical.
+check('English eligible list is most-senior-first (Carlos before Albert)', (rt.guidesByLanguage.English || [])[0] === 'Carlos', rt.guidesByLanguage.English);
 
 console.log('--- Manager window: near tours load first, far tours behind "Load more" ---');
 const FAR = dayKey(40);
