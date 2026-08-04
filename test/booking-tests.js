@@ -361,6 +361,41 @@ check('recognised: empty means platform-default, treated as fine', languageRecog
 check('NOT recognised: Portuguese', languageRecognised_('Portuguese')===false, null);
 check('NOT recognised: gibberish', languageRecognised_('Xyzzy 123')===false, null);
 
+console.log('--- Portal Feed rebuild (one read-optimised tab, preserves check-ins) ---');
+(function(){
+  const ss=new __mock.MockSS('booking'); SpreadsheetApp._active=ss;
+  const mk=n=>{ const s=ss.insertSheet(n); s.getRange(1,1,1,RNR.ACTIVE_HEADERS.length).setValues([RNR.ACTIVE_HEADERS]);
+    s.getRange(1,5,1,1).setNumberFormat('@'); s.getRange(1,8,1,1).setNumberFormat('@'); return s; };
+  const en=mk('English Tours'), fr=mk('French Tours');
+  const day=o=>{ const d=new Date(); d.setDate(d.getDate()+o); return d; };
+  en.getRange(2,5,3,1).setNumberFormat('@'); en.getRange(2,8,3,1).setNumberFormat('@');
+  fr.getRange(2,5,1,1).setNumberFormat('@'); fr.getRange(2,8,1,1).setNumberFormat('@');
+  // in-window English (today+2) with a manager note in col J
+  en.getRange(2,1,1,10).setValues([['Jane','+34600',3,day(2),'11:00 AM','GetYourGuide',30,'GYGFEED1','2 children','VIP']]);
+  // in-window French (today+3)
+  fr.getRange(2,1,1,9).setValues([['Pierre','+33600',2,day(3),'10:00 AM','GetYourGuide',27,'GYGFEED2','']]);
+  // out-of-window English (today+400) -> excluded
+  en.getRange(3,1,1,9).setValues([['Old','+34',1,day(400),'11:00 AM','GetYourGuide',13.5,'GYGFAR','']]);
+  // pre-existing check-in already in the feed for GYGFEED1 -> must be preserved
+  const feed=ss.insertSheet('Portal Feed');
+  feed.getRange(1,1,1,RNR.PORTAL_FEED_HEADERS.length).setValues([RNR.PORTAL_FEED_HEADERS]);
+  feed.getRange(2,10,1,1).setNumberFormat('@'); feed.getRange(2,14,1,1).setNumberFormat('@');
+  feed.getRange(2,1,1,14).setValues([['x','x','English','x','x',0,0,'x',0,'GYGFEED1','','',2,'10:05']]);
+
+  rebuildPortalFeed_();
+  const fv=feed.getRange(2,1,feed.getLastRow()-1,14).getValues();
+  const byId=id=>fv.find(r=>String(r[9])===id);
+  check('feed has both in-window bookings only', fv.length===2, fv.length);
+  check('feed excludes the out-of-window booking', !byId('GYGFAR'), null);
+  const j=byId('GYGFEED1');
+  check('feed row carries Language', j&&j[2]==='English', j&&j[2]);
+  check('feed row carries children from the notes', j&&Number(j[6])===2, j&&j[6]);
+  check('feed carries the Manager note (col L)', j&&j[11]==='VIP', j&&j[11]);
+  check('rebuild PRESERVES an existing check-in by id (M,N)', j&&Number(j[12])===2&&String(j[13])==='10:05', j&&[j[12],j[13]]);
+  const p=byId('GYGFEED2');
+  check('a booking with no prior check-in has blank check-in cols', p&&(p[12]===''||p[12]==null), p&&p[12]);
+})();
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
