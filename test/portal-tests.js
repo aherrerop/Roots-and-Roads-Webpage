@@ -27,6 +27,10 @@ check('loadTours passes the manager window days', /params\.days\s*=\s*MANAGER_DA
 check('a "Load more" button appears when the server says hasMore', /HAS_MORE/.test(html) && /loadMoreBtn/.test(html), null);
 check('the overlay holds through the settle window (no clear-on-match flip-back)', !/cur===p\.guide/.test(html), null);
 
+console.log('--- Check-in only confirms "✓" once the ledger write succeeds ---');
+check('saveTour reports whether the write succeeded', /return ok;/.test(html) && /ok=!!\(r&&r\.ok\)/.test(html), null);
+check('a failed save reverts the check-in button (no fake ✓)', /const ok=await saveTour\(tid\)/.test(html) && /btn\.textContent="Check in"/.test(html), null);
+
 console.log('--- Pending assignment survives a stale read (the Albert->Carlos bug) ---');
 const shift = g => ({ dateKey: '2026-07-31', time: '17:00', language: 'English', isPrivate: false, assigned: g ? [g] : [], guide: g || '', status: g ? 'OK' : 'Not assigned' });
 const info = { dateKey: '2026-07-31', time: '17:00', language: 'English', isPrivate: '' };
