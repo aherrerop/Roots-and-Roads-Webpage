@@ -25,6 +25,7 @@ check('freshness element is in the page', /id="fresh"/.test(html), null);
 check('setFresh runs on load (loading/ok/stale states)', /setFresh\("loading"\)/.test(html) && /setFresh\("ok"/.test(html) && /setFresh\("stale"\)/.test(html), null);
 check('loadTours passes the manager window days', /params\.days\s*=\s*MANAGER_DAYS/.test(html), null);
 check('a "Load more" button appears when the server says hasMore', /HAS_MORE/.test(html) && /loadMoreBtn/.test(html), null);
+check('the overlay holds through the settle window (no clear-on-match flip-back)', !/cur===p\.guide/.test(html), null);
 
 console.log('--- Pending assignment survives a stale read (the Albert->Carlos bug) ---');
 const shift = g => ({ dateKey: '2026-07-31', time: '17:00', language: 'English', isPrivate: false, assigned: g ? [g] : [], guide: g || '', status: g ? 'OK' : 'Not assigned' });
@@ -35,12 +36,23 @@ const stale = { allTours: [shift('Albert')], tours: [], schedule: [] };   // ser
 A.applyPendingAssigns(stale);
 check('a stale "Albert" read is overridden by the pending Carlos', stale.allTours[0].assigned.join() === 'Carlos', stale.allTours[0]);
 check('the old guide is gone, not merged', stale.allTours[0].assigned.indexOf('Albert') === -1, stale.allTours[0].assigned);
-check('pending is still held until the server confirms', Object.keys(A.pending()).length === 1, A.pending());
+check('pending is still held', Object.keys(A.pending()).length === 1, A.pending());
 
-const caughtUp = { allTours: [shift('Carlos')], tours: [], schedule: [] };   // server caught up
-A.applyPendingAssigns(caughtUp);
-check('once the server shows Carlos, it stays Carlos', caughtUp.allTours[0].assigned.join() === 'Carlos', caughtUp.allTours[0]);
-check('pending is cleared after confirmation', Object.keys(A.pending()).length === 0, A.pending());
+// A read that MATCHES must NOT clear the pending — a later lagging replica could
+// still return the old value, and we must keep overriding it.
+const matched = { allTours: [shift('Carlos')], tours: [], schedule: [] };
+A.applyPendingAssigns(matched);
+check('a matching read still shows Carlos', matched.allTours[0].assigned.join() === 'Carlos', matched.allTours[0]);
+check('pending is STILL held after a match (guards a lagging replica)', Object.keys(A.pending()).length === 1, A.pending());
+const laggard = { allTours: [shift('Albert')], tours: [], schedule: [] };  // replica flips back to old
+A.applyPendingAssigns(laggard);
+check('a LATER lagging "Albert" read is still overridden to Carlos (no flip-back)', laggard.allTours[0].assigned.join() === 'Carlos', laggard.allTours[0]);
+
+// Once the settle window passes the pending expires and the real value flows.
+Object.keys(A.pending()).forEach(k => { A.pending()[k].until = Date.now() - 1; });
+const settled = { allTours: [shift('Carlos')], tours: [], schedule: [] };
+A.applyPendingAssigns(settled);
+check('after the settle window the pending clears', Object.keys(A.pending()).length === 0, A.pending());
 
 console.log('--- A later stale poll cannot resurrect the old guide mid-flight ---');
 A.setPendingAssign(info, 'Carlos');

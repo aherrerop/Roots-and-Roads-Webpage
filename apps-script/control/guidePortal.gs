@@ -152,9 +152,12 @@ function doGet(e) {
        'guide=' + (p.guide || ''), 'id=' + (p.bookingId || p.id || '')].filter(x => !/=$/.test(x)).join(' ');
     portalLog_(p.action, ms, !!(out && out.ok), detail);
   } else if (p.action === 'tours' && ms > PORTAL.SLOW_MS) {
-    // Reads are not normally logged (the 8s poll would flood the log), but a
-    // SLOW load is exactly what we want to catch and diagnose.
-    portalLog_('tours (slow)', ms, !!(out && out.ok), 'load exceeded ' + PORTAL.SLOW_MS + 'ms');
+    // Reads are not normally logged (the frequent poll would flood the log), but
+    // a SLOW load is exactly what we want to catch — with its per-phase breakdown
+    // (schedule vs booking list vs ledger) so we can see where the time went.
+    const tim = (out && out.timings) ?
+      ' | ' + Object.keys(out.timings).map(function (k) { return k + '=' + out.timings[k] + 'ms'; }).join(' ') : '';
+    portalLog_('tours (slow)', ms, !!(out && out.ok), 'load exceeded ' + PORTAL.SLOW_MS + 'ms' + tim);
   }
 
   return jsonp_(callback, out);
@@ -324,13 +327,19 @@ function apiTours_(p) {
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
 
   const today = todayKey_();
+  // Per-phase stopwatch, returned as `timings` so we can see exactly where a
+  // load spends its milliseconds (schedule vs booking list vs ledger) — real
+  // numbers, not guesses. A cached phase reads ~0ms; a cold one shows its cost.
+  const T = {};
+  const _t = (k, fn) => { const s = Date.now(); const r = fn(); T[k] = Date.now() - s; return r; };
+
   // These three cross-file reads are identical for every guide for many seconds,
   // so they are cached (invalidated on any assign/move/note change). This is the
   // core fix for the 8-127s loads: the frequent poll stops re-opening the
   // BookingSheet and re-reading every schedule grid each time.
-  const rates = cachedRead_('rates', 60, readRates_);
-  let schedule = cachedRead_('sched', PORTAL.CACHE_TTL, function () { return readSchedule_(); });
-  const bookingsByKey = cachedRead_('bk', PORTAL.CACHE_TTL, readBookingsIndex_);
+  const rates = _t('rates', function () { return cachedRead_('rates', 60, readRates_); });
+  let schedule = _t('sched', function () { return cachedRead_('sched', PORTAL.CACHE_TTL, function () { return readSchedule_(); }); });
+  const bookingsByKey = _t('book', function () { return cachedRead_('bk', PORTAL.CACHE_TTL, readBookingsIndex_); });
   appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
   appendWeeklyScheduleShifts_(schedule);            // #4: new Weekly_Schedule offer rows show at once
   // Order every shift by date then start time (so appended orphans slot into
@@ -355,7 +364,7 @@ function apiTours_(p) {
   if (isManager) {
     schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(g => { if (g) ledgerGuides[g] = true; }); });
   }
-  const ledger = readLedgerForGuides_(Object.keys(ledgerGuides));   // { reservations, checkins }
+  const ledger = _t('ledger', function () { return readLedgerForGuides_(Object.keys(ledgerGuides)); });   // { reservations, checkins }
   const priorCheckins = ledger.checkins;            // key|bookingId -> {n, at}
 
   // A completed tour's live rows move to Done, so fall back to durable sources
@@ -466,16 +475,24 @@ function apiTours_(p) {
   let busyMap = null;
   if (isManager) {
     guidesByLanguage = {};
+    const seniorityOf = {};
     const raw = readGuidesRaw_();
     const cols = guideColumns_(raw.header);
     raw.rows.forEach(row => {
       const g = parseGuideRow_(row, cols);
       if (!g.name || !g.active) return;
+      seniorityOf[g.name] = g.seniority;
       Object.keys(g.languages).forEach(l => {
         if (g.languages[l] === true) {
           (guidesByLanguage[l] = guidesByLanguage[l] || []).push(g.name);
         }
       });
+    });
+    // Most senior first (then alphabetical), so the assign list's top choice is
+    // the guide management would usually pick — often a one-tap decision.
+    Object.keys(guidesByLanguage).forEach(l => {
+      guidesByLanguage[l].sort((a, b) =>
+        (seniorityOf[a] - seniorityOf[b]) || a.localeCompare(b));
     });
     busyMap = buildBusyMap_(schedule);
   }
@@ -532,6 +549,7 @@ function apiTours_(p) {
   return { ok: true, guide: name, manager: isManager, rates, tours,
            schedule: scheduleView, allTours, guidesByLanguage,
            hasMore: hasMore, windowDays: windowDays,
+           timings: T,   // { rates, sched, book, ledger } ms — where the load went
            // Freshness: the server's own clock at the moment this data was built,
            // so the phone can show "Updated HH:mm:ss" truthfully (not its own clock).
            now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };
@@ -936,7 +954,44 @@ function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guid
   // Self-heal the title to the true min/max of the rows, so the anchor is always
   // accurate for the next read/write (kills the degenerate "(X to X)" title).
   refreshGridTitle_(sh, language, anchor);
+  // Re-apply the scheduler's professional look so a portal-inserted row/column
+  // never leaves the grid half-styled (blank rows like the old screenshot).
+  styleScheduleGrid_(sh);
   return { ok: true, assigned: guide || '' };
+}
+
+/**
+ * Give a Schedule_<language> grid the same clean look makeSchedule produces, no
+ * matter how its rows/columns were added — so a row the PORTAL inserts is styled
+ * exactly like one the weekly scheduler wrote. Idempotent and cheap (a handful
+ * of range ops over a small grid). Only touches background/alignment/borders,
+ * never the guide-name font, so a bold "lock" stays bold.
+ */
+function styleScheduleGrid_(sh) {
+  try {
+    const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return;
+    // Title (row 1): re-merge across the used width and paint it.
+    sh.getRange(1, 1, 1, sh.getMaxColumns()).breakApart();
+    sh.getRange(1, 1, 1, lastCol).merge()
+      .setFontWeight('bold').setFontSize(14).setHorizontalAlignment('center')
+      .setBackground('#2563eb').setFontColor('#ffffff');
+    // Header (row 2): time columns; private ones tinted amber.
+    sh.getRange(2, 1, 1, lastCol).setFontWeight('bold').setHorizontalAlignment('center').setBackground('#bfdbfe');
+    const times = sh.getRange(2, 1, 1, lastCol).getDisplayValues()[0];
+    for (let c = 2; c <= lastCol; c++) {
+      const h = parseGridTimeHeader_(times[c - 1]);
+      if (h && h.isPrivate) sh.getRange(2, c).setBackground('#fde68a');
+    }
+    // Body (rows 3+): bordered, date column bold on light blue, cells centred.
+    if (lastRow >= 3) {
+      sh.getRange(3, 1, lastRow - 2, lastCol)
+        .setBorder(true, true, true, true, true, true).setVerticalAlignment('middle').setWrap(true);
+      sh.getRange(3, 1, lastRow - 2, 1).setFontWeight('bold').setBackground('#dbeafe');
+      sh.getRange(3, 2, lastRow - 2, lastCol - 1).setHorizontalAlignment('center').setBackground('#f8fbff');
+    }
+    sh.setFrozenRows(2);
+  } catch (e) { /* styling is cosmetic — never fail an assignment over it */ }
 }
 
 /** Rewrite the grid title to span the actual first..last dated row. */
@@ -1091,7 +1146,7 @@ function guideColumns_(header) {
     if (header[c]) languages.push({ col: c, name: header[c] });
   }
   return { nameCol: idx('Guide'), activeCol: idx('Active?'), emailCol: email, passwordCol: password,
-           managerCol: idx('Manager'), languages };
+           managerCol: idx('Manager'), seniorityCol: seniority, languages };
 }
 
 function parseGuideRow_(row, cols) {
@@ -1104,6 +1159,9 @@ function parseGuideRow_(row, cols) {
     password: row[cols.passwordCol],
     // Add a "Manager" column (TRUE/FALSE) in the Guides tab to grant the manager view.
     manager: cols.managerCol > -1 ? row[cols.managerCol] === true : false,
+    // Seniority: lower number = more senior (1 first). Missing -> sorts last.
+    seniority: (cols.seniorityCol > -1 && row[cols.seniorityCol] !== '' && !isNaN(row[cols.seniorityCol]))
+      ? Number(row[cols.seniorityCol]) : 999,
     languages
   };
 }

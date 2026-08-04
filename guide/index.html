@@ -174,7 +174,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-03-window-freshness";
+const PORTAL_VERSION = "2026-08-03-assign-snappy";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -429,16 +429,20 @@ function shiftIdKey(o){
 function setPendingAssign(info, guide){
   PENDING_ASSIGN[shiftIdKey(info)] = { guide: guide||"", until: Date.now()+PENDING_TTL };
 }
-/* Overlay pending assignments onto a tours payload, in place. When the server's
-   value matches what we set, the change is confirmed and the pending is cleared. */
+/* Overlay pending assignments onto a tours payload, in place. Holds the value
+   you just set for the whole settle window, then lets the server value through. */
 function applyPendingAssigns(r){
   const now=Date.now();
   Object.keys(PENDING_ASSIGN).forEach(k=>{ if(PENDING_ASSIGN[k].until<now) delete PENDING_ASSIGN[k]; });
   if(!Object.keys(PENDING_ASSIGN).length) return;
   const overlay=s=>{
     const p=PENDING_ASSIGN[shiftIdKey(s)]; if(!p) return;
-    const cur=(s.assigned&&s.assigned[0])||s.guide||"";
-    if(cur===p.guide){ delete PENDING_ASSIGN[shiftIdKey(s)]; return; }   // server caught up
+    // Impose the just-assigned value for the WHOLE window, regardless of what any
+    // single read says. Google's sheet replicas are inconsistent for a few
+    // seconds after a write, so consecutive reads flip between old and new —
+    // clearing the moment one read "matched" let the next lagging read revert it
+    // (the flip-back). We hold until the pending expires (PENDING_TTL), by which
+    // time every replica has converged on the new value.
     s.assigned=p.guide?[p.guide]:[]; s.guide=p.guide||"";
     s.coGuides=p.guide?[p.guide]:[]; s.status=p.guide?"OK":"Not assigned";
   };
@@ -639,10 +643,15 @@ function bindTours(tours){
         }
         if(!r.ok){ ok=false; errMsg=r.conflict?"":(r.error||""); }
       }catch(err){ ok=false; errMsg=err.message||"Network problem — try again"; }
-      if(!ok){ delete PENDING_ASSIGN[shiftIdKey(info)]; }   // write failed -> drop the optimistic value
-      // Reconcile in the background. A stale read can't revert now: applyPendingAssigns
-      // re-imposes the pending value on every render until the server confirms it.
-      try{ await loadTours(); }catch(e){}
+      if(ok){
+        // Confirmed. The optimistic overlay already shows it and HOLDS it through
+        // the replica-settle window, so we do NOT re-read the grid now (a lagging
+        // replica could otherwise flip it back). The next natural poll reconciles.
+        if(store.cache) renderAll(store.cache);
+      } else {
+        delete PENDING_ASSIGN[shiftIdKey(info)];   // write failed -> drop the optimistic value
+        try{ await loadTours(); }catch(e){}          // and show the real state
+      }
       MUTATING--;
       if(!ok && errMsg) alert(errMsg);
     };
