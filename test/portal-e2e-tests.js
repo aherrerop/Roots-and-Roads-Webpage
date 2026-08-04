@@ -139,6 +139,21 @@ check('apiSave_ does bounded work', Math.max.apply(null, saveMs) < 2000, Math.ma
 const gv3 = control.getSheetByName('Schedule_English').getDataRange().getDisplayValues();
 check('after many repeated assigns the grid STILL has a single row', gv3.filter((row, i) => i >= 2 && row[0] === label).length === 1, gv3.map(x => x[0]));
 
+console.log('--- Portal Feed: the portal reads reservations from one tab (with check-in cols for Phase 2) ---');
+// (All earlier assertions ran with NO feed tab -> they exercised the fallback
+//  to the per-language read, proving the fallback works.)
+const feed = booking.insertSheet('Portal Feed');
+feed.getRange(1, 1, 1, 14).setValues([['Date', 'Time', 'Language', 'Name', 'Phone', 'Adults', 'Children',
+  'Source', 'Income', 'Booking ID', 'Notes', 'Manager note', 'Checked-in', 'Check-in time']]);
+feed.getRange(2, 2, 1, 1).setNumberFormat('@'); feed.getRange(2, 10, 1, 1).setNumberFormat('@'); feed.getRange(2, 14, 1, 1).setNumberFormat('@');
+feed.getRange(2, 1, 1, 14).setValues([[DATE, '10:00 AM', 'English', 'Dana Ortiz', '+34600111222', 2, 0,
+  'GetYourGuide', 30, 'GYGE2E001', '', 'hello note', 2, '10:03']]);
+const fx = readPortalFeed_();
+const fk = shiftKey_(DATE, 600, 'english');
+check('readPortalFeed_ indexes the booking by shift', !!(fx && fx[fk] && fx[fk][0].bookingId === 'GYGE2E001'), fx && Object.keys(fx));
+check('feed carries the manager note', fx[fk][0].manualNote === 'hello note', fx[fk][0].manualNote);
+check('feed carries the check-in for Phase 2 (feedCheckedIn=2, at 10:03)', fx[fk][0].feedCheckedIn === 2 && fx[fk][0].feedCheckedAt === '10:03', [fx[fk][0].feedCheckedIn, fx[fk][0].feedCheckedAt]);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

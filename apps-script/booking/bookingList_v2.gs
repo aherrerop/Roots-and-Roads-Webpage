@@ -92,8 +92,25 @@ const RNR = {
     ITALIAN: 'Italian Tours',
     FRENCH: 'French Tours',
     DONE: 'Done Tours',
-    ERRORS: 'Errors'
+    ERRORS: 'Errors',
+    // Read-optimised view for the guide portal: EVERY upcoming reservation across
+    // all languages in ONE visible tab, so the portal reads one tab instead of
+    // opening and scanning six. Rebuilt every run. Columns L,M (Checked-in,
+    // Check-in time) are the portal's alone — the rebuild preserves them by
+    // Booking ID and never overwrites them.
+    PORTAL_FEED: 'Portal Feed'
   },
+
+  // Portal Feed columns. A-L are reservation data (rebuilt); M-N are check-in
+  // (written by the portal in a later phase, preserved by the rebuild).
+  //   J(10)=Booking ID, L(12)=Manager note (portal's col-J note), M(13)=Checked-in, N(14)=Check-in time
+  PORTAL_FEED_HEADERS: [
+    'Date', 'Time', 'Language', 'Name', 'Phone', 'Adults', 'Children',
+    'Source', 'Income', 'Booking ID', 'Notes', 'Manager note', 'Checked-in', 'Check-in time'
+  ],
+  // How far ahead the feed carries reservations. Matches the portal's upcoming
+  // window so My-tours (which can look weeks out) is fully served from the feed.
+  PORTAL_FEED_DAYS: 45,
 
   ACTIVE_HEADERS: [
     'Name',
@@ -507,6 +524,11 @@ function runBookingCore_(skipProcessed) {
     if (dirty && runHasTimeLeft_()) dedupeActiveSheets_();
     if (dirty && runHasTimeLeft_()) sortActiveSheets_();
     if (dirty && runHasTimeLeft_()) sortDoneSheet_();
+
+    // 6. Rebuild the guide portal's read-optimised feed EVERY run (even when
+    //    nothing changed) so it tracks the rolling date window. One tab the
+    //    portal can read instead of scanning six; check-ins are preserved.
+    if (runHasTimeLeft_()) safeRebuildPortalFeed_();
 
   } catch (err) {
     // Errors are logged, never rethrown, so Google does not email failure alerts.
@@ -3074,6 +3096,87 @@ function rowToBooking_(row, sheetName) {
     hasExplicitTime: true,
     hasExplicitIncome: true
   });
+}
+
+
+/******************************************************
+ * 11B. PORTAL FEED  (read-optimised view for the guide portal)
+ *
+ * ONE visible tab with every upcoming reservation across all languages, so the
+ * portal reads a single tab instead of opening and scanning six. Rebuilt every
+ * run from the active language tabs. The two check-in columns (L,M) are the
+ * portal's alone: the rebuild PRESERVES them by Booking ID and never overwrites
+ * a check-in with a blank.
+ ******************************************************/
+function safeRebuildPortalFeed_() {
+  try { rebuildPortalFeed_(); }
+  catch (e) { logError_('Portal feed rebuild failed', e, RNR.SHEETS.PORTAL_FEED); }
+}
+
+function rebuildPortalFeed_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const H = RNR.PORTAL_FEED_HEADERS;
+  let sh = ss.getSheetByName(RNR.SHEETS.PORTAL_FEED);
+  if (!sh) sh = ss.insertSheet(RNR.SHEETS.PORTAL_FEED);
+
+  // 1. Preserve any check-in already written by the portal
+  //    (J[10]=id, M[13]=Checked-in, N[14]=Check-in time).
+  const prev = {};
+  const last = sh.getLastRow();
+  if (last >= 2 && sh.getLastColumn() >= 14) {
+    const v = sh.getRange(2, 10, last - 1, 5).getValues();   // J,K,L,M,N
+    v.forEach(r => {
+      const id = String(r[0] || '').trim();
+      const ci = r[3];                                        // M = Checked-in
+      if (id && ci !== '' && ci != null) prev[id] = { checkedIn: ci, at: r[4] };  // N = time
+    });
+  }
+
+  // 2. Gather in-window reservations from every active language tab. Read 10
+  //    columns so the portal's per-booking Manager note (col J) rides along.
+  const today = stripTime_(new Date());
+  const minMs = today.getTime();
+  const maxMs = minMs + RNR.PORTAL_FEED_DAYS * 86400000;
+  const rows = [];
+  activeSheetNames_().forEach(name => {
+    const s = ss.getSheetByName(name);
+    if (!s || s.getLastRow() < 2) return;
+    const language = sheetToLanguage_(name);
+    const vals = s.getRange(2, 1, s.getLastRow() - 1, 10).getValues();   // A..J
+    vals.forEach(row => {
+      const d = normalizeDate_(row[3]);
+      if (!d) return;
+      const ms = stripTime_(d).getTime();
+      if (ms < minMs || ms > maxMs) return;                 // upcoming window only
+      const id = String(row[7] || '').trim();
+      const notes = String(row[8] || '');
+      const managerNote = String(row[9] || '');             // col J
+      const pc = (id && prev[id]) ? prev[id] : { checkedIn: '', at: '' };
+      rows.push([
+        dateKey_(d), normalizeTime_(row[4]), language,
+        String(row[0] || ''), String(row[1] || ''), Number(row[2] || 0),
+        childrenFromNotes_(notes), String(row[5] || ''), Number(row[6] || 0),
+        id, notes, managerNote, pc.checkedIn, pc.at
+      ]);
+    });
+  });
+  rows.sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1]));
+
+  // 3. Write header (once) + rows; check-in columns come from the preserved map.
+  if (String(sh.getRange(1, 1).getValue() || '') !== H[0]) {
+    sh.getRange(1, 1, 1, H.length).setValues([H])
+      .setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+    sh.setFrozenRows(1);
+  }
+  const lastNow = sh.getLastRow();
+  if (lastNow >= 2) sh.getRange(2, 1, lastNow - 1, H.length).clearContent();
+  if (rows.length) {
+    sh.getRange(2, 2, rows.length, 1).setNumberFormat('@');    // Time as text
+    sh.getRange(2, 10, rows.length, 1).setNumberFormat('@');   // Booking ID as text
+    sh.getRange(2, 14, rows.length, 1).setNumberFormat('@');   // Check-in time as text
+    sh.getRange(2, 1, rows.length, H.length).setValues(rows);
+  }
+  return rows.length;
 }
 
 

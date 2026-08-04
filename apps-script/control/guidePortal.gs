@@ -339,7 +339,14 @@ function apiTours_(p) {
   // BookingSheet and re-reading every schedule grid each time.
   const rates = _t('rates', function () { return cachedRead_('rates', 60, readRates_); });
   let schedule = _t('sched', function () { return cachedRead_('sched', PORTAL.CACHE_TTL, function () { return readSchedule_(); }); });
-  const bookingsByKey = _t('book', function () { return cachedRead_('bk', PORTAL.CACHE_TTL, readBookingsIndex_); });
+  // Reservations come from the single "Portal Feed" tab (one read). If it is not
+  // there yet, fall back to scanning the six language tabs — so the portal keeps
+  // working through the feed's first rollout.
+  const bookingsByKey = _t('book', function () {
+    return cachedRead_('bk', PORTAL.CACHE_TTL, function () {
+      return readPortalFeed_() || readBookingsIndex_();
+    });
+  });
   appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
   appendWeeklyScheduleShifts_(schedule);            // #4: new Weekly_Schedule offer rows show at once
   // Order every shift by date then start time (so appended orphans slot into
@@ -1362,6 +1369,48 @@ function gridLabelToKey_(label, anchor) {
  ******************************************************/
 
 function bookingSS_() { return SpreadsheetApp.openById(PORTAL.BOOKING_SHEET_ID); }
+
+/**
+ * Read the BookingSheet "Portal Feed" tab (ONE read) into the same
+ * "dateKey|minutes|Language" -> [bookings] index readBookingsIndex_ builds by
+ * scanning six language tabs. The booking script rebuilds this feed every run.
+ * Returns null if the feed is missing or empty, so apiTours_ transparently falls
+ * back to the per-language-tab read while the feed is still warming up.
+ * Columns: Date, Time, Language, Name, Phone, Adults, Children, Source, Income,
+ *          Booking ID, Notes, Manager note, Checked-in, Check-in time.
+ */
+function readPortalFeed_() {
+  let sh;
+  try { sh = bookingSS_().getSheetByName('Portal Feed'); } catch (e) { return null; }
+  if (!sh || sh.getLastRow() < 2) return null;
+  const v = sh.getRange(2, 1, sh.getLastRow() - 1, 14).getValues();
+  const index = {};
+  v.forEach(row => {
+    const dateKey = toDateKey_(row[0]);
+    const minutes = timeToMinutes_(normTime24_(row[1]));
+    const language = String(row[2] || '').trim();
+    if (!dateKey || !language) return;
+    const note = String(row[10] || '').trim();
+    const key = shiftKey_(dateKey, minutes, language);
+    (index[key] = index[key] || []).push({
+      name: String(row[3] || '').trim(),
+      phone: String(row[4] || '').trim(),
+      guests: Number(row[5] || 0),
+      children: Number(row[6] || 0),
+      infants: infantCountFromNote_(note),
+      source: String(row[7] || '').trim(),
+      income: Number(row[8] || 0),
+      bookingId: String(row[9] || '').trim(),
+      manualNote: String(row[11] || '').trim(),         // col L = Manager note
+      note: note,
+      // Phase 2 reads check-ins from here; blank in Phase 1 -> the ledger merge
+      // still supplies check-in status, so nothing changes yet.
+      feedCheckedIn: (row[12] === '' || row[12] == null) ? null : Number(row[12]),
+      feedCheckedAt: String(row[13] || '')
+    });
+  });
+  return index;
+}
 
 /** Index all active bookings by "dateKey|minutes|Language". */
 function readBookingsIndex_() {
