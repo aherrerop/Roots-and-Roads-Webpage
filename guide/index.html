@@ -174,7 +174,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-03-assign-snappy";
+const PORTAL_VERSION = "2026-08-04-checkin-confirmed";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -709,16 +709,31 @@ function bindTours(tours){
   });
   // Check-in button per reservation: set the count, lock the row, save.
   document.querySelectorAll(".ckin:not(.done)").forEach(btn=>{
-    btn.onclick=()=>{
+    btn.onclick=async ()=>{
       const parts=btn.dataset.ck.split("~"); const tid=parts[0], idx=+parts[1];
       const t=TOURS_CACHE.find(x=>x.id===tid); if(!t) return;
       const card=btn.closest('.tour');
       const sval=card.querySelector('.stepper[data-ref="bk|'+idx+'"] .val');
-      const b=t.bookings[idx]; b.checked=true; b.checkedIn=+(sval?sval.textContent:b.checkedIn);
-      const _n=new Date(); b.checkedAt=String(_n.getHours()).padStart(2,"0")+":"+String(_n.getMinutes()).padStart(2,"0");
-      btn.classList.add("done"); btn.disabled=true; btn.textContent="✓ "+b.checkedAt;
-      card.querySelectorAll('.stepper[data-ref="bk|'+idx+'"] button').forEach(x=>x.disabled=true);
-      recount(tid); saveTour(tid);
+      const b=t.bookings[idx];
+      const prev={checked:b.checked,checkedIn:b.checkedIn,checkedAt:b.checkedAt};
+      const n=+(sval?sval.textContent:b.checkedIn);
+      const _n=new Date(); const hhmm=String(_n.getHours()).padStart(2,"0")+":"+String(_n.getMinutes()).padStart(2,"0");
+      // Show a SAVING state (not a confirmed ✓) and lock the row while it writes.
+      b.checked=true; b.checkedIn=n;
+      btn.disabled=true; btn.textContent="Saving…";
+      const steps=card.querySelectorAll('.stepper[data-ref="bk|'+idx+'"] button'); steps.forEach(x=>x.disabled=true);
+      recount(tid);
+      const ok=await saveTour(tid);
+      if(ok){
+        // CONFIRMED in the ledger — only now show the ✓.
+        b.checkedAt=hhmm; btn.classList.add("done"); btn.textContent="✓ "+hhmm;
+      } else {
+        // NOT written. Revert everything so the guide clearly sees it must be re-tapped.
+        b.checked=prev.checked; b.checkedIn=prev.checkedIn; b.checkedAt=prev.checkedAt;
+        btn.classList.remove("done"); btn.disabled=false; btn.textContent="Check in";
+        steps.forEach(x=>x.disabled=false); recount(tid);
+        alert("Check-in NOT saved — please tap “Check in” again.\n(No internet, or the server was busy.)");
+      }
     };
   });
 }
@@ -740,12 +755,15 @@ async function saveTour(tourId,btn){
   const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,walkins,guide:t.guide||""};
   const msg=card.querySelector('[data-msg]'); if(btn) btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
   MUTATING++; LAST_EDIT=Date.now();   // block auto-refresh from clobbering the check-in mid-save
+  let ok=false;
   try{ const r=await api("save",{token:store.token,data:JSON.stringify(data)});
-    if(r.ok){ msg.style.color="var(--ok)"; msg.textContent="Saved ✓"; DIRTY[tourId]=false; }
-    else{ msg.style.color="var(--danger)"; msg.textContent=r.error||"Error"; } }
+    ok=!!(r&&r.ok);
+    if(ok){ msg.style.color="var(--ok)"; msg.textContent="Saved ✓"; DIRTY[tourId]=false; }
+    else{ msg.style.color="var(--danger)"; msg.textContent=(r&&r.error)||"Error"; } }
   catch(err){ msg.style.color="var(--danger)"; msg.textContent=err.message; }
   finally{ MUTATING--; }
   if(btn) btn.disabled=false; setTimeout(()=>{ if(!DIRTY[tourId]) msg.textContent=""; },4000);
+  return ok;   // so the check-in button only confirms "✓" when the ledger write succeeded
 }
 
 /* ================== ALL GUIDES (read-only, non-managers) ================== */
