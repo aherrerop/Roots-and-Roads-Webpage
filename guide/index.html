@@ -174,7 +174,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-04-checkin-confirmed";
+const PORTAL_VERSION = "2026-08-05-reload-proof-assign";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -420,14 +420,21 @@ async function loadTours(){
    we remember what you just set and force EVERY render to show it until the
    server actually agrees (or a timeout passes). A stale read can no longer
    revert the screen. */
-let PENDING_ASSIGN = {};                 // shiftKey -> { guide, until }
 const PENDING_TTL = 90000;               // hold the optimistic value up to 90s
+/* Persisted in localStorage so it SURVIVES A FULL PAGE RELOAD — reloading right
+   after assigning used to wipe the in-memory overlay and let a stale read revert
+   the screen. Now the pending value is reloaded on boot and keeps holding. */
+function loadPending(){ try{ const p=JSON.parse(localStorage.getItem("rr_pending")||"{}"); const n=Date.now();
+  Object.keys(p).forEach(k=>{ if(!p[k]||p[k].until<n) delete p[k]; }); return p; }catch(e){ return {}; } }
+function savePending(){ try{ localStorage.setItem("rr_pending", JSON.stringify(PENDING_ASSIGN)); }catch(e){} }
+let PENDING_ASSIGN = loadPending();      // shiftKey -> { guide, until }
 function shiftIdKey(o){
   const isPriv=(o.isPrivate==1||o.isPrivate===true||o.isPrivate==="1");
   return o.dateKey+"|"+String(o.time)+"|"+o.language+"|"+(isPriv?("P"+(o.privIndex||1)):"R");
 }
 function setPendingAssign(info, guide){
   PENDING_ASSIGN[shiftIdKey(info)] = { guide: guide||"", until: Date.now()+PENDING_TTL };
+  savePending();
 }
 /* Overlay pending assignments onto a tours payload, in place. Holds the value
    you just set for the whole settle window, then lets the server value through. */
