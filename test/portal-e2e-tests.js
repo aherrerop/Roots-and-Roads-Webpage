@@ -114,7 +114,7 @@ en.getRange(4, 1, 1, 9).setValues([
   ['Far Future', '+34600555000', 2, new Date(FAR + 'T12:00:00'), '10:00 AM', 'GetYourGuide', 30, 'GYGE2EFAR', '']]);
 const rw = apiTours_({ token: token });                       // default 7-day window
 check('response carries a freshness timestamp (HH:mm:ss)', /^\d{1,2}:\d{2}:\d{2}$/.test(rw.now || ''), rw.now);
-check('default manager window is 7 days', rw.windowDays === 7, rw.windowDays);
+check('default manager window is 5 days', rw.windowDays === 5, rw.windowDays);
 check('a 40-day-out tour is NOT in the default window', !(rw.allTours || []).some(s => s.dateKey === FAR), FAR);
 check('hasMore flags there are tours beyond the window', rw.hasMore === true, rw.hasMore);
 const rw2 = apiTours_({ token: token, days: 45 });            // "Load more"
@@ -138,6 +138,30 @@ check('apiSave_ does bounded work', Math.max.apply(null, saveMs) < 2000, Math.ma
 // The real regression guard: 6 more assigns must NOT accumulate grid rows.
 const gv3 = control.getSheetByName('Schedule_English').getDataRange().getDisplayValues();
 check('after many repeated assigns the grid STILL has a single row', gv3.filter((row, i) => i >= 2 && row[0] === label).length === 1, gv3.map(x => x[0]));
+
+console.log('--- Weekly recurring default guide fills an unassigned slot ---');
+const wsheet = control.getSheetByName('Weekly_Schedule');
+wsheet.getRange(1, 7).setValue('Guide');
+wsheet.getRange(2, 1, 1, 7).setValues([[dayNameFromKey_(DATE), '17:00', 'English', 1, '', '', 'Carlos']]);
+const rWeekly = apiTours_({ token: token, days: 45 });
+const wshift = (rWeekly.allTours || []).filter(s => s.dateKey === DATE && s.time === '17:00' && s.language === 'English');
+check('the weekly default (Carlos) fills the unassigned 17:00 English slot', wshift.length === 1 && (wshift[0].assigned || []).indexOf('Carlos') !== -1, wshift[0] && wshift[0].assigned);
+// A manual assignment on that date must OVERRIDE the weekly default.
+apiAssign_({ token: token, dateKey: DATE, time: '17:00', language: 'English', guide: 'Albert', force: '1' });
+const rOverride = apiTours_({ token: token, days: 45 });
+const oshift = (rOverride.allTours || []).filter(s => s.dateKey === DATE && s.time === '17:00' && s.language === 'English');
+check('a manual assignment overrides the weekly default (Albert wins that day)', oshift.length === 1 && (oshift[0].assigned || []).indexOf('Albert') !== -1 && (oshift[0].assigned || []).indexOf('Carlos') === -1, oshift[0] && oshift[0].assigned);
+
+console.log('--- Delete a tour: frees the guide (clears the grid cell) and prunes the empty column ---');
+const DEL = dayKey(6);   // an isolated slot nothing else touches
+apiAssign_({ token: token, dateKey: DEL, time: '19:00', language: 'English', guide: 'Carlos', force: '1' });
+let gEng = control.getSheetByName('Schedule_English').getDataRange().getDisplayValues();
+check('assigning created a 19:00 column', gEng[1].some(h => /(^|\D)19:00|7:00 PM/.test(String(h))), gEng[1]);
+apiCloseShift_({ token: token, id: shiftKey_(DEL, 19 * 60, 'english') });
+gEng = control.getSheetByName('Schedule_English').getDataRange().getDisplayValues();
+check('after delete the empty 19:00 column is pruned', !gEng[1].some(h => /(^|\D)19:00|7:00 PM/.test(String(h))), gEng[1]);
+const rDel = apiTours_({ token: token, days: 45 });
+check('the deleted tour no longer appears (no bookings -> gone)', !(rDel.allTours || []).some(s => s.dateKey === DEL && s.time === '19:00' && s.language === 'English'), null);
 
 console.log('--- Portal Feed: the portal reads reservations from one tab (with check-in cols for Phase 2) ---');
 // (All earlier assertions ran with NO feed tab -> they exercised the fallback

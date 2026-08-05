@@ -370,8 +370,8 @@ console.log('--- Portal Feed rebuild (one read-optimised tab, preserves check-in
   const day=o=>{ const d=new Date(); d.setDate(d.getDate()+o); return d; };
   en.getRange(2,5,3,1).setNumberFormat('@'); en.getRange(2,8,3,1).setNumberFormat('@');
   fr.getRange(2,5,1,1).setNumberFormat('@'); fr.getRange(2,8,1,1).setNumberFormat('@');
-  // in-window English (today+2) with a manager note in col J
-  en.getRange(2,1,1,10).setValues([['Jane','+34600',3,day(2),'11:00 AM','GetYourGuide',30,'GYGFEED1','2 children','VIP']]);
+  // in-window English (today+2) with a mixed note + a manager note in col J
+  en.getRange(2,1,1,10).setValues([['Jane','+34600',3,day(2),'11:00 AM','GetYourGuide',30,'GYGFEED1','2 children; Aldo','VIP']]);
   // in-window French (today+3)
   fr.getRange(2,1,1,9).setValues([['Pierre','+33600',2,day(3),'10:00 AM','GetYourGuide',27,'GYGFEED2','']]);
   // out-of-window English (today+400) -> excluded
@@ -390,6 +390,7 @@ console.log('--- Portal Feed rebuild (one read-optimised tab, preserves check-in
   const j=byId('GYGFEED1');
   check('feed row carries Language', j&&j[2]==='English', j&&j[2]);
   check('feed row carries children from the notes', j&&Number(j[6])===2, j&&j[6]);
+  check('feed Notes strips the child count but keeps other tags (Aldo)', j&&j[10]==='Aldo', j&&j[10]);
   check('feed carries the Manager note (col L)', j&&j[11]==='VIP', j&&j[11]);
   check('rebuild PRESERVES an existing check-in by id (M,N)', j&&Number(j[12])===2&&String(j[13])==='10:05', j&&[j[12],j[13]]);
   const p=byId('GYGFEED2');

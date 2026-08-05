@@ -79,7 +79,7 @@ const PORTAL = {
   // days). Far-out tours (e.g. next month) load on demand via "Load more", which
   // adds MANAGER_WINDOW_MORE days each tap — they are costly to build and rarely
   // needed when assigning this week's tours.
-  MANAGER_WINDOW_DAYS: 7,
+  MANAGER_WINDOW_DAYS: 5,
   MANAGER_WINDOW_MORE: 14,
 
   // A tour stays visible on the portal until this hour (24h) of its own day,
@@ -349,6 +349,7 @@ function apiTours_(p) {
   });
   appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
   appendWeeklyScheduleShifts_(schedule);            // #4: new Weekly_Schedule offer rows show at once
+  applyWeeklyDefaults_(schedule);                   // recurring default guide fills unassigned weekly slots
   // Order every shift by date then start time (so appended orphans slot into
   // their real time position, not at the end of the list).
   schedule.sort((a, b) =>
@@ -390,16 +391,11 @@ function apiTours_(p) {
     });
   }
 
-  // Management can CLOSE a shift so it disappears from the portal — UNLESS it
-  // has any booking (live or completed), in which case it comes back on its own
-  // (just like any out-of-schedule booking in the BookingSheet). Applied after
-  // the durable-source merge so a closed shift with real reservations reappears.
+  // A deleted (closed) shift stays gone — it does NOT reappear even if it still
+  // has a booking (manager's explicit call; the grid cell was also cleared, which
+  // frees its guide). Reopen from the Closed_Shifts tab to bring it back.
   const closed = readClosedShifts_();
-  schedule = schedule.filter(s => {
-    if (!closed[shiftDomId_(s)]) return true;
-    const list = bookingsByKey[shiftKey_(s.dateKey, s.minutes, s.language)] || [];
-    return list.some(b => s.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''));
-  });
+  schedule = schedule.filter(s => !closed[shiftDomId_(s)]);
 
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
@@ -667,28 +663,98 @@ function apiCloseShift_(p) {
   if (!id) return { ok: false, error: 'Missing tour id' };
   const reopen = String(p.reopen || '') === '1';
 
-  const ss = control_();
-  let sh = ss.getSheetByName(PORTAL.CLOSED_TAB);
-  if (!sh) {
-    sh = ss.insertSheet(PORTAL.CLOSED_TAB);
-    sh.getRange(1, 1, 1, 3).setValues([['Tour id', 'Closed by', 'Closed at']]).setFontWeight('bold');
-    sh.setFrozenRows(1);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
+  try {
+    const ss = control_();
+    let sh = ss.getSheetByName(PORTAL.CLOSED_TAB);
+    if (!sh) {
+      sh = ss.insertSheet(PORTAL.CLOSED_TAB);
+      sh.getRange(1, 1, 1, 3).setValues([['Tour id', 'Closed by', 'Closed at']]).setFontWeight('bold');
+      sh.setFrozenRows(1);
+    }
+    const last = sh.getLastRow();
+    let row = -1;
+    if (last >= 2) {
+      const ids = sh.getRange(2, 1, last - 1, 1).getValues();
+      for (let i = 0; i < ids.length; i++) { if (String(ids[i][0] || '').trim() === id) { row = i + 2; break; } }
+    }
+    if (reopen) {
+      if (row !== -1) sh.deleteRow(row);
+      bumpCacheVersion_();
+      return { ok: true, id, closed: false };
+    }
+    if (row === -1) {
+      const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+      sh.getRange(sh.getLastRow() + 1, 1, 1, 3).setValues([[id, name, stamp]]);
+    }
+    // TRUE DELETE: clear the guide out of the grid cell so they are freed to be
+    // assigned to another tour, and prune any column/row left empty (kills the
+    // leftover empty "9:00" column).
+    deleteShiftFromGrid_(id);
+    SpreadsheetApp.flush();
+    bumpCacheVersion_();
+    return { ok: true, id, closed: true };
+  } finally {
+    lock.releaseLock();
   }
-  const last = sh.getLastRow();
-  let row = -1;
-  if (last >= 2) {
-    const ids = sh.getRange(2, 1, last - 1, 1).getValues();
-    for (let i = 0; i < ids.length; i++) { if (String(ids[i][0] || '').trim() === id) { row = i + 2; break; } }
+}
+
+/**
+ * Clear a shift's cell from its Schedule_<language> grid (which FREES the guide
+ * that was on it) and prune any time-column now empty on every date, plus empty
+ * date rows. Id = "dateKey|minutes|language[|P<index>]".
+ */
+function deleteShiftFromGrid_(id) {
+  const parts = String(id).split('|');
+  const dateKey = parts[0];
+  const minutes = Number(parts[1]);
+  const langLower = parts[2] || '';
+  const isPriv = /^P/i.test(parts[3] || '');
+  const privIndex = isPriv ? (Number((parts[3] || '').replace(/[^0-9]/g, '')) || 1) : 1;
+  if (!dateKey || !Number.isFinite(minutes) || !langLower) return false;
+  const language = LANGUAGES.find(l => l.toLowerCase() === langLower) ||
+                   (langLower.charAt(0).toUpperCase() + langLower.slice(1));
+  const time = minutesToTime_(minutes);
+
+  const sh = control_().getSheetByName('Schedule_' + language);
+  if (!sh || sh.getLastRow() < 3) return false;
+  const anchor = gridAnchor_(String(sh.getRange(1, 1).getDisplayValue() || ''));
+
+  const timeRow = sh.getRange(2, 1, 1, Math.max(2, sh.getLastColumn())).getDisplayValues()[0];
+  let colNum = -1;
+  for (let c = 1; c < timeRow.length; c++) {
+    const h = parseGridTimeHeader_(timeRow[c]);
+    if (h && h.time === time && h.isPrivate === isPriv && (!isPriv || (h.index || 1) === privIndex)) { colNum = c + 1; break; }
   }
-  if (reopen) {
-    if (row !== -1) sh.deleteRow(row);
-    return { ok: true, id, closed: false };
+  const colA = sh.getRange(3, 1, sh.getLastRow() - 2, 1).getDisplayValues();
+  let rowNum = -1;
+  for (let i = 0; i < colA.length; i++) {
+    if (gridLabelToKey_(String(colA[i][0] || '').trim(), anchor) === dateKey) { rowNum = i + 3; break; }
   }
-  if (row === -1) {
-    const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
-    sh.getRange(sh.getLastRow() + 1, 1, 1, 3).setValues([[id, name, stamp]]);
+  if (colNum > -1 && rowNum > -1) sh.getRange(rowNum, colNum).clearContent();
+
+  pruneEmptyGridColumnsAndRows_(sh);
+  styleScheduleGrid_(sh);
+  return true;
+}
+
+/** Delete any TIME column empty on every date, and any date row with no
+ *  assignments. The Date column, title, and header row are never touched. */
+function pruneEmptyGridColumnsAndRows_(sh) {
+  let lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+  if (lastRow < 3 || lastCol < 2) return;
+  for (let c = lastCol; c >= 2; c--) {                 // right-to-left so indices stay valid
+    if (!parseGridTimeHeader_(sh.getRange(2, c).getDisplayValue())) continue;   // not a time column
+    const filled = sh.getRange(3, c, lastRow - 2, 1).getDisplayValues().some(v => String(v[0] || '').trim() !== '');
+    if (!filled) sh.deleteColumn(c);
   }
-  return { ok: true, id, closed: true };
+  lastRow = sh.getLastRow(); lastCol = sh.getLastColumn();
+  for (let r = lastRow; r >= 3; r--) {                 // then empty date rows
+    const filled = lastCol >= 2 &&
+      sh.getRange(r, 2, 1, lastCol - 1).getDisplayValues()[0].some(v => String(v || '').trim() !== '');
+    if (!filled) sh.deleteRow(r);
+  }
 }
 
 /**
@@ -1053,18 +1119,9 @@ function apiSave_(p) {
     }));
   });
 
-  (d.walkins || []).forEach(w => {
-    const count = Math.max(0, Number(w.count || 0));
-    if (!count) return;
-    const m = computeMoney_(w.source, count, false, 0, rates);
-    rows.push(makeLedgerRow_({
-      dateKey: d.dateKey, day, timeLabel, language: d.language,
-      bookingName: 'Walk-in', phone: '', source: w.source || 'Walk-in',
-      guests: count, checkedIn: count,
-      weOwe: m.weOwe, theyOwe: m.theyOwe, rrMakes: m.rrMakes, type: m.type + ' (walk-in)',
-      bookingId: 'WALKIN|' + (w.source || '') // stable key so re-saves overwrite
-    }));
-  });
+  // Walk-ins were removed: OTA tours are prepaid, and a free-tour walk-in would
+  // only mean the guide owes us commission we never generated — no guide reports
+  // that. The feature was noise, so the portal no longer sends walk-ins.
 
   // LockService: two guides saving at once (or a double-tap) must not
   // interleave ledger writes. writeGuideLedger_ itself replaces the shift's
@@ -1479,6 +1536,46 @@ function visibleShiftsForGuide_(shifts, myShifts, guide, isManager) {
     if (speaks[s.language] !== true) return false;             // not a language I run
     const st = shiftStartMs_(s.dateKey, s.minutes);
     return !myShiftMs.some(ms => Math.abs(ms - st) < sepMs);   // no clash with my own
+  });
+}
+
+
+/**
+ * WEEKLY RECURRING ASSIGNMENT. A Weekly_Schedule rule can name a default guide
+ * (col G) who runs that day+time+language every week. Overlay that guide onto any
+ * matching shift that has NO assignment yet, so the manager sets the pattern once
+ * (e.g. Francesca = Italian 17:00 all week; Albert = English 10:00, Carlos =
+ * English 17:00 Mon–Fri) and it carries over automatically. A manual assignment
+ * for a specific date is a real grid lock — that shift already has an assigned
+ * guide, so it is skipped here and the override wins for that day only.
+ */
+function applyWeeklyDefaults_(schedule) {
+  let rules;
+  try { rules = readWeeklySchedule_(control_()); } catch (e) { return; }
+  const byKey = {};
+  rules.forEach(r => {
+    if (!r.guide) return;
+    byKey[String(r.day).toLowerCase() + '|' + timeToMinutes_(normTime24_(r.time)) + '|' +
+          String(r.language).toLowerCase()] = r.guide;
+  });
+  if (!Object.keys(byKey).length) return;
+
+  const okCache = {};
+  const speaksAndActive = (name, language) => {
+    const ck = name + '|' + language;
+    if (ck in okCache) return okCache[ck];
+    const g = findGuideByName_(name);
+    return (okCache[ck] = !!(g && g.active && g.languages[language] === true));
+  };
+
+  schedule.forEach(s => {
+    if (s.private) return;                              // defaults are for regular slots
+    if (s.assigned && s.assigned.length) return;        // a real assignment always wins
+    const guide = byKey[String(s.day).toLowerCase() + '|' + s.minutes + '|' + String(s.language).toLowerCase()];
+    if (!guide || !speaksAndActive(guide, s.language)) return;
+    s.assigned = [guide];
+    s.status = 'OK';
+    s.weeklyDefault = true;                             // marker: filled by the weekly pattern
   });
 }
 
