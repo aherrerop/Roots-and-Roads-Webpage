@@ -1790,7 +1790,9 @@ function readRates_() {
       }
       else if (label.indexOf('paid tour') === 0) paid = Number(r[1]) || paid;
       else if (label.indexOf('free tour') === 0) free = Number(r[1]) || free;
-      else if (label.indexOf('private tour') === 0) privatePay = Number(r[1]) || privatePay;
+      // Private flat pay: matches "Private tour — …" AND "Paid private — …"
+      // (any label mentioning "private", never the paid/free/commission ones).
+      else if (/priv/i.test(label)) privatePay = Number(r[1]) || privatePay;
       else if (label.indexOf('paid sources') === 0 && r[1]) {
         paidSources = String(r[1]).split(',').map(s => s.trim()).filter(Boolean);
       }
@@ -1853,54 +1855,6 @@ function hhmmFromStamp_(v) {
   }
   const m = String(v || '').match(/(\d{1,2}:\d{2})(?::\d{2})?\s*$/);
   return m ? m[1] : '';
-}
-
-/**
- * Full reservation detail from the ledger, keyed by shift, across every guide
- * tab. The ledger is the durable record — name, phone, guests, children,
- * checked-in, booking id — and is NOT cleared when a tour completes. Used so a
- * completed tour keeps showing its guests in the portal after the live booking
- * row has moved to Done. Deduped by booking id per shift.
- */
-function readLedgerReservations_() {
-  const out = {};
-  let names = [];
-  try {
-    const raw = readGuidesRaw_();
-    const cols = guideColumns_(raw.header);
-    names = raw.rows.map(r => String(r[cols.nameCol] || '').trim()).filter(Boolean);
-  } catch (e) { return out; }
-  let ss; try { ss = ledgerSS_(); } catch (e) { return out; }
-  names.forEach(name => {
-    const sh = ss.getSheetByName(name.substring(0, 90));
-    if (!sh || sh.getLastRow() < 2) return;
-    const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
-    v.forEach(r => {
-      const dateKey = toDateKey_(r[0]);
-      const minutes = timeToMinutes_(normTime24_(r[2]));
-      const language = String(r[3] || '').trim();
-      const bookingId = String(r[LEDGER_BOOKINGID_COL] || '').trim();
-      if (!dateKey || !bookingId) return;
-      const key = shiftKey_(dateKey, minutes, language);
-      const arr = out[key] = out[key] || [];
-      if (arr.some(b => b.bookingId === bookingId)) return;   // dedupe
-      arr.push({
-        bookingId,
-        name: String(r[4] || '').trim(),
-        phone: String(r[5] || '').trim(),
-        source: String(r[6] || '').trim(),
-        guests: Number(r[7] || 0),
-        children: Number(r[8] || 0),
-        infants: 0, income: 0,
-        // "Private" in the note so a private completed tour attaches to its
-        // private column, not the regular one (the Type column records it).
-        note: /priv/i.test(String(r[13] || '')) ? 'Private' : '',
-        manualNote: String(r[LEDGER_NOTE_COL] || ''),
-        checkedIn: Number(r[LEDGER_CHECKEDIN_COL] || 0)
-      });
-    });
-  });
-  return out;
 }
 
 /**
@@ -2017,14 +1971,22 @@ function writeGuideLedger_(name, dateKey, time, language, rows) {
     const id = String(r[LEDGER_BOOKINGID_COL] || '').trim();
     if (id) incomingIds.add(id + '|' + toDateKey_(r[0]));
   });
+  // A PRIVATE and a REGULAR tour can share the same date+time+language slot, so
+  // the shift-key replace must respect the private/regular split — otherwise
+  // saving one would wipe the other's rows (they have the same shift key). We
+  // only replace rows of the SAME kind as this batch (Type col = 'Private' or not).
+  const LEDGER_TYPE_COL = 13;
+  const incomingPrivate = rows.length ? /priv/i.test(String(rows[0][LEDGER_TYPE_COL] || '')) : false;
 
   if (sh.getLastRow() >= 2) {
     const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
     for (let i = v.length - 1; i >= 0; i--) {
       const rowDate = toDateKey_(v[i][0]);
       const k = shiftKey_(rowDate, timeToMinutes_(normTime24_(v[i][2])), String(v[i][3] || '').trim());
+      const rowPrivate = /priv/i.test(String(v[i][LEDGER_TYPE_COL] || ''));
       const idKey = String(v[i][LEDGER_BOOKINGID_COL] || '').trim() + '|' + rowDate;
-      if (k === targetKey || (incomingIds.size && incomingIds.has(idKey))) sh.deleteRow(i + 2);
+      if ((k === targetKey && rowPrivate === incomingPrivate) ||
+          (incomingIds.size && incomingIds.has(idKey))) sh.deleteRow(i + 2);
     }
   }
 
