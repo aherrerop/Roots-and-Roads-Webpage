@@ -1499,11 +1499,26 @@ function processCancellationLabel_(labelName, source) {
       }
 
       if (!acted) {
-        if (!RNR_SKIP_PROCESSED_) {
-          logError_('Cancellation NOT applied (no booking identified) — left unprocessed',
+        // The thread is in a CANCELLATIONS label — Gmail already classified it as
+        // a cancellation, so trust that instead of leaving it to retry forever.
+        // Cancellation emails vary wildly (Viator's subject can read "New
+        // Booking …" with the id only in the threaded confirmation; GetYourGuide
+        // sends "Se ha cancelado una reserva … Número de referencia: GYG…" in
+        // Spanish), so the per-source parser sometimes yields nothing. Pull an id
+        // straight from the whole thread and act on it. A cancellation for a
+        // booking that is no longer active is a completed NO-OP, not an error —
+        // and we ALWAYS finalise, which is what stops the endless retry/flood.
+        const id = extractBookingIdFromThread_(thread, source);
+        if (id) {
+          removeActiveBookingBySourceAndId_(source, id);     // no-op if already gone
+          archiveConfirmationThreadsById_(source, id);
+          recordResolvedThread_(thread);                     // clear any earlier error for it
+        } else if (!RNR_SKIP_PROCESSED_) {
+          logError_('Cancellation finalised with no readable booking id (nothing to remove)',
             'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
         }
-        continue;   // do NOT mark Processed — we cannot say what was cancelled
+        finalizeThreadCancelled_(thread);   // leave the inbox now -> never retried again
+        continue;
       }
 
       // Cancelled => the thread leaves the inbox now (that tour will never run).

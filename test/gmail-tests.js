@@ -81,12 +81,25 @@ check('the cancellation thread itself is Processed + archived', canc.hasLabel(P)
 check('the CONFIRMATION is relabeled to Cancellations (grouped)', conf.hasLabel(RNR.LABELS.GYG_CANCEL) && !conf.hasLabel(RNR.LABELS.GYG_CONFIRM), [...conf.labelSet]);
 check('the CONFIRMATION leaves the inbox too', conf.isInInbox() === false, conf.isInInbox());
 
-console.log('--- Cancellation with no identifiable booking is NOT marked Processed ---');
+console.log('--- A cancellation with NO readable id is still FINALISED (stops the retry flood) ---');
 resetWorld();
 const vagueCancel = __gmail.add([RNR.LABELS.GYG_CANCEL],
   __gmail.msg('Se ha cancelado una reserva', 'Una reserva ha sido cancelada. Gracias.'));
 processCancellationLabel_(RNR.LABELS.GYG_CANCEL, RNR.SOURCE.GYG);
-check('an unidentifiable cancellation is left UNprocessed (visible/retryable)', vagueCancel.hasLabel(P) === false, [...vagueCancel.labelSet]);
+check('an id-less cancellation is finalised (Processed) so it never retries forever', vagueCancel.hasLabel(P) === true, [...vagueCancel.labelSet]);
+
+console.log('--- A cancellation the parser MISSES is saved by the label + subject id (the flood fix) ---');
+resetWorld();
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S1 - GYGREMOVE99', gygBody('GYGREMOVE99', 'Rob', 'August 9, 2030 10:00 AM', 2, 'Inglés')));
+processConfirmationLabel_(RNR.LABELS.GYG_CONFIRM, RNR.SOURCE.GYG);
+check('the booking to be cancelled is on the list', !!idsOnList()['GYGREMOVE99'], null);
+resetRunCaches_();
+// Gmail filed this under Cancellations, but it reads like a confirmation and has
+// no parseable cancellation body — the per-source parser yields nothing.
+const missed = __gmail.add([RNR.LABELS.GYG_CANCEL], __gmail.msg('Booking - S1 - GYGREMOVE99', ''));
+processCancellationLabel_(RNR.LABELS.GYG_CANCEL, RNR.SOURCE.GYG);
+check('the missed cancellation STILL removes the booking (via the subject id)', !idsOnList()['GYGREMOVE99'], Object.keys(idsOnList()));
+check('the missed cancellation thread is finalised (Processed) — no flood', missed.hasLabel(P) === true, [...missed.labelSet]);
 
 console.log('--- END-TO-END list: 3 bookings + a cancellation, judged by PRODUCTION\'s own invariant oracle ---');
 resetWorld();
