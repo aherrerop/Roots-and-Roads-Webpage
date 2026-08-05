@@ -407,8 +407,9 @@ function apiTours_(p) {
       .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''))
       .map(b => {
         const kk = key + '|' + b.bookingId;
-        const ck = priorCheckins[kk];                 // {n, at} if a ledger row exists
-        const isCk = !!ck;
+        const ck = priorCheckins[kk];                 // ledger check-in, if any
+        const feedCk = (b.feedCheckedIn != null);     // feed check-in, if any
+        const isCk = feedCk || !!ck;                  // UNION: checked in on either
         return {
           bookingId: b.bookingId,
           name: b.name,
@@ -422,10 +423,10 @@ function apiTours_(p) {
           isPrivate: /privat/i.test(b.note || ''),
           note: String(b.note || ''),
           manualNote: String(b.manualNote || ''),   // editable per-booking note
-          checked: isCk || (b.checkedIn != null && Number(b.checkedIn) > 0),
-          checkedIn: isCk ? Number(ck.n)
-                          : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0)), // ledger value, or booked default
-          checkedAt: isCk ? (ck.at || '') : ''       // when they were checked in ("HH:mm")
+          checked: isCk,
+          checkedIn: feedCk ? Number(b.feedCheckedIn)
+                            : (ck ? Number(ck.n) : Number(b.guests || 0)), // feed, else ledger, else booked default
+          checkedAt: feedCk ? String(b.feedCheckedAt || '') : (ck ? (ck.at || '') : '')
         };
       });
 
@@ -517,8 +518,9 @@ function apiTours_(p) {
         .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''))
         .map(b => {
           const kk = key + '|' + b.bookingId;
-          const cke = priorCheckins[kk];              // {n, at} if checked in by ANY guide
-          const isCk = !!cke;
+          const cke = priorCheckins[kk];              // ledger check-in, if any
+          const feedCk = (b.feedCheckedIn != null);   // feed check-in, if any
+          const isCk = feedCk || !!cke;               // UNION: checked in on either
           return {
             bookingId: b.bookingId, name: b.name, phone: b.phone, source: b.source, guests: b.guests,
             children: Number(b.children || 0), infants: Number(b.infants || 0),
@@ -526,10 +528,9 @@ function apiTours_(p) {
             paid: isPaidSource_(b.source), isPrivate: /privat/i.test(b.note || ''),
             note: String(b.note || ''),
             manualNote: String(b.manualNote || ''),
-            checked: isCk || (b.checkedIn != null && Number(b.checkedIn) > 0),
-            checkedIn: isCk ? Number(cke.n)
-                            : (b.checkedIn != null ? Number(b.checkedIn) : Number(b.guests || 0)),
-            checkedAt: isCk ? (cke.at || '') : ''
+            checked: isCk,
+            checkedIn: feedCk ? Number(b.feedCheckedIn) : (cke ? Number(cke.n) : Number(b.guests || 0)),
+            checkedAt: feedCk ? String(b.feedCheckedAt || '') : (cke ? (cke.at || '') : '')
           };
         });
       const aid = shift.private ? key + '|P' + (shift.privIndex || 1) : key;
@@ -1130,6 +1131,13 @@ function apiSave_(p) {
   if (!lock.tryLock(15000)) return { ok: false, error: 'Server busy, try again in a moment' };
   try {
     writeGuideLedger_(targetGuide, d.dateKey, d.time || timeLabel, d.language, rows);
+    // Mirror the check-ins onto the Portal Feed (its M/N columns) so the portal
+    // reads them from the one tab. Written together with the ledger, both under
+    // this lock: if a guest shows as checked-in in EITHER, they are checked in.
+    const at = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm');
+    (d.bookings || []).forEach(b => {
+      if (b.checked && b.bookingId) writeFeedCheckin_(b.bookingId, Math.max(0, Number(b.checkedIn || 0)), at);
+    });
     SpreadsheetApp.flush();   // commit the check-in before returning, so a reload can't read stale
     // NOTE: the GuruWalk queue used to be rebuilt HERE, on every save. That read
     // the whole ledger + Completed Log and made check-ins take 7-22s to return.
@@ -1467,6 +1475,71 @@ function readPortalFeed_() {
     });
   });
   return index;
+}
+
+/**
+ * Write a check-in onto the Portal Feed row for a booking — columns M (Checked-in)
+ * and N (Check-in time), which are the PORTAL's alone. The 5-minute rebuild only
+ * ever writes the reservation columns (A–L) and preserves M/N by Booking ID, so
+ * the two writers touch DISJOINT columns and can never clobber each other.
+ * Updates an existing row only; a booking not yet in the feed is covered by the
+ * ledger + the union read, and the next rebuild gives it a row. Best-effort.
+ */
+function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
+  try {
+    const id = String(bookingId || '').trim();
+    if (!id) return false;
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // col J = Booking ID
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || '').trim() === id) {
+        sh.getRange(i + 2, 14, 1, 1).setNumberFormat('@');                 // time as text
+        sh.getRange(i + 2, 13, 1, 2).setValues([[checkedIn, checkedAt]]);  // M=count, N=time
+        return true;
+      }
+    }
+    return false;
+  } catch (e) { return false; }
+}
+
+/**
+ * RECONCILE the Portal Feed check-ins against the ledger (the money record). We
+ * write BOTH at save time, so this is a backstop for the rare case where one
+ * write missed:
+ *   - a check-in in the LEDGER but not the feed  -> push it onto the feed (safe,
+ *     disjoint columns);
+ *   - a check-in in the FEED but not the ledger  -> FLAG it (the guide may be
+ *     unpaid) so a manager can fix it;
+ *   - counts that disagree                       -> FLAG.
+ * "Checked-in in EITHER = checked in" already holds for the portal via the union
+ * read; this keeps the two stores honest. Runs hourly with the queues.
+ */
+function reconcilePortalFeed_() {
+  try {
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return;
+    const feed = sh.getRange(2, 1, sh.getLastRow() - 1, 14).getValues();
+    const checkins = readAllCheckins_();                 // bookingId|dateKey -> ledger check-in
+    const flags = [];
+    feed.forEach((row, i) => {
+      const dateKey = toDateKey_(row[0]);
+      const id = String(row[9] || '').trim();
+      if (!id || !dateKey) return;
+      const feedCk = (row[12] === '' || row[12] == null) ? null : Number(row[12]);
+      const led = checkins[id + '|' + dateKey];
+      const ledCk = led ? Number(led.checkedIn) : null;
+      if (ledCk != null && feedCk == null) {
+        sh.getRange(i + 2, 14, 1, 1).setNumberFormat('@');
+        sh.getRange(i + 2, 13, 1, 2).setValues([[ledCk, hhmmFromStamp_(led.updated) || '']]);   // ledger -> feed
+      } else if (feedCk != null && ledCk == null) {
+        flags.push('feed-only ' + id + ' (' + feedCk + ')');           // ledger write missed
+      } else if (feedCk != null && ledCk != null && feedCk !== ledCk) {
+        flags.push('differs ' + id + ' feed=' + feedCk + ' ledger=' + ledCk);
+      }
+    });
+    if (flags.length) portalLog_('feed<->ledger', 0, false, 'CHECK: ' + flags.slice(0, 12).join(' | '));
+  } catch (e) { portalLog_('reconcilePortalFeed_', 0, false, String(e).slice(0, 200)); }
 }
 
 /** Index all active bookings by "dateKey|minutes|Language". */
@@ -2736,6 +2809,7 @@ function updateManagementQueuesCore_() {
   if (!lock.tryLock(30000)) return;
   try {
     ensureQueueTabs_();
+    reconcilePortalFeed_();          // keep the feed's check-ins and the ledger honest
     updateNoShowQueues_();
     updateGuruwalkCheckinQueue_();
     rebuildUnassignedLedger_();

@@ -178,6 +178,18 @@ check('readPortalFeed_ indexes the booking by shift', !!(fx && fx[fk] && fx[fk][
 check('feed carries the manager note', fx[fk][0].manualNote === 'hello note', fx[fk][0].manualNote);
 check('feed carries the check-in for Phase 2 (feedCheckedIn=2, at 10:03)', fx[fk][0].feedCheckedIn === 2 && fx[fk][0].feedCheckedAt === '10:03', [fx[fk][0].feedCheckedIn, fx[fk][0].feedCheckedAt]);
 
+console.log('--- Check-in on the feed: write mirrors to the feed, union read shows it ---');
+// writeFeedCheckin_ updates the feed row's own columns (M/N) by booking id.
+const wrote = writeFeedCheckin_('GYGE2E001', 3, '10:09');
+const feedRow = feed.getRange(2, 1, 1, 14).getValues()[0];
+check('writeFeedCheckin_ updated the feed row (M=3, N=10:09)', wrote === true && Number(feedRow[12]) === 3 && String(feedRow[13]) === '10:09', [feedRow[12], feedRow[13]]);
+// The union read surfaces a check-in that lives ONLY in the feed (no ledger row).
+const rUnion = apiTours_({ token: token, days: 45 });
+const uShift = (rUnion.allTours || []).filter(s => s.dateKey === DATE && s.time === '10:00' && s.language === 'English');
+const uBk = uShift.length ? uShift[0].bookings.find(b => b.bookingId === 'GYGE2E001') : null;
+check('the portal shows the feed check-in via the union read', uBk && uBk.checked === true && uBk.checkedIn === 3, uBk);
+check('the feed check-in time flows through', uBk && uBk.checkedAt === '10:09', uBk && uBk.checkedAt);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
