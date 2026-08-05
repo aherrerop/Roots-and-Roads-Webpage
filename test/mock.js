@@ -83,6 +83,7 @@ class MockSheet{
   insertRowBefore(r){this._ensure(r,1);this.rows.splice(r-1,0,[]);this.fmts.splice(r-1,0,[]);this.rich.splice(r-1,0,[]);}
   insertColumnBefore(c){this._ensure(1,c);for(let i=0;i<this.rows.length;i++){this.rows[i].splice(c-1,0,'');this.fmts[i].splice(c-1,0,'');this.rich[i].splice(c-1,0,null);}return this;}
   insertColumnAfter(c){return this.insertColumnBefore(c+1);}
+  deleteColumn(c){for(let i=0;i<this.rows.length;i++){if(this.rows[i])this.rows[i].splice(c-1,1);if(this.fmts[i])this.fmts[i].splice(c-1,1);if(this.rich[i])this.rich[i].splice(c-1,1);}return this;}
   appendRow(vals){const r=this.getLastRow()+1;this.getRange(r,1,1,vals.length).setValues([vals]);}
   setColumnWidth(){return this;} setColumnWidths(){return this;} setRowHeight(){return this;} setRowHeights(){return this;}
   autoResizeColumns(){return this;}

@@ -760,9 +760,11 @@ function setupWeeklySchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('Weekly_Schedule') || ss.insertSheet('Weekly_Schedule');
 
-  const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until']];
+  const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide']];
   // Blank "Active from" = always active (see updateWeeklyScheduleToCurrentOffer).
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '']));
+  // Blank "Guide" (col G) = no recurring default; fill it to auto-assign a guide
+  // to that weekly slot every week (a manager can still override a single date).
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '']));
 
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
   add(MTThF, '11:00', 'English');
@@ -1103,7 +1105,10 @@ function readWeeklySchedule_(ss) {
     rules.push({
       day, time, language, guidesNeeded,
       activeFrom: rawRow[4] ? dateOnly_(new Date(rawRow[4])) : null,
-      activeUntil: rawRow[5] ? dateOnly_(new Date(rawRow[5])) : null
+      activeUntil: rawRow[5] ? dateOnly_(new Date(rawRow[5])) : null,
+      // Optional recurring default guide (col G): who runs this weekly slot unless
+      // a manager overrides that specific date. Read by the portal.
+      guide: String(displayRow[6] || "").trim()
     });
   }
   return rules;

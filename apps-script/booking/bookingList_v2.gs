@@ -3165,13 +3165,18 @@ function rebuildPortalFeed_() {
       if (ms < minMs || ms > maxMs) return;                 // upcoming window only
       const id = String(row[7] || '').trim();
       const notes = String(row[8] || '');
+      // The child count has its own column, so strip "N children" out of Notes to
+      // drop the redundancy — but KEEP everything else ("Private", a guide tag
+      // like "Aldo", "moved from X"), which is how those are recognised.
+      const feedNotes = notes.replace(/\b\d+\s*child(?:ren)?\b/ig, '')
+        .replace(/\s*[·;,]\s*[·;,]\s*/g, ' · ').replace(/^[\s·;,]+|[\s·;,]+$/g, '').trim();
       const managerNote = String(row[9] || '');             // col J
       const pc = (id && prev[id]) ? prev[id] : { checkedIn: '', at: '' };
       rows.push([
         dateKey_(d), normalizeTime_(row[4]), language,
         String(row[0] || ''), String(row[1] || ''), Number(row[2] || 0),
         childrenFromNotes_(notes), String(row[5] || ''), Number(row[6] || 0),
-        id, notes, managerNote, pc.checkedIn, pc.at
+        id, feedNotes, managerNote, pc.checkedIn, pc.at
       ]);
     });
   });
