@@ -190,6 +190,20 @@ const uBk = uShift.length ? uShift[0].bookings.find(b => b.bookingId === 'GYGE2E
 check('the portal shows the feed check-in via the union read', uBk && uBk.checked === true && uBk.checkedIn === 3, uBk);
 check('the feed check-in time flows through', uBk && uBk.checkedAt === '10:09', uBk && uBk.checkedAt);
 
+console.log('--- Private tours: "Paid private" rate + private/regular kept separate in the ledger ---');
+const ratesSheet = ledgerSS_().getSheetByName('Rates');
+ratesSheet.getRange(ratesSheet.getLastRow() + 1, 1, 1, 2).setValues([['Paid private - we owe guide (€ per private tour)', 80]]);
+check('readRates_ reads the "Paid private" label (80)', readRates_().privatePay === 80, readRates_().privatePay);
+// A private and a regular tour at the SAME slot must not wipe each other in the ledger.
+const lrow = (bid, type, we) => makeLedgerRow_({ dateKey: DATE, day: 'x', timeLabel: '4:00 PM', language: 'English',
+  bookingName: bid, phone: '', source: 'GetYourGuide', guests: 1, children: 0, checkedIn: 1, weOwe: we, theyOwe: 0, rrMakes: 0, type: type, bookingId: bid, note: '' });
+writeGuideLedger_('Carlos', DATE, '16:00', 'English', [lrow('REG1', 'Paid', 10)]);
+writeGuideLedger_('Carlos', DATE, '16:00', 'English', [lrow('PRIV1', 'Private', 80)]);   // same slot, private
+const carLedger = ledgerSS_().getSheetByName('Carlos').getDataRange().getValues();
+check('the private check-in does NOT wipe the regular one at the same slot',
+  carLedger.some(r => String(r[LEDGER_BOOKINGID_COL]) === 'REG1') && carLedger.some(r => String(r[LEDGER_BOOKINGID_COL]) === 'PRIV1'),
+  carLedger.map(r => r[LEDGER_BOOKINGID_COL]).filter(Boolean));
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

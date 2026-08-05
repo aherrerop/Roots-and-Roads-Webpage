@@ -237,7 +237,7 @@ gt.getRange(1,1,2,LEDGER_HEADERS.length).setNumberFormat('@');
 gt.getRange(1,1,2,LEDGER_HEADERS.length).setValues([
  LEDGER_HEADERS,
  ['2026-07-28','Tue','11:00','Italian','Guest Uno','+3912345','GetYourGuide',2,1,2,40,0,7,'Paid','GYGIT9','2026-07-28 13:00']]);
-const lr=readLedgerReservations_();
+const lr=readLedgerForGuides_(['Marco']).reservations;
 const lk=shiftKey_('2026-07-28',11*60,'Italian');
 check('ledger reservation indexed by shift key', !!lr[lk] && lr[lk].length===1, Object.keys(lr));
 const rb=(lr[lk]||[])[0]||{};
@@ -353,6 +353,19 @@ check('assign aggregated: count 2, max 9000, flagged REVIEW (p95>budget)', _a.co
 check('save aggregated: 1 error -> REVIEW', _s.errors===1 && _s.status==='REVIEW', _s);
 check('move aggregated: fast + no errors -> OK', _m.count===1 && _m.status==='OK', _m);
 check('slow tours read logging threshold is configured', typeof PORTAL.SLOW_MS==='number' && PORTAL.SLOW_MS>0, PORTAL.SLOW_MS);
+
+console.log('--- Money math: paid / free / private / commission (verification) ---');
+const _mrates={paid:10,free:6,privatePay:75,freeCommissions:{guruwalk:4.7,'':0},paidSources:['Viator','GetYourGuide','Airbnb']};
+PORTAL._paidSources=_mrates.paidSources;
+const mPaid=computeMoney_('GetYourGuide',3,false,45,_mrates);
+check('paid: we owe the guide 10 per checked-in person', mPaid.weOwe===30 && mPaid.theyOwe===0 && mPaid.type==='Paid', mPaid);
+check('paid: R&R makes OTA income minus what we owe', mPaid.rrMakes===15, mPaid.rrMakes);
+const mFree=computeMoney_('Guruwalk',2,false,0,_mrates);
+check('free: the guide owes us 6 per person', mFree.theyOwe===12 && mFree.weOwe===0 && mFree.type==='Free', mFree);
+check('free: R&R keeps (rate - platform commission) per person', mFree.rrMakes===round2_(2*(6-4.7)), mFree.rrMakes);
+const mPriv=computeMoney_('GetYourGuide',5,true,99.98,_mrates);
+check('private: FLAT 75 to the guide regardless of headcount', mPriv.weOwe===75 && mPriv.theyOwe===0 && mPriv.type==='Private', mPriv);
+check('private: R&R makes OTA income minus the flat 75', mPriv.rrMakes===round2_(99.98-75), mPriv.rrMakes);
 
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
