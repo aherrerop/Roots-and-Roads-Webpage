@@ -175,7 +175,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-05-weekly-delete-cleanups";
+const PORTAL_VERSION = "2026-08-05-checkin-feed-queue";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -351,6 +351,7 @@ function showDash(){
   const v=$("ver"); if(v) v.textContent="Portal "+PORTAL_VERSION;
   const c=store.cache;
   if(c){ renderAll(c); }                 // instant render from the last load
+  ckFlush();                              // push any check-ins queued offline last time
   loadTours();                            // then refresh from the server
   startAutoRefresh();
   checkForUpdate();                       // jump to the newest build if one is live
@@ -381,11 +382,12 @@ function startAutoRefresh(){
   // but slow enough that loads never overlap (the inflight guard drops any that
   // would). The old 8s poll fired faster than loads completed, so requests piled
   // up and each got slower.
-  window._rrRefresh = setInterval(()=>{ if(canAutoRefresh()) loadTours(); }, 20000);
+  window._rrRefresh = setInterval(()=>{ ckFlush(); if(canAutoRefresh()) loadTours(); }, 20000);
   // Check for a newer deployed build every 2 min and when the tab regains focus.
   window._rrVerCheck = setInterval(checkForUpdate, 120000);
-  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); if(canAutoRefresh()) loadTours(); } });
-  window.addEventListener("focus", ()=>{ checkForUpdate(); if(canAutoRefresh()) loadTours(); });
+  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours(); } });
+  window.addEventListener("focus", ()=>{ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours(); });
+  window.addEventListener("online", ckFlush);   // signal came back -> push queued check-ins
 }
 // A monotonic id per load. Only the NEWEST request may render — a slow, stale
 // response (e.g. an auto-refresh that read the grid before a manager's assign)
@@ -737,14 +739,14 @@ function bindTours(tours){
       recount(tid);
       const ok=await saveTour(tid);
       if(ok){
-        // CONFIRMED in the ledger — only now show the ✓.
+        // CONFIRMED on the server — show the ✓.
         b.checkedAt=hhmm; btn.classList.add("done"); btn.textContent="✓ "+hhmm;
       } else {
-        // NOT written. Revert everything so the guide clearly sees it must be re-tapped.
-        b.checked=prev.checked; b.checkedIn=prev.checkedIn; b.checkedAt=prev.checkedAt;
-        btn.classList.remove("done"); btn.disabled=false; btn.textContent="Check in";
-        steps.forEach(x=>x.disabled=false); recount(tid);
-        alert("Check-in NOT saved — please tap “Check in” again.\n(No internet, or the server was busy.)");
+        // Not confirmed yet — HOLD it on the phone and keep re-sending (offline
+        // queue) instead of making the guide re-tap. It stays checked locally,
+        // and syncs the moment the connection is back.
+        ckEnqueue(buildTourData(tid));
+        b.checkedAt=hhmm; btn.classList.add("done"); btn.textContent="✓ ⏳"; btn.title="Saved on your phone — syncing when back online";
       }
     };
   });
@@ -758,12 +760,42 @@ function recount(tourId){
   const sub=card.querySelector('.count .sub'); const miss=Math.max(0,total-sum);
   sub.className='sub'+(miss?'':' done'); sub.textContent=miss?miss+' to check in':'all checked';
 }
-async function saveTour(tourId,btn){
-  const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return;
+/* Build the save payload for a tour from its current card + cache. Shared by
+   saveTour and the offline retry queue so a queued re-send matches exactly. */
+function buildTourData(tourId){
+  const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return null;
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
-  const bookings=t.bookings.map((b,i)=>{ const st=card.querySelector('.stepper[data-ref="bk|'+i+'"] .val');
+  const bookings=t.bookings.map((b,i)=>{ const st=card?card.querySelector('.stepper[data-ref="bk|'+i+'"] .val'):null;
     return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,children:b.children||0,income:b.income,isPrivate:b.isPrivate,manualNote:b.manualNote||"",checked:!!b.checked,checkedIn:+(st?st.textContent:b.checkedIn)}; });
-  const data={dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,guide:t.guide||""};
+  return {dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,guide:t.guide||""};
+}
+/* ===== Offline-safe check-in queue =====
+   A check-in whose save doesn't reach the server is kept on the PHONE and
+   re-sent automatically until confirmed — surviving a dropped signal and a full
+   reload. So a tapped check-in is never lost; the reconciler + the union read on
+   the server make sure it lands in both the feed and the ledger. */
+function ckQueueLoad(){ try{ return JSON.parse(localStorage.getItem("rr_ckqueue")||"[]"); }catch(e){ return []; } }
+function ckQueueSave(q){ try{ localStorage.setItem("rr_ckqueue", JSON.stringify(q||[])); }catch(e){} }
+function ckEnqueue(data){ if(!data) return; const q=ckQueueLoad(); q.push({data:data, ts:Date.now()}); ckQueueSave(q); }
+function ckPending(){ return ckQueueLoad().length; }
+let CK_FLUSHING=false;
+async function ckFlush(){
+  if(CK_FLUSHING || !store.token) return;
+  const q=ckQueueLoad(); if(!q.length) return;
+  CK_FLUSHING=true;
+  const keep=[];
+  for(const item of q){
+    try{ const r=await api("save",{token:store.token,data:JSON.stringify(item.data)}); if(!(r&&r.ok)) keep.push(item); }
+    catch(e){ keep.push(item); }   // still offline — try again next time
+  }
+  ckQueueSave(keep);
+  CK_FLUSHING=false;
+  if(keep.length!==q.length && canAutoRefresh()) loadTours();   // something synced -> refresh
+}
+async function saveTour(tourId,btn){
+  const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return false;
+  const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
+  const data=buildTourData(tourId); if(!data) return false;
   const msg=card.querySelector('[data-msg]'); if(btn) btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
   MUTATING++; LAST_EDIT=Date.now();   // block auto-refresh from clobbering the check-in mid-save
   let ok=false;

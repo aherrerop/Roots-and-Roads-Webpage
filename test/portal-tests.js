@@ -26,8 +26,7 @@ check('an expired pending is dropped on reload', (function(){ LS['rr_pending'] =
 delete A.pending()['2026-08-10|17:00|English|R']; LS['rr_pending'] = '{}';   // reset for the flip-flop tests below
 
 console.log('--- The save payload carries children (so the ledger records them) ---');
-const saveFn = html.slice(html.indexOf('async function saveTour('), html.indexOf('/* ================== ALL GUIDES'));
-check('saveTour sends children in each booking', /children:\s*b\.children/.test(saveFn), saveFn.slice(0, 0));
+check('the save payload sends children in each booking', /children:\s*b\.children/.test(html), null);
 
 console.log('--- Freshness indicator + manager window controls exist ---');
 check('freshness element is in the page', /id="fresh"/.test(html), null);
@@ -38,7 +37,10 @@ check('the overlay holds through the settle window (no clear-on-match flip-back)
 
 console.log('--- Check-in only confirms "✓" once the ledger write succeeds ---');
 check('saveTour reports whether the write succeeded', /return ok;/.test(html) && /ok=!!\(r&&r\.ok\)/.test(html), null);
-check('a failed save reverts the check-in button (no fake ✓)', /const ok=await saveTour\(tid\)/.test(html) && /btn\.textContent="Check in"/.test(html), null);
+console.log('--- Offline check-in queue: held on the phone, retried until it lands ---');
+check('a check-in that fails to save is QUEUED (not lost)', /function ckEnqueue/.test(html) && /ckEnqueue\(buildTourData\(tid\)\)/.test(html), null);
+check('the queue flushes on boot, poll, focus and reconnect', /addEventListener\("online", ?ckFlush\)/.test(html) && /ckFlush\(\);\s*\/\/ push any check-ins queued/.test(html), null);
+check('a queued check-in shows a syncing state, not a revert', /✓ ⏳/.test(html), null);
 
 console.log('--- Pending assignment survives a stale read (the Albert->Carlos bug) ---');
 const shift = g => ({ dateKey: '2026-07-31', time: '17:00', language: 'English', isPrivate: false, assigned: g ? [g] : [], guide: g || '', status: g ? 'OK' : 'Not assigned' });
