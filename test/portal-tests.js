@@ -9,12 +9,21 @@ let pass = 0, fail = 0;
 const check = (l, c, g) => { if (c) { pass++; console.log('PASS  ' + l); } else { fail++; console.log('FAIL  ' + l + '  (got: ' + JSON.stringify(g) + ')'); } };
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'guide', 'index.html'), 'utf8');
-const start = html.indexOf('let PENDING_ASSIGN');
+const start = html.indexOf('const PENDING_TTL = 90000;');
 const end = html.indexOf('function renderAll(r){');
 if (start < 0 || end < 0) { console.error('Could not locate the pending-assignment block in guide/index.html'); process.exit(1); }
 const block = html.slice(start, end);
+// A minimal localStorage so the persist-across-reload logic is exercised.
+const LS = {}; global.localStorage = { getItem: k => (k in LS ? LS[k] : null), setItem: (k, v) => { LS[k] = String(v); }, removeItem: k => { delete LS[k]; } };
 // Run the extracted block in its own scope and expose the functions for testing.
-const A = (new Function(block + '\n;return { shiftIdKey, setPendingAssign, applyPendingAssigns, pending: () => PENDING_ASSIGN };'))();
+const A = (new Function(block + '\n;return { shiftIdKey, setPendingAssign, applyPendingAssigns, loadPending, pending: () => PENDING_ASSIGN };'))();
+
+console.log('--- Pending assignment SURVIVES a full page reload (persisted) ---');
+A.setPendingAssign({ dateKey: '2026-08-10', time: '17:00', language: 'English', isPrivate: '' }, 'Carlos');
+const reloaded = A.loadPending();   // what a freshly reloaded page would read back
+check('the just-assigned guide is still remembered after a reload', reloaded['2026-08-10|17:00|English|R'] && reloaded['2026-08-10|17:00|English|R'].guide === 'Carlos', reloaded);
+check('an expired pending is dropped on reload', (function(){ LS['rr_pending'] = JSON.stringify({ x: { guide: 'Old', until: Date.now() - 1 } }); return Object.keys(A.loadPending()).length === 0; })(), null);
+delete A.pending()['2026-08-10|17:00|English|R']; LS['rr_pending'] = '{}';   // reset for the flip-flop tests below
 
 console.log('--- The save payload carries children (so the ledger records them) ---');
 const saveFn = html.slice(html.indexOf('async function saveTour('), html.indexOf('/* ================== ALL GUIDES'));
