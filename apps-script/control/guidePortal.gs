@@ -151,6 +151,7 @@ function doGet(e) {
       case 'setNote': out = apiSetNote_(p); break;
       case 'closeShift': out = apiCloseShift_(p); break;
       case 'ping':   out = { ok: true, pong: true }; break;
+      case 'clientlog': out = apiClientLog_(p); break;
       case 'health': out = apiHealth_(); break;
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
     }
@@ -174,6 +175,24 @@ function doGet(e) {
   }
 
   return jsonp_(callback, out);
+}
+
+/**
+ * action=clientlog — the PHONE reports what a load actually did on its end:
+ * completed (ok), timed out, errored, or was abandoned by an early reload
+ * (abort). The server can't see a client that reloaded before the response
+ * arrived, so without this the Portal Log can't tell a genuinely slow load from
+ * one the user cut short. That distinction is exactly what the owner asked to
+ * see. Best-effort, token-light (returns no data), and cheap: the client only
+ * beacons the INITIAL load + failures + aborts — never routine 20s polls.
+ */
+function apiClientLog_(p) {
+  const ev = String(p.ev || '?').slice(0, 16);          // ok | timeout | error | abort
+  const ms = Math.max(0, Number(p.ms) || 0);
+  const nav = String(p.nav || '').slice(0, 16);         // initial | poll | focus | manual
+  portalLog_('tours@client:' + ev, ms, ev === 'ok',
+             'nav=' + nav + (p.days ? ' days=' + p.days : '') + ' (client-reported)');
+  return { ok: true };
 }
 
 /**
@@ -2857,7 +2876,12 @@ function readAllCheckins_() {
         guide: name,
         source: String(r[LEDGER_SOURCE_COL] || ''),
         checkedIn: Number(r[LEDGER_CHECKEDIN_COL] || 0),
-        updated: String(r[LEDGER_UPDATED_COL] || ''),
+        // Format if the ledger cell holds a real Date (Sheets stores it as one):
+        // String(Date) would leak "Thu Aug 06 2026 12:56:00 GMT+0200 (…)" into the
+        // GuruWalk queue's "Checked-in at". A plain string passes through as-is.
+        updated: (r[LEDGER_UPDATED_COL] instanceof Date)
+          ? Utilities.formatDate(r[LEDGER_UPDATED_COL], Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm')
+          : String(r[LEDGER_UPDATED_COL] || ''),
         time: String(r[2] || ''),
         language: String(r[3] || ''),
         booking: String(r[4] || ''),

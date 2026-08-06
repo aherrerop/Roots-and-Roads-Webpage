@@ -175,7 +175,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-05-checkin-feed-queue";
+const PORTAL_VERSION = "2026-08-06-tab-memory-resilient-loads";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -234,7 +234,7 @@ function apiJsonp(action, params){
     function cleanup(){ delete window[cb]; s.remove(); }
     s.onerror=()=>{ if(!done){cleanup(); reject(mkErr("network","NETWORK"));} };
     s.src=url; document.body.appendChild(s);
-    setTimeout(()=>{ if(!done){cleanup(); reject(mkErr("timeout","TIMEOUT"));} }, 20000);
+    setTimeout(()=>{ if(!done){cleanup(); reject(mkErr("timeout","TIMEOUT"));} }, 30000);   // match the fetch timeout — don't declare a slow-but-alive server dead early
   });
 }
 function serverTestLink(){
@@ -251,11 +251,32 @@ const store = {
   get name(){ return localStorage.getItem("rr_name")||""; },
   set name(v){ localStorage.setItem("rr_name",v||""); },
   get cache(){ try{ return JSON.parse(localStorage.getItem("rr_tours")||"null"); }catch(e){ return null; } },
-  set cache(v){ try{ v?localStorage.setItem("rr_tours",JSON.stringify(v)):localStorage.removeItem("rr_tours"); }catch(e){} }
+  set cache(v){ try{ v?localStorage.setItem("rr_tours",JSON.stringify(v)):localStorage.removeItem("rr_tours"); }catch(e){} },
+  // Which tab the user was last on ("tours" = My tours, "sched" = All tours /
+  // All guides). Persisted so a reload keeps you where you were — a manager lives
+  // in All tours and shouldn't be bounced back to My tours on every refresh.
+  get tab(){ return localStorage.getItem("rr_tab")||""; },
+  set tab(v){ try{ localStorage.setItem("rr_tab", v||""); }catch(e){} }
 };
 let RATES={paid:10,free:6}, DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
 let HAS_MORE=false, WINDOW_DAYS=7, MANAGER_DAYS=0; const MORE_DAYS=14;   // manager All-tours window
 let LAST_FRESH="";                                                       // last successful refresh time
+let LOAD_FAILS=0;                        // consecutive failed loads — gates the "can't reach" banner
+let RETRY_TIMER=null;                    // pending soft auto-retry after a miss
+const PAGE_T0=Date.now();                // when this page opened (client-perceived timing)
+let LOAD_START=0, LOAD_NAV="initial";    // current load's start time + what triggered it
+/* Tell the server analytics what a load ACTUALLY did on the phone: completed
+   (ok), timed out, errored, or was cut short by an early reload (abort). This is
+   how the timing report can separate a genuinely slow load from one the owner
+   reloaded before it finished. keepalive so it still sends during page-unload.
+   Only fires on the initial load, failures, and aborts — never routine polls. */
+function beacon(ev, ms, nav){
+  try{
+    const u = buildUrl("clientlog", {ev:ev, ms:Math.max(0,Math.round(ms||0)), nav:nav||"", days:MANAGER_DAYS||0});
+    if(window.fetch){ fetch(u,{method:"GET",keepalive:true,cache:"no-store"}).catch(()=>{}); }
+    else { new Image().src=u; }
+  }catch(e){}
+}
 function setFresh(state,t){
   const el=$("fresh"); if(!el) return;
   if(state==="loading"){ el.className="fresh loading"; el.textContent=LAST_FRESH?("Updating… (was "+LAST_FRESH+")"):"Updating…"; return; }
@@ -338,11 +359,16 @@ $("logoutBtn").onclick=()=>{ store.token=""; location.reload(); };
 $("tabTours").onclick=()=>switchTab("tours");
 $("tabSched").onclick=()=>switchTab("sched");
 function switchTab(t){
+  t = (t==="sched") ? "sched" : "tours";
+  store.tab = t;                                   // remember across reloads
   $("tabTours").classList.toggle("active",t==="tours");
   $("tabSched").classList.toggle("active",t==="sched");
   $("toursPane").classList.toggle("hidden",t!=="tours");
   $("schedPane").classList.toggle("hidden",t!=="sched");
 }
+/* Put the user back on the tab they last used. Called after each render so a
+   background refresh never yanks a manager out of All tours. */
+function restoreTab(){ switchTab(store.tab || "tours"); }
 
 /* ================== LOAD ================== */
 function showDash(){
@@ -352,7 +378,7 @@ function showDash(){
   const c=store.cache;
   if(c){ renderAll(c); }                 // instant render from the last load
   ckFlush();                              // push any check-ins queued offline last time
-  loadTours();                            // then refresh from the server
+  loadTours("initial");                   // then refresh from the server
   startAutoRefresh();
   checkForUpdate();                       // jump to the newest build if one is live
 }
@@ -382,12 +408,15 @@ function startAutoRefresh(){
   // but slow enough that loads never overlap (the inflight guard drops any that
   // would). The old 8s poll fired faster than loads completed, so requests piled
   // up and each got slower.
-  window._rrRefresh = setInterval(()=>{ ckFlush(); if(canAutoRefresh()) loadTours(); }, 20000);
+  window._rrRefresh = setInterval(()=>{ ckFlush(); if(canAutoRefresh()) loadTours("poll"); }, 20000);
   // Check for a newer deployed build every 2 min and when the tab regains focus.
   window._rrVerCheck = setInterval(checkForUpdate, 120000);
-  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours(); } });
-  window.addEventListener("focus", ()=>{ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours(); });
+  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours("focus"); } });
+  window.addEventListener("focus", ()=>{ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours("focus"); });
   window.addEventListener("online", ckFlush);   // signal came back -> push queued check-ins
+  // Reloaded/closed the page mid-load? Tell the analytics it was cut short (not a
+  // slow server) — this is the "sometimes I reload before it finishes" case.
+  window.addEventListener("pagehide", ()=>{ if(LOADING) beacon("abort", Date.now()-LOAD_START, LOAD_NAV); });
 }
 // A monotonic id per load. Only the NEWEST request may render — a slow, stale
 // response (e.g. an auto-refresh that read the grid before a manager's assign)
@@ -395,27 +424,48 @@ function startAutoRefresh(){
 // look like they "didn't stick, then kicked in later".
 let LOAD_SEQ = 0;
 let LOADING = false;   // one tours request at a time — never let polls pile up
-async function loadTours(){
+async function loadTours(nav){
   // A tours load can take several seconds. The 20s poll (and focus/visibility
   // events) must NOT start a second one while the first is still running, or
   // requests stack up, serialize on the server, and each gets slower — which is
   // exactly what turned ~8s loads into 60-120s ones. Skip if one is in flight.
   if(LOADING) return;
-  LOADING = true; setFresh("loading");
+  if(RETRY_TIMER){ clearTimeout(RETRY_TIMER); RETRY_TIMER=null; }
+  LOADING = true; LOAD_NAV = nav||"poll"; LOAD_START = Date.now();
+  setFresh("loading");
   const seq = ++LOAD_SEQ;
   if(!store.cache) $("toursPane").innerHTML='<div class="spin">Loading…</div>';
   const params={token:store.token}; if(MANAGER_DAYS>0) params.days=MANAGER_DAYS;
   let r; try{ r=await api("tours",params); }
-  catch(err){ LOADING=false; if(seq!==LOAD_SEQ) return; setFresh("stale"); await showLoadError(err); return; }
+  catch(err){ LOADING=false; if(seq!==LOAD_SEQ) return; onLoadFailed(err); return; }
   LOADING = false;
   if(seq!==LOAD_SEQ) return;                 // a newer load has superseded this one
   if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
-    setFresh("stale");
-    $("toursPane").innerHTML='<div class="loaderr"><b>Server error</b>'+esc(r.error||"Unknown error")+
-      '<br><button class="retry" onclick="loadTours()">Retry</button></div>'; return; }
+    onLoadFailed(mkErr("server", r.error||"Server error")); return; }
+  const took = Date.now()-LOAD_START;
+  // Report first-paint time and any recovery-after-failure, so the analytics can
+  // see real completed-load times (vs the aborts/timeouts reported below).
+  if(LOAD_FAILS>0 || LOAD_NAV==="initial") beacon("ok", took, LOAD_NAV);
+  LOAD_FAILS=0;
   setFresh("ok", r.now);
   store.cache=r;
   renderAll(r);
+}
+/* One miss shouldn't slap "Can't reach the server" over good data — a mobile
+   blip or a single slow response is normal. Keep the last list, retry quietly in
+   a few seconds, and only show the banner after TWO misses in a row. Every miss
+   is reported so the timing report separates true outages from an early reload. */
+function onLoadFailed(err){
+  LOAD_FAILS++;
+  beacon(err && err.kind==="timeout" ? "timeout" : "error", Date.now()-LOAD_START, LOAD_NAV);
+  if(LOAD_FAILS < 2){
+    setFresh("loading");                      // still "Updating…" — we're quietly retrying
+    if(RETRY_TIMER) clearTimeout(RETRY_TIMER);
+    RETRY_TIMER=setTimeout(()=>{ RETRY_TIMER=null; loadTours("retry"); }, 3000);
+    return;
+  }
+  setFresh("stale");                          // now it's a real problem — say so
+  if(!store.cache) showLoadError(err);        // only replace the screen when there's nothing cached to keep
 }
 /* ---- Pending assignments: the real fix for the "reverts to Albert" bug ----
    After you assign Carlos, Google's Sheets backend may still serve the very
@@ -472,6 +522,7 @@ function renderAll(r){
   else { renderSchedule(r.schedule||[]); $("tabSched").textContent="All guides"; }
   TOURS_CACHE = MANAGER ? (r.tours||[]).concat(all) : (r.tours||[]);
   bindTours(TOURS_CACHE);
+  restoreTab();                          // keep the user on their last tab (no jump to My tours)
 }
 
 /* Diagnose a failed load: try the lightweight health endpoint to tell a dead

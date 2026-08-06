@@ -89,6 +89,21 @@ const other = { allTours: [{ dateKey: '2026-08-01', time: '11:00', language: 'En
 A.applyPendingAssigns(other);
 check('an unrelated shift keeps its own guide', other.allTours[0].assigned.join() === 'Polina', other.allTours[0]);
 
+console.log('--- Manager stays on their tab across reloads ---');
+check('the active tab is persisted (rr_tab)', /store\.tab/.test(html) && /rr_tab/.test(html), null);
+check('switchTab records the choice', /function switchTab\(t\)\{[\s\S]*store\.tab = t;/.test(html), null);
+check('renderAll restores the last tab (no jump back to My tours)', /function restoreTab/.test(html) && /restoreTab\(\);/.test(html), null);
+
+console.log('--- Resilient loads: one miss must not show "Can\'t reach the server" ---');
+check('a single failed load is gated (banner only after 2 in a row)', /LOAD_FAILS\s*<\s*2/.test(html), null);
+check('a miss schedules a quiet auto-retry instead of an error', /RETRY_TIMER=setTimeout\(\(\)=>\{ RETRY_TIMER=null; loadTours\("retry"\)/.test(html), null);
+check('a cached screen is kept on failure (error UI only when nothing cached)', /if\(!store\.cache\) showLoadError/.test(html), null);
+
+console.log('--- Load analytics: reload-early vs real slowness is reported ---');
+check('a client telemetry beacon exists', /function beacon\(ev, ms, nav\)/.test(html) && /"clientlog"/.test(html), null);
+check('an early reload mid-load reports an abort', /pagehide[\s\S]*beacon\("abort"/.test(html), null);
+check('the initial load is tagged so completed-load times are measurable', /loadTours\("initial"\)/.test(html), null);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
