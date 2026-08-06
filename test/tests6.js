@@ -232,6 +232,7 @@ lc.insertSheet('Guides').getRange(1,1,2,11).setValues([
  ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Manager','Email','Password'],
  ['Marco',true,1,false,false,false,false,true,false,'m@x.com','pw']]);
 const led=new __mock.MockSS('ledger-fb'); __mock.SS_BY_ID['LEDFB']=led; __mock.PROPS['LEDGER_ID']='LEDFB';
+__RRX={};   // swapping the mock sheet registry simulates a fresh execution -> reset the per-request memo (prod resets globals each doGet)
 const gt=led.insertSheet('Marco');
 gt.getRange(1,1,2,LEDGER_HEADERS.length).setNumberFormat('@');
 gt.getRange(1,1,2,LEDGER_HEADERS.length).setValues([
@@ -247,6 +248,7 @@ check('no duplicate booking ids in the ledger index', (lr[lk]||[]).filter(b=>b.b
 
 console.log('--- Completed Log fallback: un-checked-in guests still show ---');
 const bkCL=new __mock.MockSS('booking-cl'); __mock.SS_BY_ID['1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw']=bkCL;
+__RRX={};   // fresh execution: drop the memoised booking handle so the new mock is read
 const cl=bkCL.insertSheet('Completed Log');
 cl.getRange(1,1,2,12).setNumberFormat('@');
 cl.getRange(1,1,2,12).setValues([
@@ -261,6 +263,7 @@ check('completed-log carries name/phone/guests/children (checked-in unknown)',
 
 console.log('--- Per-booking notes: written to the BookingSheet (col J) ---');
 const bnss=new __mock.MockSS(PORTAL.BOOKING_SHEET_ID); __mock.SS_BY_ID[PORTAL.BOOKING_SHEET_ID]=bnss;
+__RRX={};   // fresh execution: drop the memoised booking handle so the new mock is read
 const bnEn=bnss.insertSheet('English Tours');
 bnEn.getRange(1,1,3,9).setValues([
  ['Name','Phone','Number of Guests','Tour date','Time','Source','Income','Booking ID','Notes'],
@@ -300,6 +303,27 @@ const wsched2=[{dateKey:tgtKey, minutes:timeToMinutes_('11:00'), language:'Itali
 appendWeeklyScheduleShifts_(wsched2);
 check('a shift already present is not duplicated by the rule',
   wsched2.filter(s=>s.language==='Italian'&&s.dateKey===tgtKey).length===1, wsched2);
+
+console.log('--- #2 Weekly default reaches the ATTRIBUTION path (guideForShift_), not just the portal ---');
+const cwd=new __mock.MockSS('control-wdef'); SpreadsheetApp._active=cwd; __RRX={};
+const wdKey=_plus(3), wdDay=dayNameFromKey_(wdKey);
+cwd.insertSheet('Guides').getRange(1,1,2,11).setValues([
+ ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Manager','Email','Password'],
+ ['Carla',true,1,true,false,false,false,false,false,'c@x.com','pw']]);
+cwd.insertSheet('Weekly_Schedule').getRange(1,1,3,7).setValues([
+ ['Day','Time','Language','Guides needed','Active from','Active until','Guide'],
+ [wdDay,'17:00','English',1,'','','Carla'],
+ [wdDay,'10:00','French',1,'','','Carla']]);   // Carla does NOT speak French -> must not default
+check('weeklyDefaultGuide_ resolves the recurring guide for a date',
+  weeklyDefaultGuide_(wdKey,'17:00','English')==='Carla', weeklyDefaultGuide_(wdKey,'17:00','English'));
+check('guideForShift_ falls back to the weekly default when the grid cell is blank (fixes the queues showing no guide)',
+  guideForShift_([],wdKey,'17:00','English',false)==='Carla', guideForShift_([],wdKey,'17:00','English',false));
+check('a real grid assignment still WINS over the weekly default',
+  guideForShift_([{dateKey:wdKey,minutes:timeToMinutes_('17:00'),language:'English',private:false,assigned:['Bob']}],wdKey,'17:00','English',false)==='Bob', null);
+check('a private shift has no weekly default in the attribution path',
+  guideForShift_([],wdKey,'17:00','English',true)==='', guideForShift_([],wdKey,'17:00','English',true));
+check('a default guide who does NOT speak the language is not attributed',
+  weeklyDefaultGuide_(wdKey,'10:00','French')==='', weeklyDefaultGuide_(wdKey,'10:00','French'));
 
 console.log('--- #5 Management closes a schedule (durable, source-agnostic hide) ---');
 const cc2=new __mock.MockSS('control-close'); SpreadsheetApp._active=cc2;

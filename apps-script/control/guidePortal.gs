@@ -106,10 +106,22 @@ const PORTAL = {
   // Seconds the slow, shared cross-file reads (schedule grids, BookingSheet,
   // Completed Log) are cached so the frequent auto-refresh does not re-open
   // those spreadsheets every time. Invalidated immediately on any assignment /
-  // move / note change. Check-ins are NEVER cached — they read live so a
-  // guest ticked in shows on the very next poll.
-  CACHE_TTL: 20
+  // move / note change (bumpCacheVersion_), so a longer TTL is safe: the only
+  // untracked change is a NEW booking (the feed already lags its 5-min rebuild)
+  // or a manual grid edit — both tolerate <=TTL. With the 20s poll, TTL=60 lets
+  // ~2-3 polls serve from cache instead of re-reading every grid every time.
+  // Check-ins are NEVER cached — they read live so a guest ticked in shows on
+  // the very next poll.
+  CACHE_TTL: 60
 };
+
+// PER-EXECUTION memo. Apps Script re-creates globals on every request, so this
+// lives exactly one doGet. It stops a SINGLE load from re-opening a spreadsheet
+// (openById is ~1s each) or re-reading the Guides / Weekly_Schedule tabs the
+// several times one tours build needs them. It never causes staleness: a
+// memoised HANDLE still reads live cells, and the memoised tab VALUES (Guides,
+// Weekly_Schedule) are ones no request mutates mid-build.
+var __RRX = {};
 
 
 /******************************************************
@@ -123,6 +135,7 @@ const PORTAL = {
 const PORTAL_MUTATIONS = { assign: 1, save: 1, move: 1, setNote: 1, closeShift: 1 };
 
 function doGet(e) {
+  __RRX = {};                       // fresh per-request memo (prod globals reset anyway; explicit for safety + tests)
   const p = (e && e.parameter) ? e.parameter : {};
   const callback = p.callback || '';
   const t0 = Date.now();
@@ -301,6 +314,7 @@ function jsonp_(callback, obj) {
 
 /** action=login  -> { ok, token, guide, languages } */
 function apiLogin_(p) {
+  __RRX = {};
   const email = String(p.email || '').trim().toLowerCase();
   const password = String(p.password || '');
 
@@ -323,21 +337,26 @@ function apiLogin_(p) {
 
 /** action=tours -> { ok, guide, rates, tours:[...], schedule:[...] } */
 function apiTours_(p) {
-  const name = requireToken_(p.token);
+  __RRX = {};                       // request boundary: fresh per-load memo (see doGet)
+  // Per-phase stopwatch, returned as `timings` so we can see exactly where a
+  // load spends its milliseconds — real numbers, not guesses. EVERY phase is
+  // wrapped (not just the cross-file reads), so a slow load can no longer hide
+  // its cost in untimed work: token, the cached reads, the schedule assembly,
+  // the check-in read, the backfill, the closed-shift filter, and the my/manager
+  // view builds all report their own ms. A cached phase reads ~0ms.
+  const T = {};
+  const _t = (k, fn) => { const s = Date.now(); const r = fn(); T[k] = (T[k] || 0) + (Date.now() - s); return r; };
+
+  const name = _t('tok', function () { return requireToken_(p.token); });
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
 
   const today = todayKey_();
-  // Per-phase stopwatch, returned as `timings` so we can see exactly where a
-  // load spends its milliseconds (schedule vs booking list vs ledger) — real
-  // numbers, not guesses. A cached phase reads ~0ms; a cold one shows its cost.
-  const T = {};
-  const _t = (k, fn) => { const s = Date.now(); const r = fn(); T[k] = Date.now() - s; return r; };
 
   // These three cross-file reads are identical for every guide for many seconds,
   // so they are cached (invalidated on any assign/move/note change). This is the
   // core fix for the 8-127s loads: the frequent poll stops re-opening the
   // BookingSheet and re-reading every schedule grid each time.
-  const rates = _t('rates', function () { return cachedRead_('rates', 60, readRates_); });
+  const rates = _t('rates', function () { return cachedRead_('rates', PORTAL.CACHE_TTL, readRates_); });
   let schedule = _t('sched', function () { return cachedRead_('sched', PORTAL.CACHE_TTL, function () { return readSchedule_(); }); });
   // Reservations come from the single "Portal Feed" tab (one read). If it is not
   // there yet, fall back to scanning the six language tabs — so the portal keeps
@@ -347,19 +366,25 @@ function apiTours_(p) {
       return readPortalFeed_() || readBookingsIndex_();
     });
   });
-  appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
-  appendWeeklyScheduleShifts_(schedule);            // #4: new Weekly_Schedule offer rows show at once
-  applyWeeklyDefaults_(schedule);                   // recurring default guide fills unassigned weekly slots
-  // Order every shift by date then start time (so appended orphans slot into
-  // their real time position, not at the end of the list).
-  schedule.sort((a, b) =>
-    (a.dateKey < b.dateKey ? -1 : a.dateKey > b.dateKey ? 1 : 0) ||
-    (a.minutes - b.minutes) ||
-    String(a.language).localeCompare(String(b.language)));
+  // Assemble the shift list: appended orphan bookings + Weekly_Schedule offer
+  // rows + the recurring default-guide overlay, then sorted. All three share one
+  // Weekly_Schedule read (weeklyRules_), so this is now a single tab read.
+  _t('assemble', function () {
+    appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
+    appendWeeklyScheduleShifts_(schedule);            // #4: new Weekly_Schedule offer rows show at once
+    applyWeeklyDefaults_(schedule);                   // recurring default guide fills unassigned weekly slots
+    // Order every shift by date then start time (so appended orphans slot into
+    // their real time position, not at the end of the list).
+    schedule.sort((a, b) =>
+      (a.dateKey < b.dateKey ? -1 : a.dateKey > b.dateKey ? 1 : 0) ||
+      (a.minutes - b.minutes) ||
+      String(a.language).localeCompare(String(b.language)));
+    return 0;
+  });
 
   // Who is asking — decides how much we load. A regular guide only needs their
   // OWN check-ins (their My-tours); a manager needs everyone's (they watch all).
-  const me = findGuideByName_(name);
+  const me = _t('me', function () { return findGuideByName_(name); });
   const isManager = !!(me && me.manager);
 
   // CHECK-INS live in the ledger tab of the guide the tour is ASSIGNED to, and
@@ -382,24 +407,29 @@ function apiTours_(p) {
   const needBackfill = schedule.some(s => s.dateKey <= today &&
     !((bookingsByKey[shiftKey_(s.dateKey, s.minutes, s.language)] || []).length));
   if (needBackfill) {
-    const doneByKey = cachedRead_('cl', PORTAL.CACHE_TTL, readCompletedLogReservations_);
-    const ledgerByKey = ledger.reservations;
-    new Set(Object.keys(doneByKey).concat(Object.keys(ledgerByKey))).forEach(k => {
-      if (!bookingsByKey[k] || !bookingsByKey[k].length) {
-        bookingsByKey[k] = doneByKey[k] || ledgerByKey[k];
-      }
+    _t('backfill', function () {
+      const doneByKey = cachedRead_('cl', PORTAL.CACHE_TTL, readCompletedLogReservations_);
+      const ledgerByKey = ledger.reservations;
+      new Set(Object.keys(doneByKey).concat(Object.keys(ledgerByKey))).forEach(k => {
+        if (!bookingsByKey[k] || !bookingsByKey[k].length) {
+          bookingsByKey[k] = doneByKey[k] || ledgerByKey[k];
+        }
+      });
+      return 0;
     });
   }
 
   // A deleted (closed) shift stays gone — it does NOT reappear even if it still
   // has a booking (manager's explicit call; the grid cell was also cleared, which
   // frees its guide). Reopen from the Closed_Shifts tab to bring it back.
-  const closed = readClosedShifts_();
-  schedule = schedule.filter(s => !closed[shiftDomId_(s)]);
+  schedule = _t('closed', function () {
+    const closed = readClosedShifts_();
+    return schedule.filter(s => !closed[shiftDomId_(s)]);
+  });
 
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
-  const tours = mine.map(shift => {
+  const tours = _t('mine', function () { return mine.map(shift => {
     const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
     // A private shift shows only its private booking(s); a regular shift only
     // the non-private ones. That's what splits Fake (regular) from Fake 2 (private).
@@ -451,7 +481,7 @@ function apiTours_(p) {
       checkedGuests,
       bookings
     };
-  });
+  }); });
 
   // Shared tour list (shown to every guide): only THIS WEEK (today .. Sunday),
   // so the compact list stays scannable. The manager "All tours" tab below uses
@@ -477,7 +507,7 @@ function apiTours_(p) {
   let allTours = [];
   let guidesByLanguage = null;
   let busyMap = null;
-  if (isManager) {
+  if (isManager) _t('mgrGuides', function () {
     guidesByLanguage = {};
     const seniorityOf = {};
     const raw = readGuidesRaw_();
@@ -499,7 +529,8 @@ function apiTours_(p) {
         (seniorityOf[a] - seniorityOf[b]) || a.localeCompare(b));
     });
     busyMap = buildBusyMap_(schedule);
-  }
+    return 0;
+  });
   // The manager "All tours" list loads the near-term window first (today .. +N
   // days); "Load more" re-requests with a bigger `days`. This keeps the common
   // refresh light — a manager assigning this week does not pay to build next
@@ -507,7 +538,7 @@ function apiTours_(p) {
   const windowDays = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(p.days) || PORTAL.MANAGER_WINDOW_DAYS));
   const managerHorizon = addDaysKey_(today, windowDays);
   let hasMore = false;
-  if (isManager) {
+  if (isManager) _t('mgrTours', function () {
     hasMore = schedule.some(s => s.dateKey > managerHorizon);
     // Check-ins come from the targeted ledger read above, so a check-in shows no
     // matter which assigned guide on the tour tapped it.
@@ -548,12 +579,13 @@ function apiTours_(p) {
         bookings
       };
     });
-  }
+    return 0;
+  });
 
   return { ok: true, guide: name, manager: isManager, rates, tours,
            schedule: scheduleView, allTours, guidesByLanguage,
            hasMore: hasMore, windowDays: windowDays,
-           timings: T,   // { rates, sched, book, ledger } ms — where the load went
+           timings: T,   // per-phase ms (tok/rates/sched/book/assemble/me/ledger/backfill/closed/mine/mgrGuides/mgrTours)
            // Freshness: the server's own clock at the moment this data was built,
            // so the phone can show "Updated HH:mm:ss" truthfully (not its own clock).
            now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };
@@ -576,6 +608,7 @@ function apiTours_(p) {
  *   params: token, bookingId, language (optional hint), note
  */
 function apiSetNote_(p) {
+  __RRX = {};
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
   const me = findGuideByName_(name);
@@ -655,6 +688,7 @@ function readClosedShifts_() {
  *   params: token, id (the tour id), reopen ("1" to un-hide)
  */
 function apiCloseShift_(p) {
+  __RRX = {};
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
   const me = findGuideByName_(name);
@@ -768,10 +802,8 @@ function pruneEmptyGridColumnsAndRows_(sh) {
  * when a private booking exists).
  */
 function appendWeeklyScheduleShifts_(schedule) {
-  let rules;
-  try { rules = readWeeklySchedule_(control_()); }   // shared with assignShifts.gs (same project)
-  catch (e) { return; }                              // no Weekly_Schedule tab -> nothing to add
-  if (!rules || !rules.length) return;
+  const rules = weeklyRules_();                       // read once per load; shared with applyWeeklyDefaults_
+  if (!rules || !rules.length) return;               // no Weekly_Schedule tab -> nothing to add
 
   const today = todayKey_();
   const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
@@ -800,6 +832,7 @@ function appendWeeklyScheduleShifts_(schedule) {
 }
 
 function apiAssign_(p) {
+  __RRX = {};
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
   const me = findGuideByName_(name);
@@ -866,6 +899,7 @@ function apiAssign_(p) {
  * NOT move it back.
  */
 function apiMoveBooking_(p) {
+  __RRX = {};
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
   const me = findGuideByName_(name);
@@ -1088,6 +1122,7 @@ function refreshGridTitle_(sh, language, anchor) {
 
 /** action=save -> { ok } . data = JSON: { tourId, dateKey, time, language, bookings:[{bookingId,source,name,phone,guests,checkedIn}], walkins:[{source,count}] } */
 function apiSave_(p) {
+  __RRX = {};
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
 
@@ -1192,14 +1227,15 @@ function apiHealth_() {
  * 4. CONTROL_V1 READERS  (guides, rates, schedule)
  ******************************************************/
 
-function control_() { return SpreadsheetApp.getActiveSpreadsheet(); }
+function control_() { return SpreadsheetApp.getActiveSpreadsheet(); }   // already-open handle, no round-trip — not worth memoising
 
 function readGuidesRaw_() {
+  if (__RRX.guidesRaw) return __RRX.guidesRaw;            // one Guides read per load (findGuideByName_ hits it repeatedly)
   const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
   if (!sh) throw new Error('Guides tab not found');
   const values = sh.getDataRange().getValues();
-  if (values.length < 2) return { header: [], rows: [] };
-  return { header: values[0].map(h => String(h).trim()), rows: values.slice(1) };
+  if (values.length < 2) return (__RRX.guidesRaw = { header: [], rows: [] });
+  return (__RRX.guidesRaw = { header: values[0].map(h => String(h).trim()), rows: values.slice(1) });
 }
 
 /** Language-agnostic: language columns are those between "Seniority" and "Email". */
@@ -1433,7 +1469,7 @@ function gridLabelToKey_(label, anchor) {
  * 5. BOOKINGSHEET READER  (guests + contacts per shift)
  ******************************************************/
 
-function bookingSS_() { return SpreadsheetApp.openById(PORTAL.BOOKING_SHEET_ID); }
+function bookingSS_() { return __RRX.bookingSS || (__RRX.bookingSS = SpreadsheetApp.openById(PORTAL.BOOKING_SHEET_ID)); }
 
 /**
  * Read the BookingSheet "Portal Feed" tab (ONE read) into the same
@@ -1622,30 +1658,48 @@ function visibleShiftsForGuide_(shifts, myShifts, guide, isManager) {
  * for a specific date is a real grid lock — that shift already has an assigned
  * guide, so it is skipped here and the override wins for that day only.
  */
+/** Weekly_Schedule rules, read ONCE per load (both appenders + defaults share it). */
+function weeklyRules_() {
+  if (__RRX.weekly) return __RRX.weekly;
+  let rules = [];
+  try { rules = readWeeklySchedule_(control_()) || []; } catch (e) { rules = []; }
+  return (__RRX.weekly = rules);
+}
+
+/**
+ * The DEFAULT guide the weekly pattern puts on a given date/time/language, or ''
+ * if none applies. SINGLE SOURCE OF TRUTH shared by the portal overlay
+ * (applyWeeklyDefaults_) AND the attribution path (guideForShift_ -> the GuruWalk
+ * / no-show / unassigned queues), so the two never disagree: a shift's guide is
+ * the grid cell, else this weekly default. Respects the rule's active window and
+ * requires the guide to be active and to actually speak the language.
+ */
+function weeklyDefaultGuide_(dateKey, time, language) {
+  const rules = weeklyRules_();
+  if (!rules.length || !dateKey) return '';
+  const day = dayNameFromKey_(dateKey).toLowerCase();
+  const minutes = timeToMinutes_(normTime24_(time));
+  const langL = String(language || '').toLowerCase();
+  for (const r of rules) {
+    if (!r.guide) continue;
+    if (/^private$/i.test(r.language)) continue;                 // defaults are for regular slots
+    if (String(r.day).toLowerCase() !== day) continue;
+    if (String(r.language).toLowerCase() !== langL) continue;
+    if (timeToMinutes_(normTime24_(r.time)) !== minutes) continue;
+    if (r.activeFrom && dateKey < toDateKey_(r.activeFrom)) continue;
+    if (r.activeUntil && dateKey > toDateKey_(r.activeUntil)) continue;
+    const g = findGuideByName_(r.guide);
+    return (g && g.active && g.languages[language] === true) ? r.guide : '';
+  }
+  return '';
+}
+
 function applyWeeklyDefaults_(schedule) {
-  let rules;
-  try { rules = readWeeklySchedule_(control_()); } catch (e) { return; }
-  const byKey = {};
-  rules.forEach(r => {
-    if (!r.guide) return;
-    byKey[String(r.day).toLowerCase() + '|' + timeToMinutes_(normTime24_(r.time)) + '|' +
-          String(r.language).toLowerCase()] = r.guide;
-  });
-  if (!Object.keys(byKey).length) return;
-
-  const okCache = {};
-  const speaksAndActive = (name, language) => {
-    const ck = name + '|' + language;
-    if (ck in okCache) return okCache[ck];
-    const g = findGuideByName_(name);
-    return (okCache[ck] = !!(g && g.active && g.languages[language] === true));
-  };
-
   schedule.forEach(s => {
     if (s.private) return;                              // defaults are for regular slots
     if (s.assigned && s.assigned.length) return;        // a real assignment always wins
-    const guide = byKey[String(s.day).toLowerCase() + '|' + s.minutes + '|' + String(s.language).toLowerCase()];
-    if (!guide || !speaksAndActive(guide, s.language)) return;
+    const guide = weeklyDefaultGuide_(s.dateKey, s.time, s.language);
+    if (!guide) return;
     s.assigned = [guide];
     s.status = 'OK';
     s.weeklyDefault = true;                             // marker: filled by the weekly pattern
@@ -1724,10 +1778,11 @@ function migrateLedgerChildrenColumn_() {
 }
 
 function ledgerSS_() {
+  if (__RRX.ledgerSS) return __RRX.ledgerSS;
   const props = PropertiesService.getScriptProperties();
   const id = props.getProperty('LEDGER_ID');
   if (id) {
-    try { return SpreadsheetApp.openById(id); } catch (e) { /* recreate below */ }
+    try { return (__RRX.ledgerSS = SpreadsheetApp.openById(id)); } catch (e) { /* recreate below */ }
   }
 
   // Create it, move to the Guide Management folder, seed the Rates tab.
@@ -1741,7 +1796,7 @@ function ledgerSS_() {
   } catch (e) { /* leave in My Drive if folder move fails */ }
 
   seedRatesTab_(ss);
-  return ss;
+  return (__RRX.ledgerSS = ss);
 }
 
 function seedRatesTab_(ss) {
@@ -2845,7 +2900,13 @@ function guideForShift_(schedule, dateKey, time, language, isPrivate) {
   const hit = schedule.find(s =>
     s.dateKey === dateKey && s.minutes === minutes &&
     sameName_(s.language, language) && !!s.private === !!isPrivate);
-  return hit && hit.assigned.length ? hit.assigned.join(', ') : '';
+  if (hit && hit.assigned.length) return hit.assigned.join(', ');
+  // No grid assignment: fall back to the weekly default so the management queues
+  // attribute the SAME recurring guide the portal already shows. Without this a
+  // tour staffed only by the weekly pattern (e.g. the weekday English slots that
+  // are never hand-assigned) would show blank here and get mis-flagged as
+  // "ran with no guide". Private shifts have no weekly default.
+  return isPrivate ? '' : weeklyDefaultGuide_(dateKey, time, language);
 }
 
 function updateNoShowQueues_() {
