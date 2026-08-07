@@ -164,7 +164,11 @@ function doGet(e) {
     const detail = (out && out.error) ? out.error :
       ['date=' + (p.dateKey || ''), 'time=' + (p.time || ''), 'lang=' + (p.language || ''),
        'guide=' + (p.guide || ''), 'id=' + (p.bookingId || p.id || '')].filter(x => !/=$/.test(x)).join(' ');
-    portalLog_(p.action, ms, !!(out && out.ok), detail);
+    // A mutation that returns a per-phase breakdown (save) logs it too — so the
+    // Portal Log shows where a WRITE spends its time, not just the total.
+    const wtim = (out && out.timings) ?
+      ' | ' + Object.keys(out.timings).map(function (k) { return k + '=' + out.timings[k] + 'ms'; }).join(' ') : '';
+    portalLog_(p.action, ms, !!(out && out.ok), detail + wtim);
   } else if (p.action === 'tours' && ms > PORTAL.SLOW_MS) {
     // Reads are not normally logged (the frequent poll would flood the log), but
     // a SLOW load is exactly what we want to catch — with its per-phase breakdown
@@ -239,6 +243,21 @@ function bumpCacheVersion_() {
     const p = PropertiesService.getScriptProperties();
     p.setProperty('PORTAL_CACHE_VER', String((Number(p.getProperty('PORTAL_CACHE_VER')) || 0) + 1));
   } catch (e) { /* best-effort; a missed bump only means <=TTL staleness */ }
+}
+// A SEPARATE version just for the Portal Feed read. A check-in changes ONLY the
+// feed (M/N) — not the schedule / guides / weekly — so it bumps this, refreshing
+// the feed on the very next load while leaving the expensive caches warm. That's
+// what lets a check-in show immediately without making every post-check-in load
+// cold (which would be the worst possible moment to slow down).
+function feedCacheVersion_() {
+  try { return PropertiesService.getScriptProperties().getProperty('PORTAL_FEED_VER') || '0'; }
+  catch (e) { return '0'; }
+}
+function bumpFeedCacheVersion_() {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    p.setProperty('PORTAL_FEED_VER', String((Number(p.getProperty('PORTAL_FEED_VER')) || 0) + 1));
+  } catch (e) { /* best-effort */ }
 }
 function cachedRead_(name, ttlSeconds, fn) {
   let cache = null, key = '';
@@ -381,7 +400,9 @@ function apiTours_(p) {
   // there yet, fall back to scanning the six language tabs — so the portal keeps
   // working through the feed's first rollout.
   const bookingsByKey = _t('book', function () {
-    return cachedRead_('bk', PORTAL.CACHE_TTL, function () {
+    // 'bk:<feedVer>' so a check-in (which bumps only feedVer) refreshes THIS read
+    // on the next load without touching the schedule/guides/weekly caches.
+    return cachedRead_('bk:' + feedCacheVersion_(), PORTAL.CACHE_TTL, function () {
       return readPortalFeed_() || readBookingsIndex_();
     });
   });
@@ -1178,21 +1199,32 @@ function apiSave_(p) {
   // only mean the guide owes us commission we never generated — no guide reports
   // that. The feature was noise, so the portal no longer sends walk-ins.
 
+  // Per-phase write stopwatch, returned so the Portal Log shows where a save
+  // spends its time (lock wait vs ledger write vs feed write vs flush) — the
+  // write half of the "explain the timings" ask.
+  const ST = {};
+  const _s = (k, fn) => { const t = Date.now(); const r = fn(); ST[k] = Date.now() - t; return r; };
+
   // LockService: two guides saving at once (or a double-tap) must not
-  // interleave ledger writes. writeGuideLedger_ itself replaces the shift's
-  // rows, so a repeated identical save is a clean overwrite, not a duplicate.
+  // interleave ledger writes. writeGuideLedger_ upserts per booking id, so a
+  // repeated/stale save is a clean merge, never a duplicate or a wipe.
   const lock = LockService.getScriptLock();
+  const lt = Date.now();
   if (!lock.tryLock(15000)) return { ok: false, error: 'Server busy, try again in a moment' };
+  ST.lock = Date.now() - lt;
   try {
-    writeGuideLedger_(targetGuide, d.dateKey, d.time || timeLabel, d.language, rows);
+    _s('ledger', function () { writeGuideLedger_(targetGuide, d.dateKey, d.time || timeLabel, d.language, rows); return 0; });
     // Mirror the check-ins onto the Portal Feed (its M/N columns) so the portal
     // reads them from the one tab. Written together with the ledger, both under
     // this lock: if a guest shows as checked-in in EITHER, they are checked in.
     const at = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm');
-    (d.bookings || []).forEach(b => {
-      if (b.checked && b.bookingId) writeFeedCheckin_(b.bookingId, Math.max(0, Number(b.checkedIn || 0)), at);
+    _s('feed', function () {
+      (d.bookings || []).forEach(b => {
+        if (b.checked && b.bookingId) writeFeedCheckin_(b.bookingId, Math.max(0, Number(b.checkedIn || 0)), at);
+      });
+      return 0;
     });
-    SpreadsheetApp.flush();   // commit the check-in before returning, so a reload can't read stale
+    _s('flush', function () { SpreadsheetApp.flush(); return 0; });   // commit before returning, so a reload can't read stale
     // NOTE: the GuruWalk queue used to be rebuilt HERE, on every save. That read
     // the whole ledger + Completed Log and made check-ins take 7-22s to return.
     // It is idempotent and rebuilt by the hourly updateManagementQueues trigger,
@@ -1201,7 +1233,14 @@ function apiSave_(p) {
   } finally {
     lock.releaseLock();
   }
-  return { ok: true, saved: rows.length, guide: targetGuide };
+  // A check-in changed ONLY the feed, so refresh just the feed cache. Without
+  // this, a future/other tour's check-in was visible only via the 60s-cached
+  // feed (the manager's ledger read skips future/other guides), so it took up to
+  // a minute to appear even though the banner said "Up to date". Now the very
+  // next load reads it — and the schedule/guides/weekly caches stay warm, so the
+  // load right after a check-in is not needlessly slow.
+  bumpFeedCacheVersion_();
+  return { ok: true, saved: rows.length, guide: targetGuide, timings: ST };
 }
 
 
@@ -1250,11 +1289,17 @@ function control_() { return SpreadsheetApp.getActiveSpreadsheet(); }   // alrea
 
 function readGuidesRaw_() {
   if (__RRX.guidesRaw) return __RRX.guidesRaw;            // one Guides read per load (findGuideByName_ hits it repeatedly)
-  const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
-  if (!sh) throw new Error('Guides tab not found');
-  const values = sh.getDataRange().getValues();
-  if (values.length < 2) return (__RRX.guidesRaw = { header: [], rows: [] });
-  return (__RRX.guidesRaw = { header: values[0].map(h => String(h).trim()), rows: values.slice(1) });
+  // Also cached ACROSS loads: the Guides tab changes rarely (and only via a
+  // direct sheet edit, which tolerates <=TTL), so re-reading it on every cold
+  // load was pure cost in the me / mgrGuides / weekly-default phases.
+  const raw = cachedRead_('guides', PORTAL.CACHE_TTL, function () {
+    const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
+    if (!sh) throw new Error('Guides tab not found');
+    const values = sh.getDataRange().getValues();
+    if (values.length < 2) return { header: [], rows: [] };
+    return { header: values[0].map(h => String(h).trim()), rows: values.slice(1) };
+  });
+  return (__RRX.guidesRaw = raw);
 }
 
 /** Language-agnostic: language columns are those between "Seniority" and "Email". */
@@ -1685,11 +1730,15 @@ function visibleShiftsForGuide_(shifts, myShifts, guide, isManager) {
  * for a specific date is a real grid lock — that shift already has an assigned
  * guide, so it is skipped here and the override wins for that day only.
  */
-/** Weekly_Schedule rules, read ONCE per load (both appenders + defaults share it). */
+/** Weekly_Schedule rules, read ONCE per load (both appenders + defaults share it)
+ *  and cached across loads — it changes only via a direct sheet edit, so <=TTL
+ *  staleness is fine, and this is most of the `assemble` phase's cost. (Dates in
+ *  activeFrom/Until survive the cache as ISO strings; toDateKey_ handles those.) */
 function weeklyRules_() {
   if (__RRX.weekly) return __RRX.weekly;
-  let rules = [];
-  try { rules = readWeeklySchedule_(control_()) || []; } catch (e) { rules = []; }
+  const rules = cachedRead_('weekly', PORTAL.CACHE_TTL, function () {
+    try { return readWeeklySchedule_(control_()) || []; } catch (e) { return []; }
+  });
   return (__RRX.weekly = rules);
 }
 

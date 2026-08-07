@@ -192,6 +192,14 @@ const uBk = uShift.length ? uShift[0].bookings.find(b => b.bookingId === 'GYGE2E
 check('the portal shows the feed check-in via the union read', uBk && uBk.checked === true && uBk.checkedIn === 3, uBk);
 check('the feed keeps the ORIGINAL check-in time (10:03, not reset to 10:09)', uBk && uBk.checkedAt === '10:03', uBk && uBk.checkedAt);
 
+console.log('--- Save reports write timings + refreshes ONLY the feed cache (freshness) ---');
+const feedVerBefore = String(__mock.PROPS['PORTAL_FEED_VER'] || '0');
+const globalVerBefore = String(__mock.PROPS['PORTAL_CACHE_VER'] || '0');
+const rSave = apiSave_({ token: token, data: JSON.stringify(data) });
+check('apiSave_ returns per-phase write timings (ledger/feed/flush)', rSave.ok && rSave.timings && ('ledger' in rSave.timings) && ('feed' in rSave.timings) && ('flush' in rSave.timings), rSave.timings);
+check('a check-in bumps the FEED cache version -> next load reads it (Up to date is true)', String(__mock.PROPS['PORTAL_FEED_VER'] || '0') !== feedVerBefore, [feedVerBefore, __mock.PROPS['PORTAL_FEED_VER']]);
+check('a check-in does NOT bump the global cache (schedule/guides/weekly stay warm)', String(__mock.PROPS['PORTAL_CACHE_VER'] || '0') === globalVerBefore, [globalVerBefore, __mock.PROPS['PORTAL_CACHE_VER']]);
+
 console.log('--- Private tours: "Paid private" rate + private/regular kept separate in the ledger ---');
 const ratesSheet = ledgerSS_().getSheetByName('Rates');
 ratesSheet.getRange(ratesSheet.getLastRow() + 1, 1, 1, 2).setValues([['Paid private - we owe guide (€ per private tour)', 80]]);
