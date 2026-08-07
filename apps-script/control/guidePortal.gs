@@ -390,22 +390,28 @@ function apiTours_(p) {
 
   const today = todayKey_();
 
-  // These three cross-file reads are identical for every guide for many seconds,
-  // so they are cached (invalidated on any assign/move/note change). This is the
+  // These cross-file reads are identical for every guide for many seconds, so
+  // they are cached (invalidated on any assign/move/note change). This is the
   // core fix for the 8-127s loads: the frequent poll stops re-opening the
   // BookingSheet and re-reading every schedule grid each time.
-  const rates = _t('rates', function () { return cachedRead_('rates', PORTAL.CACHE_TTL, readRates_); });
+  // (Money rates are NOT read here: the portal shows no money — pay is computed
+  // only at check-in save time and in the hourly queues, from the Ledger's Rates
+  // tab — so reading rates on every poll was pure waste.)
   let schedule = _t('sched', function () { return cachedRead_('sched', PORTAL.CACHE_TTL, function () { return readSchedule_(); }); });
-  // Reservations come from the single "Portal Feed" tab (one read). If it is not
-  // there yet, fall back to scanning the six language tabs — so the portal keeps
-  // working through the feed's first rollout.
-  const bookingsByKey = _t('book', function () {
+  // Reservations + check-ins come from the single "Portal Feed" tab (one read).
+  // If the feed is absent (first rollout, or a broken feed) we fall back to
+  // scanning the language tabs — and in THAT fallback only, check-ins are read
+  // from the ledger below (the feed can't carry them if it isn't there).
+  const feedRead = _t('book', function () {
     // 'bk:<feedVer>' so a check-in (which bumps only feedVer) refreshes THIS read
     // on the next load without touching the schedule/guides/weekly caches.
     return cachedRead_('bk:' + feedCacheVersion_(), PORTAL.CACHE_TTL, function () {
-      return readPortalFeed_() || readBookingsIndex_();
+      const f = readPortalFeed_();
+      return f ? { byKey: f, hasFeed: true } : { byKey: readBookingsIndex_(), hasFeed: false };
     });
   });
+  const bookingsByKey = feedRead.byKey;
+  const hasFeed = feedRead.hasFeed;
   // Assemble the shift list: appended orphan bookings + Weekly_Schedule offer
   // rows + the recurring default-guide overlay, then sorted. All three share one
   // Weekly_Schedule read (weeklyRules_), so this is now a single tab read.
@@ -427,29 +433,35 @@ function apiTours_(p) {
   const me = _t('me', function () { return findGuideByName_(name); });
   const isManager = !!(me && me.manager);
 
-  // CHECK-INS live in the ledger tab of the guide the tour is ASSIGNED to, and
-  // only a tour TODAY or earlier can have any (a future tour has none yet). So
-  // read ONLY those few tabs — never all twelve. A regular guide reads just their
-  // own tab; a manager reads today's assigned guides. Read live (never cached)
-  // so a guest ticked in shows on the very next poll.
-  const ledgerGuides = {};
-  ledgerGuides[name] = true;                        // my own tab (I may have checked in)
-  if (isManager) {
-    schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(g => { if (g) ledgerGuides[g] = true; }); });
+  // CHECK-INS come from the FEED (its M/N columns, read above). The portal no
+  // longer reads the ledger on every poll — the feed carries every tour's
+  // check-ins by Booking ID until the tour ages out at 23:00, which is exactly
+  // as long as the portal shows it. This removes the whole `ledger` phase from
+  // the common load AND fixes the old date-gated miss: a future/other-guide
+  // tour's check-in now always shows (the ledger read used to skip it).
+  const guidesForLedger = function () {              // my own tab; a manager, today's assigned guides
+    const g = {}; g[name] = true;
+    if (isManager) schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(x => { if (x) g[x] = true; }); });
+    return Object.keys(g);
+  };
+  let priorCheckins = {};                           // key|bookingId -> {n, at}
+  if (!hasFeed) {
+    // FALLBACK ONLY: no feed tab, so check-ins have to come from the ledger.
+    _t('ledger', function () { priorCheckins = readLedgerForGuides_(guidesForLedger()).checkins; return 0; });
   }
-  const ledger = _t('ledger', function () { return readLedgerForGuides_(Object.keys(ledgerGuides)); });   // { reservations, checkins }
-  const priorCheckins = ledger.checkins;            // key|bookingId -> {n, at}
 
-  // A completed tour's live rows move to Done, so fall back to durable sources
-  // for its guests + check-in status. Only a shift TODAY-or-earlier that has
-  // lost its live bookings needs this — future tours never do — so on the common
-  // pre-tour poll we skip the Completed Log read entirely.
+  // A completed tour's rows age out of the feed at 23:00, so a tour that already
+  // ran and lost its feed rows falls back to durable sources for its guests +
+  // check-ins. Only a shift TODAY-or-earlier with no feed rows needs this —
+  // future/live tours never do — so the common poll touches neither.
   const needBackfill = schedule.some(s => s.dateKey <= today &&
     !((bookingsByKey[shiftKey_(s.dateKey, s.minutes, s.language)] || []).length));
   if (needBackfill) {
     _t('backfill', function () {
       const doneByKey = cachedRead_('cl', PORTAL.CACHE_TTL, readCompletedLogReservations_);
-      const ledgerByKey = ledger.reservations;
+      const led = readLedgerForGuides_(guidesForLedger());
+      Object.keys(led.checkins).forEach(k => { if (!(k in priorCheckins)) priorCheckins[k] = led.checkins[k]; });
+      const ledgerByKey = led.reservations;
       new Set(Object.keys(doneByKey).concat(Object.keys(ledgerByKey))).forEach(k => {
         if (!bookingsByKey[k] || !bookingsByKey[k].length) {
           bookingsByKey[k] = doneByKey[k] || ledgerByKey[k];
@@ -622,10 +634,10 @@ function apiTours_(p) {
     return 0;
   });
 
-  return { ok: true, guide: name, manager: isManager, rates, tours,
+  return { ok: true, guide: name, manager: isManager, tours,
            schedule: scheduleView, allTours, guidesByLanguage,
            hasMore: hasMore, windowDays: windowDays,
-           timings: T,   // per-phase ms (tok/rates/sched/book/assemble/me/ledger/backfill/closed/mine/mgrGuides/mgrTours)
+           timings: T,   // per-phase ms (tok/sched/book/assemble/me/backfill/closed/mine/mgrGuides/mgrTours)
            // Freshness: the server's own clock at the moment this data was built,
            // so the phone can show "Updated HH:mm:ss" truthfully (not its own clock).
            now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };

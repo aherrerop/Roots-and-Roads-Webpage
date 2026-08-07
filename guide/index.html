@@ -258,7 +258,7 @@ const store = {
   get tab(){ return localStorage.getItem("rr_tab")||""; },
   set tab(v){ try{ localStorage.setItem("rr_tab", v||""); }catch(e){} }
 };
-let RATES={paid:10,free:6}, DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
+let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
 let HAS_MORE=false, WINDOW_DAYS=7, MANAGER_DAYS=0; const MORE_DAYS=14;   // manager All-tours window
 let LAST_FRESH="";                                                       // last successful refresh time
 let LOAD_FAILS=0;                        // consecutive failed loads — gates the "can't reach" banner
@@ -530,7 +530,6 @@ function applyPendingCheckins(r){
 function renderAll(r){
   applyPendingAssigns(r);                // stale reads can never undo your last action
   applyPendingCheckins(r);               // a queued (offline) check-in still shows ✓ ⏳ after a reload
-  RATES=r.rates||RATES;
   MANAGER=!!r.manager;
   HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||7;
   GUIDES_BY_LANG=r.guidesByLanguage||{};

@@ -191,6 +191,7 @@ const uShift = (rUnion.allTours || []).filter(s => s.dateKey === DATE && s.time 
 const uBk = uShift.length ? uShift[0].bookings.find(b => b.bookingId === 'GYGE2E001') : null;
 check('the portal shows the feed check-in via the union read', uBk && uBk.checked === true && uBk.checkedIn === 3, uBk);
 check('the feed keeps the ORIGINAL check-in time (10:03, not reset to 10:09)', uBk && uBk.checkedAt === '10:03', uBk && uBk.checkedAt);
+check('with the feed present, the poll does NOT read the ledger (feed-only)', rUnion.timings && rUnion.timings.ledger === undefined, rUnion.timings);
 
 console.log('--- Save reports write timings + refreshes ONLY the feed cache (freshness) ---');
 const feedVerBefore = String(__mock.PROPS['PORTAL_FEED_VER'] || '0');
