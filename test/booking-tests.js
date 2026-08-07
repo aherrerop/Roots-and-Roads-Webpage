@@ -380,10 +380,11 @@ console.log('--- Portal Feed rebuild (one read-optimised tab, preserves check-in
   const feed=ss.insertSheet('Portal Feed');
   feed.getRange(1,1,1,RNR.PORTAL_FEED_HEADERS.length).setValues([RNR.PORTAL_FEED_HEADERS]);
   feed.getRange(2,10,1,1).setNumberFormat('@'); feed.getRange(2,14,1,1).setNumberFormat('@');
-  feed.getRange(2,1,1,14).setValues([['x','x','English','x','x',0,0,'x',0,'GYGFEED1','','',2,'10:05']]);
+  // 15-col seed: pre-existing check-in AND a pre-existing Guide (col O) for GYGFEED1.
+  feed.getRange(2,1,1,15).setValues([['x','x','English','x','x',0,0,'x',0,'GYGFEED1','','',2,'10:05','Carlos']]);
 
   rebuildPortalFeed_();
-  const fv=feed.getRange(2,1,feed.getLastRow()-1,14).getValues();
+  const fv=feed.getRange(2,1,feed.getLastRow()-1,16).getValues();
   const byId=id=>fv.find(r=>String(r[9])===id);
   check('feed has both in-window bookings only', fv.length===2, fv.length);
   check('feed excludes the out-of-window booking', !byId('GYGFAR'), null);
@@ -393,8 +394,11 @@ console.log('--- Portal Feed rebuild (one read-optimised tab, preserves check-in
   check('feed Notes strips the child count but keeps other tags (Aldo)', j&&j[10]==='Aldo', j&&j[10]);
   check('feed carries the Manager note (col L)', j&&j[11]==='VIP', j&&j[11]);
   check('rebuild PRESERVES an existing check-in by id (M,N)', j&&Number(j[12])===2&&String(j[13])==='10:05', j&&[j[12],j[13]]);
+  check('rebuild PRESERVES the assigned Guide by id (O)', j&&String(j[14])==='Carlos', j&&j[14]);
+  check('a reservation row is Type=booking (P)', j&&String(j[15])==='booking', j&&j[15]);
   const p=byId('GYGFEED2');
   check('a booking with no prior check-in has blank check-in cols', p&&(p[12]===''||p[12]==null), p&&p[12]);
+  check('a booking with no prior guide has a blank Guide col', p&&(p[14]===''||p[14]==null), p&&p[14]);
 })();
 
 console.log('=================================');

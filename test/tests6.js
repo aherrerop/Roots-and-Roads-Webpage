@@ -276,6 +276,42 @@ check('feed keeps the FIRST check-in time (10:06, not 10:46)', String(pf.getRang
 writeFeedCheckin_('FA',0,'10:50');            // a stale save must NOT downgrade the count
 check('feed never downgrades a check-in count', Number(pf.getRange(2,13,1,1).getValue())===1, pf.getRange(2,13,1,1).getValue());
 
+console.log('--- Guide column in the feed: write onto a shift + read it back ---');
+const bkG=new __mock.MockSS(PORTAL.BOOKING_SHEET_ID); __mock.SS_BY_ID[PORTAL.BOOKING_SHEET_ID]=bkG; __RRX={};
+const pfg=bkG.insertSheet('Portal Feed');
+pfg.getRange(1,1,1,16).setValues([['Date','Time','Language','Name','Phone','Adults','Children','Source','Income','Booking ID','Notes','Manager note','Checked-in','Check-in time','Guide','Type']]);
+pfg.getRange(2,1,3,16).setValues([
+ ['2026-08-10','11:00 AM','English','A','+1',2,0,'GetYourGuide',30,'GA','','','','','','booking'],
+ ['2026-08-10','11:00 AM','English','B','+1',1,0,'GetYourGuide',15,'GB','','','','','','booking'],
+ ['2026-08-10','5:00 PM','English','P','+1',4,0,'GetYourGuide',60,'GP','Private','','','','','booking']]);
+const wroteG=writeFeedGuide_('2026-08-10','11:00','English',false,'Carlos');
+const gcol=()=>pfg.getRange(2,15,3,1).getValues().map(r=>String(r[0]||''));
+check('writeFeedGuide_ set the guide on BOTH rows of the shift', wroteG && gcol()[0]==='Carlos' && gcol()[1]==='Carlos', gcol());
+check('writeFeedGuide_ left a different shift/kind untouched (17:00 / private)', gcol()[2]==='', gcol());
+const idxG=readPortalFeed_();
+const shG=idxG[shiftKey_('2026-08-10',660,'English')]||[];
+check('readPortalFeed_ surfaces feedGuide', shG.length===2 && shG[0].feedGuide==='Carlos', shG[0]&&shG[0].feedGuide);
+check('readPortalFeed_ surfaces rowType=booking', shG.length && shG[0].rowType==='booking', shG[0]&&shG[0].rowType);
+writeFeedGuide_('2026-08-10','11:00','English',false,'');   // unassign clears it
+check('writeFeedGuide_ with "" clears the guide', gcol()[0]==='' && gcol()[1]==='', gcol());
+
+console.log('--- syncFeedGuides_ reconciles the feed Guide from the weekly default ---');
+const plusK=n=>{ const d=new Date(); d.setDate(d.getDate()+n); return Utilities.formatDate(d,Session.getScriptTimeZone(),'yyyy-MM-dd'); };
+const sDate=plusK(2), sDay=dayNameFromKey_(sDate);
+const cSync=new __mock.MockSS('control-sync'); SpreadsheetApp._active=cSync; __RRX={};
+cSync.insertSheet('Guides').getRange(1,1,2,11).setValues([
+ ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Manager','Email','Password'],
+ ['Nora',true,1,true,false,false,false,false,false,'n@x.com','pw']]);
+cSync.insertSheet('Weekly_Schedule').getRange(1,1,2,7).setValues([
+ ['Day','Time','Language','Guides needed','Active from','Active until','Guide'],
+ [sDay,'11:00','English',1,'','','Nora']]);
+const bkS=new __mock.MockSS(PORTAL.BOOKING_SHEET_ID); __mock.SS_BY_ID[PORTAL.BOOKING_SHEET_ID]=bkS;
+const pfs=bkS.insertSheet('Portal Feed');
+pfs.getRange(1,1,1,16).setValues([['Date','Time','Language','Name','Phone','Adults','Children','Source','Income','Booking ID','Notes','Manager note','Checked-in','Check-in time','Guide','Type']]);
+pfs.getRange(2,1,1,16).setValues([[sDate,'11:00 AM','English','A','+1',2,0,'GetYourGuide',30,'GA','','','','','','booking']]);
+syncFeedGuides_();
+check('syncFeedGuides_ wrote the weekly-default guide onto the feed row', String(pfs.getRange(2,15,1,1).getValue())==='Nora', pfs.getRange(2,15,1,1).getValue());
+
 console.log('--- Completed Log fallback: un-checked-in guests still show ---');
 const bkCL=new __mock.MockSS('booking-cl'); __mock.SS_BY_ID['1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw']=bkCL;
 __RRX={};   // fresh execution: drop the memoised booking handle so the new mock is read

@@ -106,7 +106,13 @@ const RNR = {
   //   J(10)=Booking ID, L(12)=Manager note (portal's col-J note), M(13)=Checked-in, N(14)=Check-in time
   PORTAL_FEED_HEADERS: [
     'Date', 'Time', 'Language', 'Name', 'Phone', 'Adults', 'Children',
-    'Source', 'Income', 'Booking ID', 'Notes', 'Manager note', 'Checked-in', 'Check-in time'
+    'Source', 'Income', 'Booking ID', 'Notes', 'Manager note', 'Checked-in', 'Check-in time',
+    // O = Guide: the assigned guide for this shift, written by the CONTROL project
+    //   (on assign + a periodic sync). Preserved here by Booking ID across rebuilds
+    //   like the check-in columns, so the portal can read assignments from the feed.
+    // P = Type: 'booking' for a real reservation row; 'shift' for a 0-person
+    //   placeholder that marks an empty assignable shift (added by Control).
+    'Guide', 'Type'
   ],
   // How far ahead the feed carries reservations. Matches the portal's upcoming
   // window so My-tours (which can look weeks out) is fully served from the feed.
@@ -3134,16 +3140,23 @@ function rebuildPortalFeed_() {
   let sh = ss.getSheetByName(RNR.SHEETS.PORTAL_FEED);
   if (!sh) sh = ss.insertSheet(RNR.SHEETS.PORTAL_FEED);
 
-  // 1. Preserve any check-in already written by the portal
-  //    (J[10]=id, M[13]=Checked-in, N[14]=Check-in time).
+  // 1. Preserve what the CONTROL project owns on existing feed rows, keyed by
+  //    Booking ID: the check-in (M[13], N[14]) AND the assigned Guide (O[15]).
+  //    Both are written by the portal/Control and must survive this rebuild.
   const prev = {};
   const last = sh.getLastRow();
-  if (last >= 2 && sh.getLastColumn() >= 14) {
-    const v = sh.getRange(2, 10, last - 1, 5).getValues();   // J,K,L,M,N
+  if (last >= 2) {
+    const cols = Math.min(sh.getLastColumn(), 15);           // J..O when present
+    const v = sh.getRange(2, 10, last - 1, cols - 9).getValues();   // start at J(10)
     v.forEach(r => {
-      const id = String(r[0] || '').trim();
-      const ci = r[3];                                        // M = Checked-in
-      if (id && ci !== '' && ci != null) prev[id] = { checkedIn: ci, at: r[4] };  // N = time
+      const id = String(r[0] || '').trim();                  // J = Booking ID
+      if (!id) return;
+      const ci = r[3];                                       // M = Checked-in
+      prev[id] = {
+        checkedIn: (ci !== '' && ci != null) ? ci : '',
+        at: r[4],                                            // N = Check-in time
+        guide: String(r[5] || '').trim()                     // O = Guide (undefined on 14-col rows -> '')
+      };
     });
   }
 
@@ -3171,19 +3184,24 @@ function rebuildPortalFeed_() {
       const feedNotes = notes.replace(/\b\d+\s*child(?:ren)?\b/ig, '')
         .replace(/\s*[·;,]\s*[·;,]\s*/g, ' · ').replace(/^[\s·;,]+|[\s·;,]+$/g, '').trim();
       const managerNote = String(row[9] || '');             // col J
-      const pc = (id && prev[id]) ? prev[id] : { checkedIn: '', at: '' };
+      const pc = (id && prev[id]) ? prev[id] : { checkedIn: '', at: '', guide: '' };
       rows.push([
         dateKey_(d), normalizeTime_(row[4]), language,
         String(row[0] || ''), String(row[1] || ''), Number(row[2] || 0),
         childrenFromNotes_(notes), String(row[5] || ''), Number(row[6] || 0),
-        id, feedNotes, managerNote, pc.checkedIn, pc.at
+        id, feedNotes, managerNote, pc.checkedIn, pc.at,
+        pc.guide || '',      // O = Guide (Control keeps this current; preserved here)
+        'booking'            // P = Type (a real reservation, vs a 'shift' placeholder)
       ]);
     });
   });
   rows.sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1]));
 
-  // 3. Write header (once) + rows; check-in columns come from the preserved map.
-  if (String(sh.getRange(1, 1).getValue() || '') !== H[0]) {
+  // 3. Write header (once, or when it grew) + rows. Check both the first and the
+  //    LAST header cell, so a feed that predates the Guide/Type columns gets them
+  //    added on the next rebuild instead of leaving 16-col rows under a 14-col head.
+  const head = sh.getRange(1, 1, 1, H.length).getValues()[0];
+  if (String(head[0] || '') !== H[0] || String(head[H.length - 1] || '') !== H[H.length - 1]) {
     sh.getRange(1, 1, 1, H.length).setValues([H])
       .setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
     sh.setFrozenRows(1);

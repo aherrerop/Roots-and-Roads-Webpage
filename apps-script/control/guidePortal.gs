@@ -779,8 +779,19 @@ function apiCloseShift_(p) {
     // assigned to another tour, and prune any column/row left empty (kills the
     // leftover empty "9:00" column).
     deleteShiftFromGrid_(id);
+    // Mirror onto the feed: clear this shift's Guide (writeFeedGuide_ lowercases
+    // the language, matching the dom-id form). Best-effort.
+    (function () {
+      const p = String(id).split('|');
+      const mins = Number(p[1]);
+      if (p[0] && Number.isFinite(mins) && p[2]) {
+        writeFeedGuide_(p[0], Math.floor(mins / 60) + ':' + String(mins % 60).padStart(2, '0'),
+                        p[2], /^P/i.test(p[3] || ''), '');
+      }
+    })();
     SpreadsheetApp.flush();
     bumpCacheVersion_();
+    bumpFeedCacheVersion_();
     return { ok: true, id, closed: true };
   } finally {
     lock.releaseLock();
@@ -933,6 +944,11 @@ function apiAssign_(p) {
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
     const out = writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide);
+    // Mirror the assignment onto the feed's Guide column so the portal can read it
+    // there (the grid stays the authority; this is the denormalised copy). Only if
+    // the grid write succeeded, and best-effort — the hourly syncFeedGuides_ is the
+    // backstop if it misses.
+    if (out && out.ok) { writeFeedGuide_(dateKey, time, language, isPriv, out.assigned || guide); bumpFeedCacheVersion_(); }
     SpreadsheetApp.flush();   // commit before returning, so the phone's next read is guaranteed fresh
     bumpCacheVersion_();      // the schedule changed -> next read must not serve a cached grid
     return out;
@@ -1560,7 +1576,10 @@ function readPortalFeed_() {
   let sh;
   try { sh = bookingSS_().getSheetByName('Portal Feed'); } catch (e) { return null; }
   if (!sh || sh.getLastRow() < 2) return null;
-  const v = sh.getRange(2, 1, sh.getLastRow() - 1, 14).getValues();
+  // Read up to 16 cols (adds O=Guide, P=Type). Older 14-col rows read short and
+  // resolve those two to '' — safe during the schema transition.
+  const width = Math.min(Math.max(sh.getLastColumn(), 14), 16);
+  const v = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
   const index = {};
   v.forEach(row => {
     const dateKey = toDateKey_(row[0]);
@@ -1580,10 +1599,10 @@ function readPortalFeed_() {
       bookingId: String(row[9] || '').trim(),
       manualNote: String(row[11] || '').trim(),         // col L = Manager note
       note: note,
-      // Phase 2 reads check-ins from here; blank in Phase 1 -> the ledger merge
-      // still supplies check-in status, so nothing changes yet.
       feedCheckedIn: (row[12] === '' || row[12] == null) ? null : Number(row[12]),
-      feedCheckedAt: String(row[13] || '')
+      feedCheckedAt: String(row[13] || ''),
+      feedGuide: String(row[14] || '').trim(),          // O = Guide (assignment, denormalised)
+      rowType: (String(row[15] || '').trim().toLowerCase() || 'booking')   // P = Type: 'booking' | 'shift'
     });
   });
   return index;
@@ -1621,6 +1640,76 @@ function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
     }
     return false;
   } catch (e) { return false; }
+}
+
+/**
+ * Write the assigned GUIDE onto the Portal Feed rows of a shift (column O). The
+ * portal reads assignments from the feed, so every assign/unassign mirrors here.
+ * Matches every row of the shift — its bookings AND its shift placeholder — of
+ * the SAME private/regular kind (a private and a regular tour can share a slot
+ * but have different guides). `guide` '' clears it. One read + one write.
+ */
+function writeFeedGuide_(dateKey, time, language, isPrivate, guide) {
+  try {
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const n = sh.getLastRow() - 1;
+    const minutes = timeToMinutes_(normTime24_(time));
+    const langL = String(language || '').trim().toLowerCase();
+    const meta = sh.getRange(2, 1, n, 11).getValues();       // A..K (K=Notes -> private?)
+    const col = sh.getRange(2, 15, n, 1).getValues();        // O = Guide
+    let changed = 0;
+    for (let i = 0; i < n; i++) {
+      const rowPriv = /privat/i.test(String(meta[i][10] || ''));
+      if (toDateKey_(meta[i][0]) === dateKey &&
+          timeToMinutes_(normTime24_(meta[i][1])) === minutes &&
+          String(meta[i][2] || '').trim().toLowerCase() === langL &&
+          rowPriv === !!isPrivate) {
+        if (String(col[i][0] || '') !== String(guide || '')) { col[i][0] = guide || ''; changed++; }
+      }
+    }
+    if (changed) sh.getRange(2, 15, n, 1).setValues(col);
+    return changed > 0;
+  } catch (e) { return false; }
+}
+
+/**
+ * RECONCILE the Portal Feed's Guide column (O) from the schedule — the authority.
+ * For every feed row, resolve its shift's guide (grid assignment, else the weekly
+ * default) and write it. Catches assignments made in the grid directly, by
+ * makeSchedule, or a new booking that arrived before its guide was mirrored.
+ * Idempotent; one read + one write. Runs with the hourly queues + after assigns.
+ */
+function syncFeedGuides_() {
+  const sh = bookingSS_().getSheetByName('Portal Feed');
+  if (!sh || sh.getLastRow() < 2) return;
+  let schedule;
+  try {
+    schedule = readSchedule_();
+    appendWeeklyScheduleShifts_(schedule);
+    applyWeeklyDefaults_(schedule);
+  } catch (e) { return; }
+  const byKey = {};
+  schedule.forEach(s => {
+    byKey[shiftKey_(s.dateKey, s.minutes, s.language) + (s.private ? '|P' : '|R')] =
+      (s.assigned && s.assigned[0]) || '';
+  });
+  const n = sh.getLastRow() - 1;
+  const meta = sh.getRange(2, 1, n, 11).getValues();     // A..K
+  const col = sh.getRange(2, 15, n, 1).getValues();      // O = Guide
+  let changed = 0;
+  for (let i = 0; i < n; i++) {
+    const dateKey = toDateKey_(meta[i][0]);
+    const minutes = timeToMinutes_(normTime24_(meta[i][1]));
+    const language = String(meta[i][2] || '').trim();
+    if (!dateKey || !language) continue;
+    const priv = /privat/i.test(String(meta[i][10] || ''));
+    const k = shiftKey_(dateKey, minutes, language) + (priv ? '|P' : '|R');
+    let want = byKey[k];
+    if (want == null) want = priv ? '' : weeklyDefaultGuide_(dateKey, normTime24_(meta[i][1]), language);
+    if (String(col[i][0] || '') !== String(want || '')) { col[i][0] = want || ''; changed++; }
+  }
+  if (changed) sh.getRange(2, 15, n, 1).setValues(col);
 }
 
 /**
@@ -2928,6 +3017,7 @@ function updateManagementQueuesCore_() {
   try {
     ensureQueueTabs_();
     reconcilePortalFeed_();          // keep the feed's check-ins and the ledger honest
+    syncFeedGuides_();               // keep the feed's Guide column in step with the schedule
     updateNoShowQueues_();
     updateGuruwalkCheckinQueue_();
     rebuildUnassignedLedger_();
