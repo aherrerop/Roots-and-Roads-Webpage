@@ -1546,11 +1546,19 @@ function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
     if (!id) return false;
     const sh = bookingSS_().getSheetByName('Portal Feed');
     if (!sh || sh.getLastRow() < 2) return false;
-    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // col J = Booking ID
-    for (let i = 0; i < ids.length; i++) {
-      if (String(ids[i][0] || '').trim() === id) {
+    const rng = sh.getRange(2, 10, sh.getLastRow() - 1, 5).getValues();   // cols J..N
+    for (let i = 0; i < rng.length; i++) {
+      if (String(rng[i][0] || '').trim() === id) {
+        const curCount = Number(rng[i][3] || 0);           // M (col 13)
+        const curTime  = String(rng[i][4] || '').trim();   // N (col 14)
+        // Never downgrade a check-in, and keep the FIRST time it was recorded —
+        // so a later save (another guest, a reload, the manager on another
+        // device) can't reset an earlier check-in's count or time. Mirrors the
+        // ledger merge so the two stores agree.
+        const finalCount = Math.max(curCount, Number(checkedIn || 0));
+        const finalTime  = curTime || String(checkedAt || '');
         sh.getRange(i + 2, 14, 1, 1).setNumberFormat('@');                 // time as text
-        sh.getRange(i + 2, 13, 1, 2).setValues([[checkedIn, checkedAt]]);  // M=count, N=time
+        sh.getRange(i + 2, 13, 1, 2).setValues([[finalCount, finalTime]]); // M=count, N=time
         return true;
       }
     }
@@ -2037,30 +2045,43 @@ function readCompletedLogReservations_() {
 function writeGuideLedger_(name, dateKey, time, language, rows) {
   const ss = ledgerSS_();
   const sh = guideTab_(ss, name);
-  const minutes = timeToMinutes_(normTime24_(time));
-  const targetKey = shiftKey_(dateKey, minutes, language);
 
+  // UPSERT per Booking ID — never a blanket "replace the whole shift". The old
+  // blanket replace (delete every row with this shift key, then write only the
+  // bookings the incoming payload lists) is what let ONE save wipe a check-in
+  // ANOTHER device/guide had already made: any booking the batch didn't list got
+  // deleted. A save now touches only the bookings it actually carries; every
+  // other check-in on the shift is left intact. (Booking IDs are unique, so this
+  // also handles the private/regular same-slot split automatically.)
   const incomingIds = new Set();
   rows.forEach(r => {
     const id = String(r[LEDGER_BOOKINGID_COL] || '').trim();
     if (id) incomingIds.add(id + '|' + toDateKey_(r[0]));
   });
-  // A PRIVATE and a REGULAR tour can share the same date+time+language slot, so
-  // the shift-key replace must respect the private/regular split — otherwise
-  // saving one would wipe the other's rows (they have the same shift key). We
-  // only replace rows of the SAME kind as this batch (Type col = 'Private' or not).
-  const LEDGER_TYPE_COL = 13;
-  const incomingPrivate = rows.length ? /priv/i.test(String(rows[0][LEDGER_TYPE_COL] || '')) : false;
 
   if (sh.getLastRow() >= 2) {
     const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
+    // PRESERVE each booking's ORIGINAL check-in time. The ledger's "Updated" cell
+    // is what the portal shows as the check-in time; re-stamping it on every save
+    // is what collapsed a tour's individual times (10:06 / 10:13 / …) into one
+    // (10:46) when a later save rewrote the whole shift. Keep the first time we
+    // recorded for any booking we are re-writing.
+    const origUpdated = {};
+    for (let i = 0; i < v.length; i++) {
+      const idKey = String(v[i][LEDGER_BOOKINGID_COL] || '').trim() + '|' + toDateKey_(v[i][0]);
+      if (incomingIds.has(idKey) && !(idKey in origUpdated)) origUpdated[idKey] = v[i][LEDGER_UPDATED_COL];
+    }
+    rows.forEach(r => {
+      const idKey = String(r[LEDGER_BOOKINGID_COL] || '').trim() + '|' + toDateKey_(r[0]);
+      const o = origUpdated[idKey];
+      if (o != null && o !== '') r[LEDGER_UPDATED_COL] = o;     // first-seen time wins
+    });
+    // Delete ONLY the rows we are re-writing (same Booking ID), so re-saving a
+    // booking updates in place without stacking a duplicate — while a booking
+    // this batch does NOT mention is never touched.
     for (let i = v.length - 1; i >= 0; i--) {
-      const rowDate = toDateKey_(v[i][0]);
-      const k = shiftKey_(rowDate, timeToMinutes_(normTime24_(v[i][2])), String(v[i][3] || '').trim());
-      const rowPrivate = /priv/i.test(String(v[i][LEDGER_TYPE_COL] || ''));
-      const idKey = String(v[i][LEDGER_BOOKINGID_COL] || '').trim() + '|' + rowDate;
-      if ((k === targetKey && rowPrivate === incomingPrivate) ||
-          (incomingIds.size && incomingIds.has(idKey))) sh.deleteRow(i + 2);
+      const idKey = String(v[i][LEDGER_BOOKINGID_COL] || '').trim() + '|' + toDateKey_(v[i][0]);
+      if (incomingIds.size && incomingIds.has(idKey)) sh.deleteRow(i + 2);
     }
   }
 

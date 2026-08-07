@@ -175,7 +175,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-06-tab-memory-resilient-loads";
+const PORTAL_VERSION = "2026-08-07-checkin-durable-merge";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -510,8 +510,26 @@ function applyPendingAssigns(r){
   (r.tours||[]).forEach(overlay);
   (r.schedule||[]).forEach(overlay);
 }
+/* Overlay not-yet-synced check-ins (the offline queue) onto the freshly loaded
+   data, so a queued check-in still shows as done (✓ ⏳) after a reload instead of
+   reverting to "Check in" and making the guide think it was lost. The server
+   merge guarantees the data itself is safe; this keeps the SCREEN honest until
+   the queue drains. */
+function applyPendingCheckins(r){
+  let q; try{ q=ckQueueLoad(); }catch(e){ return; }
+  if(!q||!q.length) return;
+  const pend={};
+  q.forEach(item=>{ const d=item&&item.data; if(!d||!d.bookings) return;
+    d.bookings.forEach(b=>{ if(b.checked&&b.bookingId) pend[b.bookingId]=Math.max(pend[b.bookingId]||0, +b.checkedIn||0); }); });
+  if(!Object.keys(pend).length) return;
+  const mark=list=>(list||[]).forEach(s=>(s.bookings||[]).forEach(b=>{
+    if(b.bookingId in pend && !b.checked){ b.checked=true; b.checkedIn=pend[b.bookingId]; b.pending=true; }
+  }));
+  mark(r.tours); mark(r.allTours);
+}
 function renderAll(r){
   applyPendingAssigns(r);                // stale reads can never undo your last action
+  applyPendingCheckins(r);               // a queued (offline) check-in still shows ✓ ⏳ after a reload
   RATES=r.rates||RATES;
   MANAGER=!!r.manager;
   HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||7;
@@ -670,7 +688,7 @@ function bookingRow(tourId,b,i,canAssign,lang){
   return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
     '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mv+noteBtn+'</div>'+
     wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
-    '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+(b.checked?' disabled':'')+'>'+(b.checked?('✓ '+(b.checkedAt?esc(b.checkedAt):'In')):'Check in')+'</button>'+
+    '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+(b.checked?' disabled':'')+'>'+(b.checked?(b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))):'Check in')+'</button>'+
     '</div>'+ noteEditor + '</div>';
 }
 function stepper(tourId,ref,val,max,total,kids){

@@ -246,6 +246,36 @@ check('reservation carries name/phone/guests/children/checkedIn from ledger',
   rb.name==='Guest Uno' && rb.phone==='+3912345' && Number(rb.guests)===2 && Number(rb.children)===1 && Number(rb.checkedIn)===2, rb);
 check('no duplicate booking ids in the ledger index', (lr[lk]||[]).filter(b=>b.bookingId==='GYGIT9').length===1, lr[lk]);
 
+console.log('--- CHECK-IN DURABILITY: a save never wipes another device\'s check-in; times are preserved ---');
+const ldm=new __mock.MockSS('ledger-merge'); __mock.SS_BY_ID['LEDMERGE']=ldm; __mock.PROPS['LEDGER_ID']='LEDMERGE'; __RRX={};
+const mkRow=(id,ck,upd)=>['2026-08-07','Friday','10:00 AM','French','Guest '+id,'+33','GetYourGuide',ck,0,ck,10*ck,0,3.5,'Paid',id,upd,''];
+// Aldo checks FA in at 10:06, then FB at 10:13 in a SEPARATE save that does NOT
+// carry FA (a stale post-reload view, or the other guide's device).
+writeGuideLedger_('Aldo','2026-08-07','10:00 AM','French',[mkRow('FA',1,'2026-08-07 10:06')]);
+writeGuideLedger_('Aldo','2026-08-07','10:00 AM','French',[mkRow('FB',1,'2026-08-07 10:13')]);
+const atab=guideTab_(ldm,'Aldo');
+const findId=(vals,id)=>vals.filter(r=>String(r[LEDGER_BOOKINGID_COL])===id);
+let av=atab.getRange(2,1,atab.getLastRow()-1,LEDGER_HEADERS.length).getValues();
+check('a save that omits an earlier check-in does NOT wipe it (the Aldo bug)', findId(av,'FA').length===1, av.map(r=>r[LEDGER_BOOKINGID_COL]));
+check('the later check-in is recorded too', findId(av,'FB').length===1, av.map(r=>r[LEDGER_BOOKINGID_COL]));
+// The manager re-saves the WHOLE tour at 10:46 -> per-booking times must be kept.
+writeGuideLedger_('Aldo','2026-08-07','10:00 AM','French',[mkRow('FA',1,'2026-08-07 10:46'),mkRow('FB',1,'2026-08-07 10:46')]);
+av=atab.getRange(2,1,atab.getLastRow()-1,LEDGER_HEADERS.length).getValues();
+check('re-saving the whole tour does not duplicate rows', findId(av,'FA').length===1 && findId(av,'FB').length===1, av.length);
+check('FA keeps its ORIGINAL check-in time 10:06 (not reset to 10:46)', String(findId(av,'FA')[0][LEDGER_UPDATED_COL])==='2026-08-07 10:06', findId(av,'FA')[0][LEDGER_UPDATED_COL]);
+check('FB keeps its ORIGINAL check-in time 10:13', String(findId(av,'FB')[0][LEDGER_UPDATED_COL])==='2026-08-07 10:13', findId(av,'FB')[0][LEDGER_UPDATED_COL]);
+// Feed writer: same guarantees.
+const bkm=new __mock.MockSS(PORTAL.BOOKING_SHEET_ID); __mock.SS_BY_ID[PORTAL.BOOKING_SHEET_ID]=bkm; __RRX={};
+const pf=bkm.insertSheet('Portal Feed');
+pf.getRange(1,1,2,14).setValues([
+ ['Date','Time','Language','Name','Phone','Adults','Children','Source','Income','Booking ID','Notes','Manager note','Checked-in','Check-in time'],
+ ['2026-08-07','10:00 AM','French','Guest FA','+33',1,0,'GetYourGuide',10,'FA','','','','']]);
+writeFeedCheckin_('FA',1,'10:06');
+writeFeedCheckin_('FA',1,'10:46');            // a later save must NOT reset the time
+check('feed keeps the FIRST check-in time (10:06, not 10:46)', String(pf.getRange(2,14,1,1).getValue())==='10:06', pf.getRange(2,14,1,1).getValue());
+writeFeedCheckin_('FA',0,'10:50');            // a stale save must NOT downgrade the count
+check('feed never downgrades a check-in count', Number(pf.getRange(2,13,1,1).getValue())===1, pf.getRange(2,13,1,1).getValue());
+
 console.log('--- Completed Log fallback: un-checked-in guests still show ---');
 const bkCL=new __mock.MockSS('booking-cl'); __mock.SS_BY_ID['1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw']=bkCL;
 __RRX={};   // fresh execution: drop the memoised booking handle so the new mock is read

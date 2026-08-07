@@ -99,6 +99,11 @@ check('a single failed load is gated (banner only after 2 in a row)', /LOAD_FAIL
 check('a miss schedules a quiet auto-retry instead of an error', /RETRY_TIMER=setTimeout\(\(\)=>\{ RETRY_TIMER=null; loadTours\("retry"\)/.test(html), null);
 check('a cached screen is kept on failure (error UI only when nothing cached)', /if\(!store\.cache\) showLoadError/.test(html), null);
 
+console.log('--- A queued (offline) check-in survives a reload on screen ---');
+check('a pending-check-in overlay exists and runs in renderAll', /function applyPendingCheckins\(r\)/.test(html) && /applyPendingCheckins\(r\);/.test(html), null);
+check('the overlay reads the offline queue and marks bookings pending', /ckQueueLoad\(\)/.test(html) && /b\.pending=true/.test(html), null);
+check('a pending check-in renders as "✓ ⏳", not "Check in"', /b\.pending\?'✓ ⏳'/.test(html), null);
+
 console.log('--- Load analytics: reload-early vs real slowness is reported ---');
 check('a client telemetry beacon exists', /function beacon\(ev, ms, nav\)/.test(html) && /"clientlog"/.test(html), null);
 check('an early reload mid-load reports an abort', /pagehide[\s\S]*beacon\("abort"/.test(html), null);
