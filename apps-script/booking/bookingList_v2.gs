@@ -3142,20 +3142,28 @@ function rebuildPortalFeed_() {
 
   // 1. Preserve what the CONTROL project owns on existing feed rows, keyed by
   //    Booking ID: the check-in (M[13], N[14]) AND the assigned Guide (O[15]).
-  //    Both are written by the portal/Control and must survive this rebuild.
+  //    Also carry over Control's 0-person SHIFT placeholder rows (P[16]='shift':
+  //    empty assignable shifts) — they don't come from a booking tab, so without
+  //    this the rebuild would wipe them every 5 minutes.
   const prev = {};
+  const shiftRows = [];   // full 16-col Type='shift' rows to carry over
   const last = sh.getLastRow();
   if (last >= 2) {
-    const cols = Math.min(sh.getLastColumn(), 15);           // J..O when present
-    const v = sh.getRange(2, 10, last - 1, cols - 9).getValues();   // start at J(10)
+    const cols = Math.min(Math.max(sh.getLastColumn(), 10), 16);
+    const v = sh.getRange(2, 1, last - 1, cols).getValues();
     v.forEach(r => {
-      const id = String(r[0] || '').trim();                  // J = Booking ID
+      if (String(r[15] || '').trim().toLowerCase() === 'shift') {   // P = Type
+        const row16 = r.slice(0, 16); while (row16.length < 16) row16.push('');
+        shiftRows.push(row16);
+        return;
+      }
+      const id = String(r[9] || '').trim();                  // J = Booking ID
       if (!id) return;
-      const ci = r[3];                                       // M = Checked-in
+      const ci = r[12];                                      // M = Checked-in
       prev[id] = {
         checkedIn: (ci !== '' && ci != null) ? ci : '',
-        at: r[4],                                            // N = Check-in time
-        guide: String(r[5] || '').trim()                     // O = Guide (undefined on 14-col rows -> '')
+        at: r[13],                                           // N = Check-in time
+        guide: String(r[14] || '').trim()                    // O = Guide (undefined on 14-col rows -> '')
       };
     });
   }
@@ -3194,6 +3202,23 @@ function rebuildPortalFeed_() {
         'booking'            // P = Type (a real reservation, vs a 'shift' placeholder)
       ]);
     });
+  });
+
+  // Carry over Control's shift placeholders, but ONLY for a shift that now has no
+  // real booking (a booking supersedes the empty-shift placeholder) and is still
+  // in the window. Keyed by date|time|language|private so a private and a regular
+  // placeholder at one slot stay distinct.
+  const shiftKeyOf = r => dateKey_(normalizeDate_(r[0])) + '|' + normalizeTime_(r[1]) + '|' +
+    String(r[2] || '').toLowerCase() + '|' + (/privat/i.test(String(r[10] || '')) ? 'P' : 'R');
+  const haveBooking = {};
+  rows.forEach(r => { haveBooking[shiftKeyOf(r)] = true; });
+  shiftRows.forEach(sr => {
+    const d = normalizeDate_(sr[0]);
+    if (!d) return;
+    const ms = stripTime_(d).getTime();
+    if (ms < minMs || ms > maxMs) return;              // aged out
+    if (haveBooking[shiftKeyOf(sr)]) return;           // a real booking now covers this shift
+    rows.push(sr);
   });
   rows.sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1]));
 

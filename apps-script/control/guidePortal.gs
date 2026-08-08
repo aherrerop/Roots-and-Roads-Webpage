@@ -397,11 +397,10 @@ function apiTours_(p) {
   // (Money rates are NOT read here: the portal shows no money — pay is computed
   // only at check-in save time and in the hourly queues, from the Ledger's Rates
   // tab — so reading rates on every poll was pure waste.)
-  let schedule = _t('sched', function () { return cachedRead_('sched', PORTAL.CACHE_TTL, function () { return readSchedule_(); }); });
-  // Reservations + check-ins come from the single "Portal Feed" tab (one read).
-  // If the feed is absent (first rollout, or a broken feed) we fall back to
-  // scanning the language tabs — and in THAT fallback only, check-ins are read
-  // from the ledger below (the feed can't carry them if it isn't there).
+  // Reservations + check-ins + ASSIGNMENTS come from the single "Portal Feed" tab
+  // (one read). If the feed is absent (first rollout, or a broken feed) we fall
+  // back to scanning the language tabs + reading the schedule grid — and in THAT
+  // fallback only, check-ins come from the ledger (the feed can't carry them).
   const feedRead = _t('book', function () {
     // 'bk:<feedVer>' so a check-in (which bumps only feedVer) refreshes THIS read
     // on the next load without touching the schedule/guides/weekly caches.
@@ -412,21 +411,31 @@ function apiTours_(p) {
   });
   const bookingsByKey = feedRead.byKey;
   const hasFeed = feedRead.hasFeed;
-  // Assemble the shift list: appended orphan bookings + Weekly_Schedule offer
-  // rows + the recurring default-guide overlay, then sorted. All three share one
-  // Weekly_Schedule read (weeklyRules_), so this is now a single tab read.
-  _t('assemble', function () {
-    appendOrphanBookingShifts_(schedule, bookingsByKey); // bookings with no grid slot yet -> live extra shifts
-    appendWeeklyScheduleShifts_(schedule);            // #4: new Weekly_Schedule offer rows show at once
-    applyWeeklyDefaults_(schedule);                   // recurring default guide fills unassigned weekly slots
-    // Order every shift by date then start time (so appended orphans slot into
-    // their real time position, not at the end of the list).
-    schedule.sort((a, b) =>
-      (a.dateKey < b.dateKey ? -1 : a.dateKey > b.dateKey ? 1 : 0) ||
-      (a.minutes - b.minutes) ||
-      String(a.language).localeCompare(String(b.language)));
-    return 0;
-  });
+
+  // The shift list. WITH A FEED (normal): the feed is the source — assignments
+  // come from its Guide column, so the portal no longer reads the schedule grids
+  // on the poll (the big `sched` cost is gone). Empty recurring slots + the
+  // default-guide fallback still come from the cached Weekly_Schedule (cheap).
+  // WITHOUT a feed (fallback): read the grid the old way.
+  let schedule;
+  if (hasFeed) {
+    schedule = _t('assemble', function () {
+      const s = buildScheduleFromFeed_(bookingsByKey);
+      appendWeeklyScheduleShifts_(s);   // recurring Weekly_Schedule offer slots (empty)
+      applyWeeklyDefaults_(s);          // default guide on any still-unassigned slot
+      sortSchedule_(s);
+      return s;
+    });
+  } else {
+    schedule = _t('sched', function () { return cachedRead_('sched', PORTAL.CACHE_TTL, readSchedule_); });
+    _t('assemble', function () {
+      appendOrphanBookingShifts_(schedule, bookingsByKey);
+      appendWeeklyScheduleShifts_(schedule);
+      applyWeeklyDefaults_(schedule);
+      sortSchedule_(schedule);
+      return 0;
+    });
+  }
 
   // Who is asking — decides how much we load. A regular guide only needs their
   // OWN check-ins (their My-tours); a manager needs everyone's (they watch all).
@@ -486,6 +495,7 @@ function apiTours_(p) {
     // A private shift shows only its private booking(s); a regular shift only
     // the non-private ones. That's what splits Fake (regular) from Fake 2 (private).
     const bookings = (bookingsByKey[key] || [])
+      .filter(b => (b.rowType || 'booking') !== 'shift')   // skip 0-person shift placeholders
       .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''))
       .map(b => {
         const kk = key + '|' + b.bookingId;
@@ -598,6 +608,7 @@ function apiTours_(p) {
       const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
       const primary = shift.assigned[0] || '';
       const bookings = (bookingsByKey[key] || [])
+        .filter(b => (b.rowType || 'booking') !== 'shift')   // skip 0-person shift placeholders
         .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''))
         .map(b => {
           const kk = key + '|' + b.bookingId;
@@ -779,14 +790,17 @@ function apiCloseShift_(p) {
     // assigned to another tour, and prune any column/row left empty (kills the
     // leftover empty "9:00" column).
     deleteShiftFromGrid_(id);
-    // Mirror onto the feed: clear this shift's Guide (writeFeedGuide_ lowercases
-    // the language, matching the dom-id form). Best-effort.
+    // Mirror onto the feed: clear this shift's Guide and drop its 0-person
+    // placeholder (writeFeedGuide_/removeFeedShiftRow_ lowercase the language,
+    // matching the dom-id form). Best-effort.
     (function () {
       const p = String(id).split('|');
       const mins = Number(p[1]);
       if (p[0] && Number.isFinite(mins) && p[2]) {
-        writeFeedGuide_(p[0], Math.floor(mins / 60) + ':' + String(mins % 60).padStart(2, '0'),
-                        p[2], /^P/i.test(p[3] || ''), '');
+        const t = Math.floor(mins / 60) + ':' + String(mins % 60).padStart(2, '0');
+        const isPriv = /^P/i.test(p[3] || '');
+        writeFeedGuide_(p[0], t, p[2], isPriv, '');
+        removeFeedShiftRow_(p[0], t, p[2], isPriv);
       }
     })();
     SpreadsheetApp.flush();
@@ -945,10 +959,18 @@ function apiAssign_(p) {
   try {
     const out = writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide);
     // Mirror the assignment onto the feed's Guide column so the portal can read it
-    // there (the grid stays the authority; this is the denormalised copy). Only if
-    // the grid write succeeded, and best-effort — the hourly syncFeedGuides_ is the
-    // backstop if it misses.
-    if (out && out.ok) { writeFeedGuide_(dateKey, time, language, isPriv, out.assigned || guide); bumpFeedCacheVersion_(); }
+    // there (the grid stays the authority; this is the denormalised copy). If the
+    // shift has NO feed rows yet (a bare slot with no booking), drop a 0-person
+    // placeholder so the assignment still shows in the feed-only portal. On
+    // unassign of such a bare slot, remove the placeholder. Best-effort — the
+    // hourly syncFeedGuides_ is the backstop.
+    if (out && out.ok) {
+      const g = out.assigned || guide;
+      const hadRows = writeFeedGuide_(dateKey, time, language, isPriv, g);
+      if (!hadRows && g) ensureFeedShiftRow_(dateKey, time, language, isPriv, g);
+      else if (!hadRows && !g) removeFeedShiftRow_(dateKey, time, language, isPriv);
+      bumpFeedCacheVersion_();
+    }
     SpreadsheetApp.flush();   // commit before returning, so the phone's next read is guaranteed fresh
     bumpCacheVersion_();      // the schedule changed -> next read must not serve a cached grid
     return out;
@@ -1658,18 +1680,72 @@ function writeFeedGuide_(dateKey, time, language, isPrivate, guide) {
     const langL = String(language || '').trim().toLowerCase();
     const meta = sh.getRange(2, 1, n, 11).getValues();       // A..K (K=Notes -> private?)
     const col = sh.getRange(2, 15, n, 1).getValues();        // O = Guide
-    let changed = 0;
+    let changed = 0, matched = 0;
     for (let i = 0; i < n; i++) {
       const rowPriv = /privat/i.test(String(meta[i][10] || ''));
       if (toDateKey_(meta[i][0]) === dateKey &&
           timeToMinutes_(normTime24_(meta[i][1])) === minutes &&
           String(meta[i][2] || '').trim().toLowerCase() === langL &&
           rowPriv === !!isPrivate) {
+        matched++;
         if (String(col[i][0] || '') !== String(guide || '')) { col[i][0] = guide || ''; changed++; }
       }
     }
     if (changed) sh.getRange(2, 15, n, 1).setValues(col);
-    return changed > 0;
+    return matched > 0;   // whether the shift HAS feed rows (so a bare assign knows to add a placeholder)
+  } catch (e) { return false; }
+}
+
+/**
+ * Ensure the feed has a row for a shift that has NO booking — a 0-person
+ * placeholder (Type='shift') carrying the assigned guide — so a bare assignment
+ * still appears in the feed-only portal. No-op if the shift already has any row
+ * of that private/regular kind. Best-effort.
+ */
+function ensureFeedShiftRow_(dateKey, time, language, isPrivate, guide) {
+  try {
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh) return false;
+    const minutes = timeToMinutes_(normTime24_(time));
+    const langL = String(language || '').trim().toLowerCase();
+    const n = sh.getLastRow() - 1;
+    if (n > 0) {
+      const meta = sh.getRange(2, 1, n, 11).getValues();
+      for (let i = 0; i < n; i++) {
+        const rowPriv = /privat/i.test(String(meta[i][10] || ''));
+        if (toDateKey_(meta[i][0]) === dateKey &&
+            timeToMinutes_(normTime24_(meta[i][1])) === minutes &&
+            String(meta[i][2] || '').trim().toLowerCase() === langL &&
+            rowPriv === !!isPrivate) return false;   // already represented
+      }
+    }
+    const row = [dateKey, to12h_(normTime24_(time)), language, '', '', 0, 0, '', 0, '',
+                 isPrivate ? 'Private' : '', '', '', '', guide || '', 'shift'];
+    const at = sh.getLastRow() + 1;
+    sh.getRange(at, 2, 1, 1).setNumberFormat('@');   // Time as text
+    sh.getRange(at, 1, 1, 16).setValues([row]);
+    return true;
+  } catch (e) { return false; }
+}
+
+/** Delete a shift's 0-person placeholder row(s) from the feed (on delete/reopen). */
+function removeFeedShiftRow_(dateKey, time, language, isPrivate) {
+  try {
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const minutes = timeToMinutes_(normTime24_(time));
+    const langL = String(language || '').trim().toLowerCase();
+    const n = sh.getLastRow() - 1;
+    const meta = sh.getRange(2, 1, n, 16).getValues();
+    for (let i = n - 1; i >= 0; i--) {
+      if (String(meta[i][15] || '').trim().toLowerCase() !== 'shift') continue;
+      const rowPriv = /privat/i.test(String(meta[i][10] || ''));
+      if (toDateKey_(meta[i][0]) === dateKey &&
+          timeToMinutes_(normTime24_(meta[i][1])) === minutes &&
+          String(meta[i][2] || '').trim().toLowerCase() === langL &&
+          rowPriv === !!isPrivate) sh.deleteRow(i + 2);
+    }
+    return true;
   } catch (e) { return false; }
 }
 
@@ -1916,6 +1992,54 @@ function appendOrphanBookingShifts_(schedule, bookingsByKey) {
       schedule.push(Object.assign({}, base, { private: true, privIndex: 1, assigned: [], status: 'Not assigned', extra: true }));
     }
   });
+}
+
+/** Date-then-time-then-language order used everywhere the shift list is built. */
+function sortSchedule_(s) {
+  s.sort((a, b) =>
+    (a.dateKey < b.dateKey ? -1 : a.dateKey > b.dateKey ? 1 : 0) ||
+    (a.minutes - b.minutes) ||
+    String(a.language).localeCompare(String(b.language)));
+}
+
+/**
+ * Build the portal's shift list FROM THE FEED — no schedule-grid read (the big
+ * `sched` cost). Each feed row carries its shift's assigned guide (feedGuide) and
+ * whether it's a real booking or a 0-person 'shift' placeholder. One shift per
+ * date|time|language + private/regular; its guide is the feedGuide its rows
+ * carry. Windowed to the same upcoming range the portal shows. Assignments made
+ * via the grid (makeSchedule / manual) reach here through syncFeedGuides_.
+ */
+function buildScheduleFromFeed_(feedIndex) {
+  const today = todayKey_();
+  const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
+  const byKey = {};
+  Object.keys(feedIndex).forEach(sk => {
+    const parts = sk.split('|');
+    const dateKey = parts[0];
+    const minutes = Number(parts[1]);
+    const langLower = parts[2] || '';
+    if (!dateKey || !Number.isFinite(minutes)) return;
+    if (dateKey < today || dateKey > maxKey) return;
+    if (shiftIsOver_(dateKey, minutes)) return;
+    const language = LANGUAGES.find(l => l.toLowerCase() === langLower) ||
+                     (langLower.charAt(0).toUpperCase() + langLower.slice(1));
+    const time = Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0');
+    (feedIndex[sk] || []).forEach(r => {
+      const isPriv = /privat/i.test(r.note || '');
+      const kk = sk + (isPriv ? '|P' : '|R');
+      let sh = byKey[kk];
+      if (!sh) {
+        sh = byKey[kk] = {
+          dateKey, minutes, time, timeLabel: to12h_(time),
+          language, day: dayNameFromKey_(dateKey), dateText: prettyDate_(dateKey),
+          private: isPriv, privIndex: 1, assigned: [], status: 'Not assigned'
+        };
+      }
+      if (r.feedGuide && !sh.assigned.length) { sh.assigned = [r.feedGuide]; sh.status = 'OK'; }
+    });
+  });
+  return Object.keys(byKey).map(k => byKey[k]);
 }
 
 

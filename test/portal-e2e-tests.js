@@ -193,6 +193,20 @@ check('the portal shows the feed check-in via the union read', uBk && uBk.checke
 check('the feed keeps the ORIGINAL check-in time (10:03, not reset to 10:09)', uBk && uBk.checkedAt === '10:03', uBk && uBk.checkedAt);
 check('with the feed present, the poll does NOT read the ledger (feed-only)', rUnion.timings && rUnion.timings.ledger === undefined, rUnion.timings);
 
+console.log('--- Stage 4: the poll builds shifts FROM THE FEED (no schedule-grid read) ---');
+writeFeedGuide_(DATE, '10:00', 'English', false, 'Carlos');       // assign via the feed Guide column
+ensureFeedShiftRow_(DATE, '15:00', 'English', false, 'Albert');   // an EMPTY assignable shift (no weekly rule at 15:00)
+const rs4 = apiTours_({ token: token, days: 45 });
+check('feed-only: the poll did NOT read the schedule grid (no sched phase)', rs4.timings && rs4.timings.sched === undefined, rs4.timings);
+const s10 = (rs4.allTours || []).find(s => s.dateKey === DATE && s.time === '10:00' && s.language === 'English');
+check('a shift with bookings takes its guide from the FEED (Carlos)', s10 && (s10.assigned || []).indexOf('Carlos') !== -1, s10 && s10.assigned);
+check('the guest list excludes the shift placeholder (real bookings only)', s10 && s10.bookings.length >= 1 && s10.bookings.every(b => b.bookingId), s10 && s10.bookings.map(b => b.bookingId));
+const s15 = (rs4.allTours || []).find(s => s.dateKey === DATE && s.time === '15:00' && s.language === 'English');
+check('an EMPTY shift shows from its placeholder row, assigned to Albert', s15 && (s15.assigned || []).indexOf('Albert') !== -1 && s15.bookings.length === 0, s15 && [s15 && s15.assigned, s15 && s15.bookings.length]);
+removeFeedShiftRow_(DATE, '15:00', 'English', false);
+const rs4b = apiTours_({ token: token, days: 45 });
+check('removing the placeholder drops the empty shift', !(rs4b.allTours || []).some(s => s.dateKey === DATE && s.time === '15:00' && s.language === 'English'), null);
+
 console.log('--- Save reports write timings + refreshes ONLY the feed cache (freshness) ---');
 const feedVerBefore = String(__mock.PROPS['PORTAL_FEED_VER'] || '0');
 const globalVerBefore = String(__mock.PROPS['PORTAL_CACHE_VER'] || '0');
