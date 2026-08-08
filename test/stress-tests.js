@@ -136,6 +136,23 @@ check('a guide who does not speak the language is rejected', badLang && badLang.
 const inactive = apiAssign_({ token: token, dateKey: DATE, time: '10:00', language: 'English', isPrivate: '', guide: 'Inactive', force: '1' });
 check('an inactive guide is rejected', inactive && inactive.ok === false, inactive);
 
+console.log('=== STRESS: a weekly default must NOT block reassigning that guide (flexibility) ===');
+__RRX = {};
+// Albert is the weekly default for 10:00 English on DATE's weekday.
+control.getSheetByName('Weekly_Schedule').getRange(2, 1, 1, 7).setValues([[dayNameFromKey_(DATE), '10:00', 'English', 1, '', '', 'Albert']]);
+__RRX = {}; let rw = tours();
+let s10 = (rw.allTours || []).find(x => x.dateKey === DATE && x.time === '10:00' && x.language === 'English' && !x.isPrivate);
+check('the 10:00 shift shows Albert by weekly default', s10 && (s10.assigned || []).indexOf('Albert') !== -1, s10 && s10.assigned);
+// Assign Albert to the adjacent 11:00 WITHOUT force -> the conflict check must
+// NOT count his 10:00 DEFAULT as a hard clash.
+const asg11 = apiAssign_({ token: token, dateKey: DATE, time: '11:00', language: 'English', isPrivate: '', guide: 'Albert' });
+check('a guide defaulted onto 10:00 CAN be assigned to the adjacent 11:00 (no phantom conflict)', asg11 && asg11.ok === true, asg11);
+__RRX = {}; rw = tours();
+s10 = (rw.allTours || []).find(x => x.dateKey === DATE && x.time === '10:00' && x.language === 'English' && !x.isPrivate);
+const s11 = (rw.allTours || []).find(x => x.dateKey === DATE && x.time === '11:00' && x.language === 'English');
+check('Albert is really assigned to 11:00', s11 && (s11.assigned || []).indexOf('Albert') !== -1, s11 && s11.assigned);
+check('the 10:00 default YIELDS to his real 11:00 (no double-book)', s10 && (s10.assigned || []).indexOf('Albert') === -1, s10 && s10.assigned);
+
 console.log('=== STRESS: a non-manager cannot assign / undo ===');
 const gtok = makeToken_('Carlos');
 check('a guide cannot assign', apiAssign_({ token: gtok, dateKey: DATE, time: '10:00', language: 'English', guide: 'Carlos' }).ok === false, null);

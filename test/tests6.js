@@ -295,7 +295,7 @@ check('readPortalFeed_ surfaces rowType=booking', shG.length && shG[0].rowType==
 writeFeedGuide_('2026-08-10','11:00','English',false,'');   // unassign clears it
 check('writeFeedGuide_ with "" clears the guide', gcol()[0]==='' && gcol()[1]==='', gcol());
 
-console.log('--- syncFeedGuides_ reconciles the feed Guide from the weekly default ---');
+console.log('--- syncFeedGuides_ mirrors REAL grid assignments only; weekly defaults stay a read-time overlay ---');
 const plusK=n=>{ const d=new Date(); d.setDate(d.getDate()+n); return Utilities.formatDate(d,Session.getScriptTimeZone(),'yyyy-MM-dd'); };
 const sDate=plusK(2), sDay=dayNameFromKey_(sDate);
 const cSync=new __mock.MockSS('control-sync'); SpreadsheetApp._active=cSync; __RRX={};
@@ -304,13 +304,17 @@ cSync.insertSheet('Guides').getRange(1,1,2,11).setValues([
  ['Nora',true,1,true,false,false,false,false,false,'n@x.com','pw']]);
 cSync.insertSheet('Weekly_Schedule').getRange(1,1,2,7).setValues([
  ['Day','Time','Language','Guides needed','Active from','Active until','Guide'],
- [sDay,'11:00','English',1,'','','Nora']]);
+ [sDay,'11:00','English',1,'','','Nora']]);   // Nora is the weekly DEFAULT for 11:00
 const bkS=new __mock.MockSS(PORTAL.BOOKING_SHEET_ID); __mock.SS_BY_ID[PORTAL.BOOKING_SHEET_ID]=bkS;
 const pfs=bkS.insertSheet('Portal Feed');
 pfs.getRange(1,1,1,16).setValues([['Date','Time','Language','Name','Phone','Adults','Children','Source','Income','Booking ID','Notes','Manager note','Checked-in','Check-in time','Guide','Type']]);
-pfs.getRange(2,1,1,16).setValues([[sDate,'11:00 AM','English','A','+1',2,0,'GetYourGuide',30,'GA','','','','','','booking']]);
+pfs.getRange(2,1,2,16).setValues([
+ [sDate,'11:00 AM','English','A','+1',2,0,'GetYourGuide',30,'GA','','','','','','booking'],   // 11:00 = weekly default only
+ [sDate,'10:00 AM','English','B','+1',1,0,'GetYourGuide',15,'GB','','','','','','booking']]);  // 10:00 = will be grid-assigned
+writeAssignmentToGrid_('English',sDate,'10:00',false,1,'Nora'); __RRX={};   // a REAL assignment
 syncFeedGuides_();
-check('syncFeedGuides_ wrote the weekly-default guide onto the feed row', String(pfs.getRange(2,15,1,1).getValue())==='Nora', pfs.getRange(2,15,1,1).getValue());
+check('syncFeedGuides_ writes the REAL grid assignment onto its feed row (10:00 -> Nora)', String(pfs.getRange(3,15,1,1).getValue())==='Nora', pfs.getRange(3,15,1,1).getValue());
+check('syncFeedGuides_ does NOT materialize a weekly DEFAULT (11:00 feed stays blank)', String(pfs.getRange(2,15,1,1).getValue())==='', pfs.getRange(2,15,1,1).getValue());
 
 console.log('--- Completed Log fallback: un-checked-in guests still show ---');
 const bkCL=new __mock.MockSS('booking-cl'); __mock.SS_BY_ID['1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw']=bkCL;

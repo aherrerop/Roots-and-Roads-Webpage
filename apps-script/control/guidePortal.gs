@@ -591,7 +591,10 @@ function apiTours_(p) {
       guidesByLanguage[l].sort((a, b) =>
         (seniorityOf[a] - seniorityOf[b]) || a.localeCompare(b));
     });
-    busyMap = buildBusyMap_(schedule);
+    // Eligibility counts only REAL assignments as "busy" — a weekly DEFAULT never
+    // blocks a manual assignment (the manager can always override a default), so
+    // a guide defaulted onto 10:00 is still offered for the adjacent 11:00.
+    busyMap = buildBusyMap_(schedule.filter(s => !s.weeklyDefault));
     return 0;
   });
   // The manager "All tours" list loads the near-term window first (today .. +N
@@ -1839,9 +1842,12 @@ function syncFeedGuides_() {
   if (!sh || sh.getLastRow() < 2) return;
   let schedule;
   try {
+    // Only REAL grid assignments are mirrored to the feed. Weekly DEFAULTS are
+    // NOT written here — they stay a read-time overlay (applyWeeklyDefaults_), so
+    // the feed's Guide column reflects genuine commitments and a default never
+    // looks "busy" enough to block reassigning that guide.
     schedule = readSchedule_();
-    appendWeeklyScheduleShifts_(schedule);
-    applyWeeklyDefaults_(schedule);
+    appendWeeklyScheduleShifts_(schedule);   // so empty offer slots resolve to '' (cleared), not stale
   } catch (e) { return; }
   const byKey = {};
   schedule.forEach(s => {
@@ -2026,14 +2032,30 @@ function weeklyDefaultGuide_(dateKey, time, language) {
 }
 
 function applyWeeklyDefaults_(schedule) {
+  // A default must YIELD to a real assignment: if the default guide is already
+  // really assigned within the separation window (e.g. a manager moved them to
+  // the adjacent 11:00), don't also default them onto the 10:00 — that would
+  // double-book them and, worse, make them look "busy" so they couldn't be
+  // assigned at all. Real assignments already on `schedule` are the truth; the
+  // defaults we add here get folded in as we go so two defaults can't clash.
+  const busy = buildBusyMap_(schedule);
+  const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
+  const addBusy = (g, dateKey, minutes, s) => {
+    const nk = String(g).trim().toLowerCase();
+    (busy[nk] = busy[nk] || []).push({ ms: shiftStartMs_(dateKey, minutes), k: shiftKeyFull_(s) });
+  };
   schedule.forEach(s => {
     if (s.private) return;                              // defaults are for regular slots
     if (s.assigned && s.assigned.length) return;        // a real assignment always wins
     const guide = weeklyDefaultGuide_(s.dateKey, s.time, s.language);
     if (!guide) return;
+    const st = shiftStartMs_(s.dateKey, s.minutes);
+    const gb = busy[guide.trim().toLowerCase()] || [];
+    if (gb.some(x => Math.abs(x.ms - st) < sepMs)) return;   // guide is really busy nearby -> skip the default
     s.assigned = [guide];
     s.status = 'OK';
     s.weeklyDefault = true;                             // marker: filled by the weekly pattern
+    addBusy(guide, s.dateKey, s.minutes, s);
   });
 }
 
