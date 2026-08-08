@@ -132,7 +132,7 @@ var __RRX = {};
 // so a manager can see, after the fact, how long each save took, whether it
 // worked, and what went wrong. Reads (tours/login/ping) are not logged, to keep
 // the frequent auto-refresh cheap.
-const PORTAL_MUTATIONS = { assign: 1, save: 1, move: 1, setNote: 1, closeShift: 1 };
+const PORTAL_MUTATIONS = { assign: 1, save: 1, move: 1, setNote: 1, closeShift: 1, uncheckin: 1 };
 
 function doGet(e) {
   __RRX = {};                       // fresh per-request memo (prod globals reset anyway; explicit for safety + tests)
@@ -150,6 +150,7 @@ function doGet(e) {
       case 'move':   out = apiMoveBooking_(p); break;
       case 'setNote': out = apiSetNote_(p); break;
       case 'closeShift': out = apiCloseShift_(p); break;
+      case 'uncheckin': out = apiUncheckin_(p); break;
       case 'ping':   out = { ok: true, pong: true }; break;
       case 'clientlog': out = apiClientLog_(p); break;
       case 'health': out = apiHealth_(); break;
@@ -1662,6 +1663,75 @@ function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
     }
     return false;
   } catch (e) { return false; }
+}
+
+/** Clear a booking's check-in on the Portal Feed (M/N -> blank). Used by undo. */
+function writeFeedUncheckin_(bookingId) {
+  try {
+    const id = String(bookingId || '').trim();
+    if (!id) return false;
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
+    let done = false;
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || '').trim() === id) { sh.getRange(i + 2, 13, 1, 2).setValues([['', '']]); done = true; }
+    }
+    return done;
+  } catch (e) { return false; }
+}
+
+/** Delete a booking's check-in row(s) from EVERY guide ledger tab. Returns the
+ *  number of rows removed. The money record for that check-in is gone. */
+function removeLedgerCheckin_(bookingId) {
+  const id = String(bookingId || '').trim();
+  if (!id) return 0;
+  const ss = ledgerSS_();
+  let removed = 0;
+  ss.getSheets().forEach(sh => {
+    const name = sh.getName();
+    if (name === 'Rates' || name === 'Unassigned') return;
+    if (Object.values(QUEUE_TABS).indexOf(name) !== -1) return;
+    if (sh.getLastRow() < 2) return;
+    const header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+    if (header[7] !== 'Guests') return;                       // not a guide ledger tab
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
+    for (let i = v.length - 1; i >= 0; i--) {
+      if (String(v[i][LEDGER_BOOKINGID_COL] || '').trim() === id) { sh.deleteRow(i + 2); removed++; }
+    }
+  });
+  return removed;
+}
+
+/**
+ * action=uncheckin — MANAGER ONLY. Undo a check-in cleanly: remove its ledger
+ * row(s) (the money record) AND clear the feed's M/N, under one lock, then bump
+ * the feed cache so the portal reflects it on the very next load. This is the
+ * reliable "delete a check-in" — doing it by hand fought the 60s feed cache and
+ * the hourly ledger->feed reconciler, so a deleted check-in kept reappearing.
+ *   params: token, bookingId
+ */
+function apiUncheckin_(p) {
+  __RRX = {};
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+  const bookingId = String(p.bookingId || '').trim();
+  if (!bookingId) return { ok: false, error: 'Missing booking id' };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return { ok: false, error: 'Server busy, try again in a moment' };
+  let removed = 0;
+  try {
+    removed = removeLedgerCheckin_(bookingId);   // money record gone
+    writeFeedUncheckin_(bookingId);              // feed M/N cleared
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+  bumpFeedCacheVersion_();                        // next load reads the cleared feed
+  return { ok: true, bookingId: bookingId, removed: removed };
 }
 
 /**

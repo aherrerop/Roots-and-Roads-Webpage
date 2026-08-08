@@ -294,6 +294,28 @@ check('Guruwalk real: routes to German Tours', gw && languageToSheet_(gw.languag
 check('Guruwalk real: date 2026-08-07',       gw && dateKey_(gw.date)==='2026-08-07', gw && (gw.date&&dateKey_(gw.date)));
 check('Guruwalk real: time 10:00 AM',         gw && gw.time==='10:00 AM', gw && gw.time);
 
+// Guruwalk EVERY tour language. The operator email is ALWAYS English (lang="en");
+// only the "Language:" VALUE changes. This exact body is a real confirmation
+// (Emanuele Preti BAR12526571): day-first date "Sunday, 9 Aug 2026", a "Phone"
+// label with NO colon, "Attendees: N adults". Proves the parse never depends on
+// the tour language, and each maps to its own Tours tab.
+console.log('--- Guruwalk parses every tour language (email is always English) ---');
+const gwLangBody = lang => [
+  'Hi Roots & roads,', 'You have a new booking on a Tour',
+  'Congratulations, you have a confirmed booking on your guruwalk:',
+  'Walker: Emanuele Preti', 'Booking code: BAR9526571', 'Phone +39 3402318218',
+  'Attendees: 2 adults', 'Language: ' + lang, 'Date: Sunday, 9 Aug 2026', 'Time: 16:00'
+].join('\n\n');
+[['English','English Tours'],['German','German Tours'],['French','French Tours'],
+ ['Italian','Italian Tours'],['Spanish','Spanish Tours']].forEach(function(pair){
+  const lang=pair[0], sheet=pair[1];
+  const g = parseGuruwalkMessage_(makeFakeMsg_('Confirmed booking 9526571 on your tour', gwLangBody(lang)), 'confirm')[0];
+  check('Guruwalk '+lang+': language + routes to '+sheet, g && g.language===lang && languageToSheet_(g.language)===sheet, g && [g&&g.language, g&&languageToSheet_(g.language)]);
+  check('Guruwalk '+lang+': id/name/2 adults/phone(no colon)/date/time all parse',
+    g && g.bookingId==='BAR9526571' && g.name==='Emanuele Preti' && g.guests===2 &&
+    /3402318218/.test(g.phone||'') && dateKey_(g.date)==='2026-08-09' && g.time==='4:00 PM', g);
+});
+
 console.log('--- REAL cancellation / modification emails (per source) ---');
 // GYG cancellation (real format).
 const gygCancelReal = ['GYGRFQLWK73H ha sido cancelada', 'Hola, proveedor:',

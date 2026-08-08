@@ -175,7 +175,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-07-checkin-durable-merge";
+const PORTAL_VERSION = "2026-08-08-feed-only-undo-checkin";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -687,7 +687,7 @@ function bookingRow(tourId,b,i,canAssign,lang){
   return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
     '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mv+noteBtn+'</div>'+
     wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
-    '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+(b.checked?' disabled':'')+'>'+(b.checked?(b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))):'Check in')+'</button>'+
+    '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+((b.checked && !(MANAGER && !b.pending))?' disabled':'')+'>'+(b.checked?(b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))):'Check in')+'</button>'+
     '</div>'+ noteEditor + '</div>';
 }
 function stepper(tourId,ref,val,max,total,kids){
@@ -816,6 +816,26 @@ function bindTours(tours){
         ckEnqueue(buildTourData(tid));
         b.checkedAt=hhmm; btn.classList.add("done"); btn.textContent="✓ ⏳"; btn.title="Saved on your phone — syncing when back online";
       }
+    };
+  });
+  // MANAGER undo: tap a confirmed ✓ to delete that check-in cleanly (ledger +
+  // feed, server-side, atomic). Guides and still-syncing (✓ ⏳) buttons stay
+  // locked. This is the reliable "delete a check-in".
+  if(MANAGER) document.querySelectorAll(".ckin.done:not([disabled])").forEach(btn=>{
+    btn.title="Tap to undo this check-in";
+    btn.onclick=async ()=>{
+      const parts=btn.dataset.ck.split("~"); const tid=parts[0], idx=+parts[1];
+      const t=TOURS_CACHE.find(x=>x.id===tid); if(!t) return;
+      const b=t.bookings[idx]; if(!b||!b.bookingId) return;
+      if(!confirm("Undo the check-in for "+(b.name||"this guest")+"?\nThis removes it from the ledger and the feed.")) return;
+      const old=btn.textContent; btn.disabled=true; btn.textContent="Undoing…";
+      MUTATING++; LAST_EDIT=Date.now();
+      let ok=false, errMsg="";
+      try{ const r=await api("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
+      catch(err){ errMsg=err.message||"Network problem — try again"; }
+      MUTATING--;
+      if(ok){ b.checked=false; b.checkedAt=""; b.checkedIn=b.guests; recount(tid); loadTours("undo"); }
+      else { btn.disabled=false; btn.textContent=old; alert(errMsg||"Could not undo"); }
     };
   });
 }

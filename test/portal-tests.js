@@ -104,6 +104,11 @@ check('a pending-check-in overlay exists and runs in renderAll', /function apply
 check('the overlay reads the offline queue and marks bookings pending', /ckQueueLoad\(\)/.test(html) && /b\.pending=true/.test(html), null);
 check('a pending check-in renders as "✓ ⏳", not "Check in"', /b\.pending\?'✓ ⏳'/.test(html), null);
 
+console.log('--- Manager can undo a check-in from the portal ---');
+check('a confirmed check-in is tappable ONLY for a manager (guides/pending stay locked)', /!\(MANAGER && !b\.pending\)/.test(html), null);
+check('the undo binds on confirmed ✓ buttons for managers and calls action=uncheckin', /if\(MANAGER\) document\.querySelectorAll\("\.ckin\.done:not\(\[disabled\]\)"\)/.test(html) && /"uncheckin"/.test(html), null);
+check('undo confirms before deleting and refreshes after', /Undo the check-in for/.test(html) && /loadTours\("undo"\)/.test(html), null);
+
 console.log('--- Load analytics: reload-early vs real slowness is reported ---');
 check('a client telemetry beacon exists', /function beacon\(ev, ms, nav\)/.test(html) && /"clientlog"/.test(html), null);
 check('an early reload mid-load reports an abort', /pagehide[\s\S]*beacon\("abort"/.test(html), null);

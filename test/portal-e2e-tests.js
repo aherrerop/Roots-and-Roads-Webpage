@@ -207,6 +207,20 @@ removeFeedShiftRow_(DATE, '15:00', 'English', false);
 const rs4b = apiTours_({ token: token, days: 45 });
 check('removing the placeholder drops the empty shift', !(rs4b.allTours || []).some(s => s.dateKey === DATE && s.time === '15:00' && s.language === 'English'), null);
 
+console.log('--- Manager UNDO check-in: clears the ledger row + feed M/N atomically ---');
+// Seed a check-in in BOTH stores for a fresh booking, then undo it.
+apiSave_({ token: token, data: JSON.stringify({ dateKey: DATE, time: '10:00', timeLabel: '10:00 AM', day: '', language: 'English', guide: 'Carlos',
+  bookings: [{ bookingId: 'GYGUNDO1', source: 'GetYourGuide', name: 'Undo Me', phone: '+1', guests: 2, children: 0, income: 30, isPrivate: false, manualNote: '', checked: true, checkedIn: 2 }] }) });
+const undoBefore = readLedgerForGuides_(['Carlos']).checkins;
+check('the seeded check-in is in the ledger', Object.keys(undoBefore).some(k => k.indexOf('GYGUNDO1') !== -1), Object.keys(undoBefore));
+const feedVerBeforeUndo = String(__mock.PROPS['PORTAL_FEED_VER'] || '0');
+const rUn = apiUncheckin_({ token: token, bookingId: 'GYGUNDO1' });
+check('apiUncheckin_ ok + removed a ledger row', rUn && rUn.ok === true && rUn.removed >= 1, rUn);
+const undoAfter = readLedgerForGuides_(['Carlos']).checkins;
+check('the ledger no longer has that check-in', !Object.keys(undoAfter).some(k => k.indexOf('GYGUNDO1') !== -1), Object.keys(undoAfter));
+check('undo bumps the feed version so the portal reflects it next load', String(__mock.PROPS['PORTAL_FEED_VER'] || '0') !== feedVerBeforeUndo, [feedVerBeforeUndo, __mock.PROPS['PORTAL_FEED_VER']]);
+check('a non-manager cannot undo (managers only)', (function(){ const r = apiUncheckin_({ token: makeToken_('Carlos'), bookingId: 'X' }); return r && r.ok === false && /manager/i.test(r.error || ''); })(), null);
+
 console.log('--- Save reports write timings + refreshes ONLY the feed cache (freshness) ---');
 const feedVerBefore = String(__mock.PROPS['PORTAL_FEED_VER'] || '0');
 const globalVerBefore = String(__mock.PROPS['PORTAL_CACHE_VER'] || '0');
