@@ -968,8 +968,16 @@ function apiAssign_(p) {
     if (out && out.ok) {
       const g = out.assigned || guide;
       const hadRows = writeFeedGuide_(dateKey, time, language, isPriv, g);
-      if (!hadRows && g) ensureFeedShiftRow_(dateKey, time, language, isPriv, g);
-      else if (!hadRows && !g) removeFeedShiftRow_(dateKey, time, language, isPriv);
+      if (g) {
+        // Assigning: if the shift has no feed rows at all, drop a placeholder so
+        // the bare assignment still shows.
+        if (!hadRows) ensureFeedShiftRow_(dateKey, time, language, isPriv, g);
+      } else {
+        // Unassigning: remove any 0-person placeholder for this shift (a bare
+        // slot fully disappears). removeFeedShiftRow_ only deletes Type='shift'
+        // rows, so a shift that still has REAL bookings keeps them (now guideless).
+        removeFeedShiftRow_(dateKey, time, language, isPriv);
+      }
       bumpFeedCacheVersion_();
     }
     SpreadsheetApp.flush();   // commit before returning, so the phone's next read is guaranteed fresh

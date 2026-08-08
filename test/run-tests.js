@@ -83,6 +83,14 @@ for (const [sources, suite] of SUITES) {
   try { execFileSync(node, [tmp], { stdio: 'inherit' }); } catch (e) { failed = 1; }
 }
 
+// Stress: adversarial sequences against the real control API (try to break it).
+{
+  const bundle = [path.join(testDir, 'mock.js'), ...CONTROL, path.join(testDir, 'stress-tests.js')].map(read).join('\n');
+  const tmp = path.join(os.tmpdir(), 'rr_stress.js');
+  fs.writeFileSync(tmp, bundle);
+  try { execFileSync(node, [tmp], { stdio: 'inherit' }); } catch (e) { failed = 1; }
+}
+
 // Standalone suite: the portal's own client JS (extracted from guide/index.html),
 // no mock/Apps Script bundle needed.
 try {
