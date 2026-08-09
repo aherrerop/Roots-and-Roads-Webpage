@@ -55,7 +55,11 @@
 <link rel="preconnect" href="https://script.google.com">
 <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 <link rel="preconnect" href="https://fonts.cdnfonts.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/the-youngest">
+<!-- Load the display font WITHOUT blocking render: the browser paints in a
+     fallback immediately and swaps the font in when it arrives (media=print
+     trick). Removes a render-blocking third-party request from first paint. -->
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/the-youngest" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.cdnfonts.com/css/the-youngest"></noscript>
 <link rel="stylesheet" href="css/main_css.css">
 <script defer src="main_js.js"></script>
 
@@ -272,48 +276,44 @@
 }
 </script>
 
-<!-- Google tag (gtag.js) Start -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-F1N01KGT8P"></script>
+<!-- Analytics + pixels (Google, Meta, TikTok) — DEFERRED until the first user
+     interaction or browser idle, so three third-party scripts never compete with
+     first paint. PageView still fires (a beat later); a bounce inside a few
+     seconds is still caught by the idle/timeout fallback. -->
 <script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
+(function () {
+  var loaded = false;
+  function loadAnalytics() {
+    if (loaded) return; loaded = true;
 
-  gtag('config', 'G-F1N01KGT8P');
+    // Google Analytics (gtag.js)
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = function () { dataLayer.push(arguments); };
+    var ga = document.createElement('script'); ga.async = true;
+    ga.src = 'https://www.googletagmanager.com/gtag/js?id=G-F1N01KGT8P';
+    document.head.appendChild(ga);
+    gtag('js', new Date()); gtag('config', 'G-F1N01KGT8P');
+
+    // Meta (Facebook) Pixel
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', '4098374887121207'); fbq('track', 'PageView');
+
+    // TikTok Pixel
+    !function (w, d, t) {
+      w.TiktokAnalyticsObject=t;var ttq=w[t]=w[t]||[];ttq.methods=["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie","holdConsent","revokeConsent","grantConsent"],ttq.setAndDefer=function(t,e){t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}};for(var i=0;i<ttq.methods.length;i++)ttq.setAndDefer(ttq,ttq.methods[i]);ttq.instance=function(t){for(var e=ttq._i[t]||[],n=0;n<ttq.methods.length;n++)ttq.setAndDefer(e,ttq.methods[n]);return e},ttq.load=function(e,n){var r="https://analytics.tiktok.com/i18n/pixel/events.js",o=n&&n.partner;ttq._i=ttq._i||{},ttq._i[e]=[],ttq._i[e]._u=r,ttq._t=ttq._t||{},ttq._t[e]=+new Date,ttq._o=ttq._o||{},ttq._o[e]=n||{};n=document.createElement("script");n.type="text/javascript",n.async=!0,n.src=r+"?sdkid="+e+"&lib="+t;e=document.getElementsByTagName("script")[0];e.parentNode.insertBefore(n,e)};
+      ttq.load('D6PH03BC77UD56GIE9L0'); ttq.page();
+    }(window, document, 'ttq');
+  }
+  var evts = ['pointerdown', 'keydown', 'touchstart', 'scroll', 'mousemove'];
+  function fire() { evts.forEach(function (ev) { window.removeEventListener(ev, fire); }); loadAnalytics(); }
+  evts.forEach(function (ev) { window.addEventListener(ev, fire, { passive: true, once: true }); });
+  // Fallback so a no-interaction bounce is still tracked: idle callback, else a
+  // short timer after load.
+  if ('requestIdleCallback' in window) { requestIdleCallback(loadAnalytics, { timeout: 4000 }); }
+  else { window.addEventListener('load', function () { setTimeout(loadAnalytics, 2500); }); }
+})();
 </script>
-<!-- End Google tag Code -->
-
-<!-- Meta Pixel Code tag Start -->
-<script>
-!function(f,b,e,v,n,t,s)
-{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-n.queue=[];t=b.createElement(e);t.async=!0;
-t.src=v;s=b.getElementsByTagName(e)[0];
-s.parentNode.insertBefore(t,s)}(window, document,'script',
-'https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', '4098374887121207');
-fbq('track', 'PageView');
-</script>
-<noscript><img height="1" width="1" alt="" style="display:none"
-src="https://www.facebook.com/tr?id=4098374887121207&ev=PageView&noscript=1"
-/></noscript>
-<!-- End Meta Pixel Code -->
-
-<!-- TikTok Pixel Code Start -->
-<script>
-!function (w, d, t) {
-  w.TiktokAnalyticsObject=t;var ttq=w[t]=w[t]||[];ttq.methods=["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie","holdConsent","revokeConsent","grantConsent"],ttq.setAndDefer=function(t,e){t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}};for(var i=0;i<ttq.methods.length;i++)ttq.setAndDefer(ttq,ttq.methods[i]);ttq.instance=function(t){for(
-var e=ttq._i[t]||[],n=0;n<ttq.methods.length;n++)ttq.setAndDefer(e,ttq.methods[n]);return e},ttq.load=function(e,n){var r="https://analytics.tiktok.com/i18n/pixel/events.js",o=n&&n.partner;ttq._i=ttq._i||{},ttq._i[e]=[],ttq._i[e]._u=r,ttq._t=ttq._t||{},ttq._t[e]=+new Date,ttq._o=ttq._o||{},ttq._o[e]=n||{};n=document.createElement("script")
-;n.type="text/javascript",n.async=!0,n.src=r+"?sdkid="+e+"&lib="+t;e=document.getElementsByTagName("script")[0];e.parentNode.insertBefore(n,e)};
-
-
-  ttq.load('D6PH03BC77UD56GIE9L0');
-  ttq.page();
-}(window, document, 'ttq');
-</script>
-<!-- TikTok Pixel Code End -->
+<noscript><img height="1" width="1" alt="" style="display:none" src="https://www.facebook.com/tr?id=4098374887121207&ev=PageView&noscript=1" /></noscript>
 
 
 <script type="application/ld+json">{
