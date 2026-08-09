@@ -42,6 +42,7 @@ const SUITES = [
   [CONTROL, 'tests4.js'],
   [CONTROL, 'tests5.js'],
   [CONTROL, 'tests6.js'],          // Italian + French: control side
+  [CONTROL, 'cache-tests.js'],     // cachedRead_ hit/miss + version-bump freshness (real cache)
   [BOOKING, 'booking-tests.js']    // Italian + French: booking side
 ];
 

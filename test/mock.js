@@ -32,7 +32,9 @@ global.Logger={log:m=>console.log('[Logger] '+m)};
 global.console.error=console.log;
 global.LockService={getScriptLock:()=>({tryLock:()=>true,waitLock:()=>true,releaseLock:()=>{}})};
 // No-op cache: get always misses, so tests always exercise the LIVE read path
-// (production gets a real CacheService, which cachedRead_ uses fail-open).
+// No-op by default (cachedRead_ fail-opens to a live read) so suites that swap
+// mock sheets/config mid-run always read fresh. A dedicated cache test installs
+// __mock.installRealCache()/removeRealCache() to exercise the real hit/miss paths.
 global.CacheService={getScriptCache:()=>({get:()=>null,put:()=>{},remove:()=>{}})};
 global.MailApp={sendEmail:()=>{},getRemainingDailyQuota:()=>99};
 global.ContentService={createTextOutput:t=>({setMimeType:()=>({})}),MimeType:{TEXT:1,JSON:2,JAVASCRIPT:3}};
@@ -162,7 +164,14 @@ class MockSS{
   toast(){}
 }
 const SS_BY_ID={};
-global.__mock={MockSS,SS_BY_ID,PROPS};
+global.__mock={MockSS,SS_BY_ID,PROPS,
+  // Opt-in: swap the no-op CacheService for a REAL in-memory one so a test can
+  // exercise cachedRead_'s hit/miss + version-bump freshness (keyed exactly as
+  // production). removeRealCache() restores the no-op.
+  installRealCache(){ const store={}; global.__CACHE=store;
+    global.CacheService={getScriptCache:()=>({get:k=>(k in store?store[k]:null),put:(k,v)=>{store[k]=String(v);},remove:k=>{delete store[k];}})}; },
+  removeRealCache(){ global.__CACHE={}; global.CacheService={getScriptCache:()=>({get:()=>null,put:()=>{},remove:()=>{}})}; }
+};
 global.SpreadsheetApp={
   _active:null,
   flush(){return this;},
