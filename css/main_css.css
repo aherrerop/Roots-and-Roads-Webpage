@@ -1451,22 +1451,48 @@ grid-template-columns:1fr;
   grid-template-columns:1fr;
 
   height: auto;
-  padding: 12px 0;
 
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
 
   position: relative;
-  padding: 16px 0 16px;
+  padding: 14px 0 16px;
 }
 
 .logo svg{
-  height: 120px;
+  height: 96px;
 }
 
+/* Mobile nav: revealed as a centered row so phone visitors actually get the
+   BOOK NOW call-to-action and the links (they were hidden before, leaving no
+   way to book or navigate from the top). Pure CSS — no JS toggle to break. */
 .banner-nav{
-display:none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.banner-nav a{
+  font-size: 15px;
+}
+
+/* Emphasize the primary CTA as a filled pill on the light-blue banner. */
+.banner-nav a[href="#booking"]{
+  background: var(--color-text);
+  color: var(--color-white);
+  padding: 9px 16px;
+  border-radius: 999px;
+  line-height: 1;
+  font-weight: 500;
+}
+
+.banner-nav a[href="#booking"]:hover{
+  text-shadow: none;
 }
 
 .logo-text{
