@@ -50,7 +50,6 @@
 <link rel="shortcut icon" href="/images/blackWhite_Logo_v2.png">
 <link rel="apple-touch-icon" href="/images/blackWhite_Logo_v2.png">
 <link rel="preload" as="image" href="images/pointing_wGroup_v2.webp" fetchpriority="high">
-<link rel="preload" as="image" href="images/showingPhoto_v1.webp" fetchpriority="high">
 <link rel="preload" as="image" href="images/batllo_v1.webp" fetchpriority="high">
 <link rel="preconnect" href="https://script.google.com">
 <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
@@ -475,11 +474,11 @@
 <span class="gallery-close">&times;</span>
 <div class="gallery-modal-content">
 
-<img src="images/sf_8.webp" fetchpriority="high" decoding="async" alt="Sagrada Família Nativity Façade in Barcelona">
+<img src="images/sf_8.webp" loading="lazy" decoding="async" alt="Sagrada Família Nativity Façade in Barcelona">
 <img src="images/scrollableGallery/pointing_wGroup_v4.webp" loading="lazy" decoding="async" alt="Roots &amp; Roads guide explaining Barcelona to guests">
-<img src="images/pedreraChimneys_v1.webp" fetchpriority="high" decoding="async" alt="Casa Milà rooftop chimneys by Antoni Gaudí">
-<img src="images/batllo_v2.webp" fetchpriority="high" decoding="async" alt="Casa Batlló facade on Passeig de Gràcia">
-<img src="images/cathedral_v1.webp" fetchpriority="high" decoding="async" alt="Barcelona Cathedral in the Gothic Quarter">
+<img src="images/pedreraChimneys_v1.webp" loading="lazy" decoding="async" alt="Casa Milà rooftop chimneys by Antoni Gaudí">
+<img src="images/batllo_v2.webp" loading="lazy" decoding="async" alt="Casa Batlló facade on Passeig de Gràcia">
+<img src="images/cathedral_v1.webp" loading="lazy" decoding="async" alt="Barcelona Cathedral in the Gothic Quarter">
 <img src="images/scrollableGallery/pontBisbe_v1.webp" loading="lazy" decoding="async" alt="Pont del Bisbe in the Gothic Quarter of Barcelona">
 <img src="images/scrollableGallery/barcinoEntrance_v.webp" loading="lazy" decoding="async" alt="Roman gate of ancient Barcino in Barcelona">
 <img src="images/scrollableGallery/pointing_wGroup_v2.webp" loading="lazy" decoding="async" alt="Guide with guests during a Barcelona walking tour">
@@ -607,16 +606,16 @@ maze of the city, the <strong>Gothic Quarter</strong>.
 <div class="see-gallery">
 
 <div class="gallery-left">
-<img src="images/sf_8.webp" fetchpriority="high" decoding="async" alt="Sagrada Família Nativity Façade in Barcelona">
-<img src="images/pedreraChimneys_v1.webp" fetchpriority="high" decoding="async" alt="Casa Milà rooftop chimneys by Antoni Gaudí">
+<img src="images/sf_8.webp" loading="lazy" decoding="async" alt="Sagrada Família Nativity Façade in Barcelona">
+<img src="images/pedreraChimneys_v1.webp" loading="lazy" decoding="async" alt="Casa Milà rooftop chimneys by Antoni Gaudí">
 </div>
 
 <div class="gallery-center">
-<img src="images/batllo_v2.webp" fetchpriority="high" decoding="async" alt="Casa Batlló facade on Passeig de Gràcia">
+<img src="images/batllo_v2.webp" loading="lazy" decoding="async" alt="Casa Batlló facade on Passeig de Gràcia">
 </div>
 
 <div class="gallery-right">
-<img src="images/cathedral_v1.webp" fetchpriority="high" decoding="async" alt="Barcelona Cathedral in the Gothic Quarter">
+<img src="images/cathedral_v1.webp" loading="lazy" decoding="async" alt="Barcelona Cathedral in the Gothic Quarter">
 </div>
 
 </div>
@@ -1126,6 +1125,36 @@ was worth for you.
   </div>
 </section>
 
+
+<!-- Performance logger — OFF by default, zero cost to real visitors. Add ?perf
+     to the URL (e.g. rootsandroadsbcn.com/?perf) to print a load-timing table to
+     the browser console: what loaded, when, and how big. Handy for re-checking
+     speed after any change. -->
+<script>
+if (/[?&]perf\b/.test(location.search)) {
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      var nav = performance.getEntriesByType('navigation')[0] || {};
+      var kb = function (b) { return b ? Math.round(b / 1024) : 0; };
+      var rows = performance.getEntriesByType('resource').map(function (r) {
+        return {
+          resource: r.name.replace(location.origin + '/', '').slice(0, 60),
+          type: r.initiatorType,
+          'start(ms)': Math.round(r.startTime),
+          'end(ms)': Math.round(r.responseEnd),
+          KB: kb(r.transferSize)
+        };
+      }).sort(function (a, b) { return b.KB - a.KB; });
+      console.log('%c⏱ Roots & Roads load timing', 'font-weight:bold;font-size:14px');
+      console.log('TTFB: ' + Math.round(nav.responseStart) + 'ms · DOMContentLoaded: ' +
+        Math.round(nav.domContentLoadedEventEnd) + 'ms · load: ' + Math.round(nav.loadEventEnd) +
+        'ms · total transfer: ' + kb(performance.getEntriesByType('resource')
+          .reduce(function (s, r) { return s + (r.transferSize || 0); }, 0)) + 'KB');
+      console.table(rows);
+    }, 500);
+  });
+}
+</script>
 
 </body>
 </html>
