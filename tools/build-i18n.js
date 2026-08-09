@@ -22,10 +22,10 @@ const SRC = path.join(ROOT, "index.html");
 const LANGS = ["es", "fr", "de", "it"];
 
 const META = {
-  es: { locale: "es_ES", title: "Free Tour Barcelona a pie: Sagrada Família, Gaudí y Barrio Gótico | Roots & Roads", desc: "Tour a pie por Barcelona de reserva gratuita con guías locales de Roots & Roads. Descubre la Sagrada Família, Gaudí, el Passeig de Gràcia, la Casa Milà, la Casa Batlló y el Barrio Gótico en 3 horas." },
-  fr: { locale: "fr_FR", title: "Visite à pied de Barcelone : Sagrada Família, Gaudí et Quartier gothique | Roots & Roads", desc: "Visite à pied de Barcelone à réservation gratuite avec les guides locaux Roots & Roads. Découvrez la Sagrada Família, Gaudí, le Passeig de Gràcia, la Casa Milà, la Casa Batlló et le Quartier gothique en 3 heures." },
-  de: { locale: "de_DE", title: "Barcelona Rundgang: Sagrada Família, Gaudí & Gotisches Viertel | Roots & Roads", desc: "Barcelona-Rundgang mit freier Reservierung und einheimischen Roots & Roads Guides. Sagrada Família, Gaudí, Passeig de Gràcia, Casa Milà, Casa Batlló und das Gotische Viertel in 3 Stunden." },
-  it: { locale: "it_IT", title: "Tour a piedi di Barcellona: Sagrada Família, Gaudí e Quartiere Gotico | Roots & Roads", desc: "Tour a piedi di Barcellona a prenotazione gratuita con guide locali Roots & Roads. Sagrada Família, Gaudí, Passeig de Gràcia, Casa Milà, Casa Batlló e il Quartiere Gotico in 3 ore." }
+  es: { locale: "es_ES", title: "Free Tour Barcelona a pie: Sagrada Família, Gaudí y Barrio Gótico | Roots & Roads", desc: "Tour a pie por Barcelona de reserva gratuita con guías locales de Roots & Roads. Descubre la Sagrada Família, Gaudí, el Passeig de Gràcia, la Casa Milà, la Casa Batlló y el Barrio Gótico en 3 horas.", aiPath: "/es/resumen-ia.md", aiTitle: "Resumen para IA de Roots & Roads Barcelona" },
+  fr: { locale: "fr_FR", title: "Visite à pied de Barcelone : Sagrada Família, Gaudí et Quartier gothique | Roots & Roads", desc: "Visite à pied de Barcelone à réservation gratuite avec les guides locaux Roots & Roads. Découvrez la Sagrada Família, Gaudí, le Passeig de Gràcia, la Casa Milà, la Casa Batlló et le Quartier gothique en 3 heures.", aiPath: "/fr/resume-ia.md", aiTitle: "Résumé pour l'IA de Roots & Roads Barcelona" },
+  de: { locale: "de_DE", title: "Barcelona Rundgang: Sagrada Família, Gaudí & Gotisches Viertel | Roots & Roads", desc: "Barcelona-Rundgang mit freier Reservierung und einheimischen Roots & Roads Guides. Sagrada Família, Gaudí, Passeig de Gràcia, Casa Milà, Casa Batlló und das Gotische Viertel in 3 Stunden.", aiPath: "/de/ki-zusammenfassung.md", aiTitle: "KI-Zusammenfassung von Roots & Roads Barcelona" },
+  it: { locale: "it_IT", title: "Tour a piedi di Barcellona: Sagrada Família, Gaudí e Quartiere Gotico | Roots & Roads", desc: "Tour a piedi di Barcellona a prenotazione gratuita con guide locali Roots & Roads. Sagrada Família, Gaudí, Passeig de Gràcia, Casa Milà, Casa Batlló e il Quartiere Gotico in 3 ore.", aiPath: "/it/riassunto-ia.md", aiTitle: "Riepilogo per l'IA di Roots & Roads Barcelona" }
 };
 
 // Each entry: English source string -> per-language translation.
@@ -160,7 +160,7 @@ function transform(html, lang) {
   html = html.replace(`<a href="/${lang}/" hreflang="${lang}">`, `<a href="/${lang}/" hreflang="${lang}" class="lang-active" aria-current="true">`);
 
   // 4. SEO head (self-canonical, localized title/description/og/twitter/locale).
-  html = html.replace('<title>Roots & Roads Tours</title>', `<title>${m.title}</title>`);
+  html = html.replace(/<title>[^<]*<\/title>/, `<title>${m.title}</title>`);
   html = html.replace('<link rel="canonical" href="https://rootsandroadsbcn.com/">', `<link rel="canonical" href="https://rootsandroadsbcn.com/${lang}/">`);
   html = html.replace('<meta property="og:url" content="https://rootsandroadsbcn.com/">', `<meta property="og:url" content="https://rootsandroadsbcn.com/${lang}/">`);
   html = html.replace('<meta property="og:locale" content="en_US">', `<meta property="og:locale" content="${m.locale}">`);
@@ -170,6 +170,10 @@ function transform(html, lang) {
   html = html.replace('<meta name="twitter:title" content="Barcelona Walking Tour: Sagrada Família, Gaudí & Gothic Quarter | Roots & Roads">', `<meta name="twitter:title" content="${m.title}">`);
   const enOgDesc = "Free-reserve 3-hour Barcelona walking tour with local guides: Sagrada Família, Gaudí, Passeig de Gràcia, Casa Milà, Casa Batlló and the Gothic Quarter.";
   html = html.split('content="' + enOgDesc + '"').join('content="' + m.desc + '"');
+
+  // Mark the page's structured data as being in this language. (The per-language
+  // AI summaries are declared once in the shared head and inherited by all pages.)
+  html = html.split('"inLanguage": "en"').join('"inLanguage": "' + lang + '"');
 
   // 5. Body text dictionary.
   for (const [en, tr] of D) {

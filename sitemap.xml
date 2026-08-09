@@ -182,7 +182,19 @@
   </url>
   <url>
     <loc>https://rootsandroadsbcn.com/es/resumen-ia.md</loc>
-    <lastmod>2026-07-01</lastmod>
+    <lastmod>2026-08-09</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/fr/resume-ia.md</loc>
+    <lastmod>2026-08-09</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://rootsandroadsbcn.com/it/riassunto-ia.md</loc>
+    <lastmod>2026-08-09</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
