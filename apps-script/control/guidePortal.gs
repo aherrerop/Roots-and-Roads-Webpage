@@ -443,35 +443,29 @@ function apiTours_(p) {
   const me = _t('me', function () { return findGuideByName_(name); });
   const isManager = !!(me && me.manager);
 
-  // CHECK-INS come from the FEED (its M/N columns, read above). The portal no
-  // longer reads the ledger on every poll — the feed carries every tour's
-  // check-ins by Booking ID until the tour ages out at 23:00, which is exactly
-  // as long as the portal shows it. This removes the whole `ledger` phase from
-  // the common load AND fixes the old date-gated miss: a future/other-guide
-  // tour's check-in now always shows (the ledger read used to skip it).
-  const guidesForLedger = function () {              // my own tab; a manager, today's assigned guides
+  // CHECK-INS: the FEED (M/N, read above) is the fast source, but the LEDGER is
+  // the durable money record. We UNION them (a guest checked in on EITHER is
+  // checked in) so a check-in the feed transiently missed — a same-day booking
+  // checked in before its feed row existed, or the 5-min rebuild racing the
+  // write — is NEVER hidden. Maxim: cannot miss a check-in. The read is targeted
+  // (my own tab; a manager, TODAY's assigned guides — a small set, since the
+  // schedule is windowed to today-forward). It also feeds the backfill below.
+  const guidesForLedger = function () {
     const g = {}; g[name] = true;
     if (isManager) schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(x => { if (x) g[x] = true; }); });
     return Object.keys(g);
   };
-  let priorCheckins = {};                           // key|bookingId -> {n, at}
-  if (!hasFeed) {
-    // FALLBACK ONLY: no feed tab, so check-ins have to come from the ledger.
-    _t('ledger', function () { priorCheckins = readLedgerForGuides_(guidesForLedger()).checkins; return 0; });
-  }
+  const ledger = _t('ledger', function () { return readLedgerForGuides_(guidesForLedger()); });
+  let priorCheckins = ledger.checkins;              // key|bookingId -> {n, at}
 
   // A completed tour's rows age out of the feed at 23:00, so a tour that already
-  // ran and lost its feed rows falls back to durable sources for its guests +
-  // check-ins. Only a shift TODAY-or-earlier with no feed rows needs this —
-  // future/live tours never do — so the common poll touches neither.
+  // ran and lost its feed rows falls back to the Completed Log for its guests.
   const needBackfill = schedule.some(s => s.dateKey <= today &&
     !((bookingsByKey[shiftKey_(s.dateKey, s.minutes, s.language)] || []).length));
   if (needBackfill) {
     _t('backfill', function () {
       const doneByKey = cachedRead_('cl', PORTAL.CACHE_TTL, readCompletedLogReservations_);
-      const led = readLedgerForGuides_(guidesForLedger());
-      Object.keys(led.checkins).forEach(k => { if (!(k in priorCheckins)) priorCheckins[k] = led.checkins[k]; });
-      const ledgerByKey = led.reservations;
+      const ledgerByKey = ledger.reservations;
       new Set(Object.keys(doneByKey).concat(Object.keys(ledgerByKey))).forEach(k => {
         if (!bookingsByKey[k] || !bookingsByKey[k].length) {
           bookingsByKey[k] = doneByKey[k] || ledgerByKey[k];
@@ -3360,7 +3354,10 @@ function updateNoShowQueues_() {
     const srcKey = String(b.source || '').trim().toLowerCase();
     if (!targets[srcKey]) return;                       // only Viator + GYG queues
     const key = b.bookingId + '|' + b.dateKey;
-    if (checkins[key]) return;                          // was checked in -> not a no-show
+    // Checked in with >0 guests -> someone came, not a no-show. But a check-in of
+    // ZERO (the guide confirmed nobody showed) IS a no-show the manager must still
+    // report on the OTA — so it must NOT be treated as "handled" and skipped.
+    if (checkins[key] && Number(checkins[key].checkedIn || 0) > 0) return;
     if (existing[srcKey].has(key)) return;              // already queued
     existing[srcKey].add(key);
     const isPriv = /privat/i.test(b.notes || '');

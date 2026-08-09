@@ -191,7 +191,7 @@ const uShift = (rUnion.allTours || []).filter(s => s.dateKey === DATE && s.time 
 const uBk = uShift.length ? uShift[0].bookings.find(b => b.bookingId === 'GYGE2E001') : null;
 check('the portal shows the feed check-in via the union read', uBk && uBk.checked === true && uBk.checkedIn === 3, uBk);
 check('the feed keeps the ORIGINAL check-in time (10:03, not reset to 10:09)', uBk && uBk.checkedAt === '10:03', uBk && uBk.checkedAt);
-check('with the feed present, the poll does NOT read the ledger (feed-only)', rUnion.timings && rUnion.timings.ledger === undefined, rUnion.timings);
+check('the poll UNIONs the ledger as a cannot-miss safety net (ledger IS read)', rUnion.timings && typeof rUnion.timings.ledger === 'number', rUnion.timings);
 
 console.log('--- Stage 4: the poll builds shifts FROM THE FEED (no schedule-grid read) ---');
 writeFeedGuide_(DATE, '10:00', 'English', false, 'Carlos');       // assign via the feed Guide column

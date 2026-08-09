@@ -84,6 +84,19 @@ save('B-A', 'English', '10:00', 2);
 led = readLedgerForGuides_(['Carlos']);
 check('re-check-in after undo works, still ONE row', Object.keys(led.checkins).filter(k => k.indexOf('B-A') !== -1).length === 1, Object.keys(led.checkins));
 
+// 5. SAFETY NET (cannot-miss): a check-in in the ledger but MISSING from the
+//    feed (rebuild race / same-day booking checked in before its feed row) must
+//    still show, via the ledger union. Assign the shift so the check-in lands in
+//    an assigned guide's tab (exactly as production does).
+__RRX = {};
+apiAssign_({ token: token, dateKey: DATE, time: '10:00', language: 'English', isPrivate: '', guide: 'Carlos', force: '1' });
+save('B-A', 'English', '10:00', 2, 'Carlos');
+writeFeedUncheckin_('B-A');                 // simulate the feed transiently losing the check-in
+__RRX = {}; r = tours();
+check('a check-in in the ledger but MISSING from the feed still shows (cannot-miss safety net)', (findBk(r, '10:00', 'B-A') || {}).checked === true, findBk(r, '10:00', 'B-A'));
+// clean up: unassign so later sections start neutral
+apiAssign_({ token: token, dateKey: DATE, time: '10:00', language: 'English', isPrivate: '', guide: '', force: '1' });
+
 console.log('=== STRESS: private vs regular at the same slot ===');
 __RRX = {};
 apiAssign_({ token: token, dateKey: DATE, time: '17:00', language: 'English', isPrivate: '1', guide: 'Albert', force: '1' });
@@ -152,6 +165,22 @@ s10 = (rw.allTours || []).find(x => x.dateKey === DATE && x.time === '10:00' && 
 const s11 = (rw.allTours || []).find(x => x.dateKey === DATE && x.time === '11:00' && x.language === 'English');
 check('Albert is really assigned to 11:00', s11 && (s11.assigned || []).indexOf('Albert') !== -1, s11 && s11.assigned);
 check('the 10:00 default YIELDS to his real 11:00 (no double-book)', s10 && (s10.assigned || []).indexOf('Albert') === -1, s10 && s10.assigned);
+
+console.log('=== STRESS: a 0-guest check-in flags a PAID tour as a no-show (do not miss reporting) ===');
+__RRX = {};
+const yday = dayKey(-1);
+const cl = booking.insertSheet('Completed Log');
+cl.getRange(1, 1, 2, 12).setValues([
+  ['Date', 'Time', 'Language', 'Name', 'Phone', 'Adults', 'Children', 'Source', 'Income', 'Booking ID', 'Notes', 'Logged'],
+  [yday, '10:00', 'English', 'NoShow Guy', '+1', 2, 0, 'Viator', 23, 'BR-NOSHOW1', '', '']]);
+// Guide checked them in with ZERO guests (nobody showed).
+apiSave_({ token: token, data: JSON.stringify({ dateKey: yday, time: '10:00', language: 'English', guide: 'Carlos',
+  bookings: [{ bookingId: 'BR-NOSHOW1', source: 'Viator', name: 'NoShow Guy', phone: '+1', guests: 2, children: 0, income: 23, isPrivate: false, checked: true, checkedIn: 0 }] }) });
+try { ensureQueueTabs_(ledgerSS_()); } catch (e) { try { ensureQueueTabs_(); } catch (e2) {} }
+updateNoShowQueues_();
+const vsh = ledger.getSheetByName(QUEUE_TABS.VIATOR_NOSHOW);
+const vrows = (vsh && vsh.getLastRow() >= 1) ? vsh.getRange(1, 1, vsh.getLastRow(), NOSHOW_HEADERS.length).getValues() : [];
+check('a Viator booking checked in with 0 guests IS flagged as a no-show', vrows.some(r => String(r[4] || '') === 'BR-NOSHOW1'), vrows.map(r => r[4]).filter(Boolean));
 
 console.log('=== STRESS: a non-manager cannot assign / undo ===');
 const gtok = makeToken_('Carlos');
