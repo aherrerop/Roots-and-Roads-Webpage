@@ -110,9 +110,16 @@ const PORTAL = {
   // untracked change is a NEW booking (the feed already lags its 5-min rebuild)
   // or a manual grid edit — both tolerate <=TTL. With the 20s poll, TTL=60 lets
   // ~2-3 polls serve from cache instead of re-reading every grid every time.
-  // Check-ins are NEVER cached — they read live so a guest ticked in shows on
-  // the very next poll.
-  CACHE_TTL: 60
+  // Check-ins are NEVER cached beyond the ledger safety-net key (which a check-in
+  // bumps), so a guest ticked in shows on the next poll.
+  CACHE_TTL: 60,
+
+  // Longer TTL for CONFIG reads that change ONLY via a manager action (which bumps
+  // the cache version immediately) or a rare direct sheet edit: the Guides tab,
+  // the Weekly_Schedule, and Closed_Shifts. A 5-min TTL means far fewer cold reads
+  // (the main source of the Google I/O stalls that spiked `assemble` to 30-100s),
+  // and the only cost is a direct sheet edit taking <=5 min to show.
+  CONFIG_TTL: 300
 };
 
 // PER-EXECUTION memo. Apps Script re-creates globals on every request, so this
@@ -455,7 +462,21 @@ function apiTours_(p) {
     if (isManager) schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(x => { if (x) g[x] = true; }); });
     return Object.keys(g);
   };
-  const ledger = _t('ledger', function () { return readLedgerForGuides_(guidesForLedger()); });
+  const ledger = _t('ledger', function () {
+    try {
+      const guides = guidesForLedger();
+      // Cached under a key that a CHECK-IN (feedCacheVersion_, part of the name)
+      // and a REASSIGNMENT (global version, appended by cachedRead_) both bump — so
+      // the safety net is always fresh after a change, yet repeat polls with no
+      // change skip the read entirely. Short TTL is the final backstop.
+      return cachedRead_('led:' + feedCacheVersion_() + ':' + guides.slice().sort().join(','),
+                         PORTAL.CACHE_TTL, function () { return readLedgerForGuides_(guides); });
+    } catch (e) {
+      // A transient ledger read error must NOT crash the poll — degrade to
+      // feed-only for this cycle (the feed still carries the check-ins).
+      return { checkins: {}, reservations: {} };
+    }
+  });
   let priorCheckins = ledger.checkins;              // key|bookingId -> {n, at}
 
   // A completed tour's rows age out of the feed at 23:00, so a tour that already
@@ -731,14 +752,18 @@ function shiftDomId_(s) {
 
 /** Set of tour ids a manager has closed (hidden from the portal). */
 function readClosedShifts_() {
-  const set = {};
-  const sh = control_().getSheetByName(PORTAL.CLOSED_TAB);
-  if (!sh || sh.getLastRow() < 2) return set;
-  sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues().forEach(r => {
-    const id = String(r[0] || '').trim();
-    if (id) set[id] = true;
+  // Cached (config TTL) — the Closed_Shifts tab changes only on a close/reopen,
+  // which bumps the cache version, so the read is skipped on the common poll.
+  return cachedRead_('closed', PORTAL.CONFIG_TTL, function () {
+    const set = {};
+    const sh = control_().getSheetByName(PORTAL.CLOSED_TAB);
+    if (!sh || sh.getLastRow() < 2) return set;
+    sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues().forEach(r => {
+      const id = String(r[0] || '').trim();
+      if (id) set[id] = true;
+    });
+    return set;
   });
-  return set;
 }
 
 /**
@@ -1348,7 +1373,7 @@ function readGuidesRaw_() {
   // Also cached ACROSS loads: the Guides tab changes rarely (and only via a
   // direct sheet edit, which tolerates <=TTL), so re-reading it on every cold
   // load was pure cost in the me / mgrGuides / weekly-default phases.
-  const raw = cachedRead_('guides', PORTAL.CACHE_TTL, function () {
+  const raw = cachedRead_('guides', PORTAL.CONFIG_TTL, function () {
     const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
     if (!sh) throw new Error('Guides tab not found');
     const values = sh.getDataRange().getValues();
@@ -1991,7 +2016,7 @@ function visibleShiftsForGuide_(shifts, myShifts, guide, isManager) {
  *  activeFrom/Until survive the cache as ISO strings; toDateKey_ handles those.) */
 function weeklyRules_() {
   if (__RRX.weekly) return __RRX.weekly;
-  const rules = cachedRead_('weekly', PORTAL.CACHE_TTL, function () {
+  const rules = cachedRead_('weekly', PORTAL.CONFIG_TTL, function () {
     try { return readWeeklySchedule_(control_()) || []; } catch (e) { return []; }
   });
   return (__RRX.weekly = rules);
