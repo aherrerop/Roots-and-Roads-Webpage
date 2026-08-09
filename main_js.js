@@ -46,6 +46,25 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!calGrid || !calTitle || !calPrev || !calNext || !calSelected) return;
 
   // --------------------------------------
+  // Localization
+  // --------------------------------------
+  // One shared script serves every language page. We read the page language from
+  // <html lang> and localize the calendar (month/day names) and the booking
+  // form's messages accordingly. LOCALE feeds toLocaleString so month and date
+  // names render in the page's language.
+  const LANG = (document.documentElement.lang || "en").slice(0, 2).toLowerCase();
+  const LOCALE = { en: "en-GB", es: "es-ES", fr: "fr-FR", de: "de-DE", it: "it-IT" }[LANG] || undefined;
+
+  const I18N = {
+    en: { chooseFirst: "Choose a language and date first.", noTimes: "No available times for this date.", errLang: "Please choose a language.", errName: "Please add your name.", errEmail: "Please enter a valid email.", errGuests: "Guests must be at least 1.", errDate: "Please choose a date.", errTime: "Please choose a time.", errConsent: "We need your consent to store your details.", timeGone: "This time is no longer available.", onlyN: (n) => `Only ${n} spots left.`, sending: "Sending...", success: "Thank you! We’ve received your request. We’ll email you shortly to confirm.", failure: "Something went wrong. Please try again or email us directly.", reserve: "Reserve your spot" },
+    es: { chooseFirst: "Primero elige un idioma y una fecha.", noTimes: "No hay horarios disponibles para esta fecha.", errLang: "Por favor, elige un idioma.", errName: "Por favor, indica tu nombre.", errEmail: "Introduce un correo electrónico válido.", errGuests: "El número de asistentes debe ser al menos 1.", errDate: "Por favor, elige una fecha.", errTime: "Por favor, elige una hora.", errConsent: "Necesitamos tu consentimiento para guardar tus datos.", timeGone: "Esta hora ya no está disponible.", onlyN: (n) => `Solo quedan ${n} plazas.`, sending: "Enviando...", success: "¡Gracias! Hemos recibido tu solicitud. Te escribiremos pronto para confirmar.", failure: "Algo ha salido mal. Inténtalo de nuevo o escríbenos directamente.", reserve: "Reserva tu plaza" },
+    fr: { chooseFirst: "Choisissez d’abord une langue et une date.", noTimes: "Aucun horaire disponible pour cette date.", errLang: "Veuillez choisir une langue.", errName: "Veuillez indiquer votre nom.", errEmail: "Veuillez saisir une adresse e-mail valide.", errGuests: "Le nombre de participants doit être d’au moins 1.", errDate: "Veuillez choisir une date.", errTime: "Veuillez choisir un horaire.", errConsent: "Nous avons besoin de votre consentement pour enregistrer vos informations.", timeGone: "Cet horaire n’est plus disponible.", onlyN: (n) => `Il ne reste que ${n} places.`, sending: "Envoi...", success: "Merci ! Nous avons bien reçu votre demande. Nous vous écrirons bientôt pour confirmer.", failure: "Une erreur s’est produite. Réessayez ou écrivez-nous directement.", reserve: "Réservez votre place" },
+    de: { chooseFirst: "Wählen Sie zuerst eine Sprache und ein Datum.", noTimes: "Keine verfügbaren Zeiten für dieses Datum.", errLang: "Bitte wählen Sie eine Sprache.", errName: "Bitte geben Sie Ihren Namen an.", errEmail: "Bitte geben Sie eine gültige E-Mail-Adresse ein.", errGuests: "Die Teilnehmerzahl muss mindestens 1 sein.", errDate: "Bitte wählen Sie ein Datum.", errTime: "Bitte wählen Sie eine Uhrzeit.", errConsent: "Wir benötigen Ihre Einwilligung, um Ihre Daten zu speichern.", timeGone: "Diese Uhrzeit ist nicht mehr verfügbar.", onlyN: (n) => `Nur noch ${n} Plätze frei.`, sending: "Wird gesendet...", success: "Vielen Dank! Wir haben Ihre Anfrage erhalten. Wir melden uns in Kürze per E-Mail zur Bestätigung.", failure: "Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut oder schreiben Sie uns direkt.", reserve: "Platz reservieren" },
+    it: { chooseFirst: "Scegli prima una lingua e una data.", noTimes: "Nessun orario disponibile per questa data.", errLang: "Scegli una lingua.", errName: "Inserisci il tuo nome.", errEmail: "Inserisci un indirizzo email valido.", errGuests: "Il numero di partecipanti deve essere almeno 1.", errDate: "Scegli una data.", errTime: "Scegli un orario.", errConsent: "Abbiamo bisogno del tuo consenso per salvare i tuoi dati.", timeGone: "Questo orario non è più disponibile.", onlyN: (n) => `Restano solo ${n} posti.`, sending: "Invio in corso...", success: "Grazie! Abbiamo ricevuto la tua richiesta. Ti scriveremo a breve per confermare.", failure: "Qualcosa è andato storto. Riprova o scrivici direttamente.", reserve: "Prenota il tuo posto" }
+  };
+  const t = I18N[LANG] || I18N.en;
+
+  // --------------------------------------
   // Calendar state
   // --------------------------------------
   const today = new Date();
@@ -88,7 +107,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function monthName(year, monthIndex) {
-    return new Date(year, monthIndex, 1).toLocaleString(undefined, {
+    return new Date(year, monthIndex, 1).toLocaleString(LOCALE, {
       month: "long",
       year: "numeric",
     });
@@ -262,7 +281,7 @@ function openSlotsForDate(iso) {
 
     if (!selectedLanguage() || !selectedISO) {
       tourTimeOptions.innerHTML =
-        '<p class="tour-time-placeholder">Choose a language and date first.</p>';
+        '<p class="tour-time-placeholder">' + t.chooseFirst + '</p>';
       return;
     }
 
@@ -270,7 +289,7 @@ function openSlotsForDate(iso) {
 
     if (!slots.length) {
       tourTimeOptions.innerHTML =
-        '<p class="tour-time-placeholder">No available times for this date.</p>';
+        '<p class="tour-time-placeholder">' + t.noTimes + '</p>';
       return;
     }
 
@@ -342,14 +361,15 @@ function openSlotsForDate(iso) {
           b.classList.toggle("is-selected", b.dataset.date === selectedISO);
         });
 
-        const pretty = isoToLocalDate(selectedISO).toLocaleDateString(undefined, {
+        const pretty = isoToLocalDate(selectedISO).toLocaleDateString(LOCALE, {
           weekday: "long",
           year: "numeric",
           month: "long",
           day: "numeric",
         });
 
-        calSelected.textContent = `Selected: ${pretty}`;
+        const selLabel = { en: "Selected:", es: "Seleccionado:", fr: "Sélectionné :", de: "Ausgewählt:", it: "Selezionato:" }[LANG] || "Selected:";
+        calSelected.textContent = `${selLabel} ${pretty}`;
 
         renderTimeOptions();
       });
@@ -469,37 +489,37 @@ function openSlotsForDate(iso) {
     let valid = true;
 
     if (!language) {
-      showError("language", "Please choose a language.");
+      showError("language", t.errLang);
       valid = false;
     }
 
     if (!name) {
-      showError("name", "Please add your name.");
+      showError("name", t.errName);
       valid = false;
     }
 
     if (!email || !email.includes("@")) {
-      showError("email", "Please enter a valid email.");
+      showError("email", t.errEmail);
       valid = false;
     }
 
     if (!guests || guests < 1) {
-      showError("guests", "Guests must be at least 1.");
+      showError("guests", t.errGuests);
       valid = false;
     }
 
     if (!tourDate) {
-      showError("tour_date", "Please choose a date.");
+      showError("tour_date", t.errDate);
       valid = false;
     }
 
     if (!tourTime) {
-      showError("tour_time", "Please choose a time.");
+      showError("tour_time", t.errTime);
       valid = false;
     }
 
     if (!consent) {
-      showError("consent", "We need your consent to store your details.");
+      showError("consent", t.errConsent);
       valid = false;
     }
 
@@ -508,17 +528,17 @@ function openSlotsForDate(iso) {
     });
 
     if (!chosenSlot) {
-      showError("tour_time", "This time is no longer available.");
+      showError("tour_time", t.timeGone);
       valid = false;
     } else if (guests > chosenSlot.spotsLeft) {
-      showError("guests", `Only ${chosenSlot.spotsLeft} spots left.`);
+      showError("guests", t.onlyN(chosenSlot.spotsLeft));
       valid = false;
     }
 
     if (!valid) return;
 
     submitBtn.disabled = true;
-    submitBtn.textContent = "Sending...";
+    submitBtn.textContent = t.sending;
 
     try {
       await fetch(SCRIPT_URL, {
@@ -538,8 +558,7 @@ function openSlotsForDate(iso) {
       renderTimeOptions();
 
       if (messageEl) {
-        messageEl.textContent =
-          "Thank you! We’ve received your request. We’ll email you shortly to confirm.";
+        messageEl.textContent = t.success;
       }
 
       if (typeof window.gtag === "function") {
@@ -554,12 +573,11 @@ function openSlotsForDate(iso) {
       console.error(err);
 
       if (messageEl) {
-        messageEl.textContent =
-          "Something went wrong. Please try again or email us directly.";
+        messageEl.textContent = t.failure;
       }
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = "Reserve your spot";
+      submitBtn.textContent = t.reserve;
     }
   });
 
