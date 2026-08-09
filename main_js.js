@@ -414,7 +414,34 @@ function openSlotsForDate(iso) {
 
   // Initial render.
   renderTimeOptions();
-  renderCalendar();
+
+  // Load the availability calendar only when the visitor is APPROACHING the
+  // booking section — not on every page load. The Apps Script availability call
+  // takes several seconds; loading it up front slowed every visit and held the
+  // page's load event open. With a generous rootMargin we start the call a bit
+  // before the section scrolls into view, so it's ready by the time the visitor
+  // gets there. Anchor jumps to #booking (e.g. the BOOK NOW button) also trigger
+  // it on arrival.
+  function startCalendarOnce() {
+    if (startCalendarOnce.done) return;
+    startCalendarOnce.done = true;
+    renderCalendar();
+  }
+
+  const bookingSection = document.getElementById("booking") || calendarBox;
+
+  if (bookingSection && "IntersectionObserver" in window) {
+    const calObserver = new IntersectionObserver((entries, obs) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        obs.disconnect();
+        startCalendarOnce();
+      }
+    }, { rootMargin: "1000px 0px" });
+    calObserver.observe(bookingSection);
+  } else {
+    // No IntersectionObserver support: fall back to loading it immediately.
+    startCalendarOnce();
+  }
 
   // ======================================
   // Booking form submission
