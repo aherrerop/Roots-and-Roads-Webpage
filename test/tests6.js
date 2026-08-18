@@ -72,6 +72,16 @@ check('a typed new time (12:30 PM) normalizes and stores', mvNew.moved===true &&
 const mvMiss = moveBookingTimeInTab_('NOPE','English','10:00');
 check('an unknown booking id is rejected, never silently moved', mvMiss.ok===false, mvMiss);
 
+console.log('--- Move shows on the NEXT poll: the Portal Feed row updates now, not in 5 min ---');
+const feed = booking.insertSheet('Portal Feed');
+feed.getRange(1,1,1,16).setValues([['Date','Time','Language','Name','Phone','Adults','Children','Source','Income','Booking ID','Notes','Manager note','Checked-in','Check-in time','Guide','Type']]);
+feed.getRange(2,1,1,16).setValues([[d3,'4:30 PM','English','Anna Smith','+1',2,0,'Website',0,'TMV1','','','','','Albert','booking']]);
+const wf = writeFeedTime_('TMV1','5:00 PM');
+check('the feed Time cell is updated immediately (col B)', wf===true && String(feed.getRange(2,2).getValue())==='5:00 PM', feed.getRange(2,2).getValue());
+const wl = writeFeedLanguage_('TMV1','Spanish');
+check('the feed Language cell can be updated the same way (col C)', wl===true && String(feed.getRange(2,3).getValue())==='Spanish', feed.getRange(2,3).getValue());
+check('a booking not in the feed is a safe no-op, not an error', writeFeedTime_('GHOST','9:00 AM')===false, null);
+
 console.log('--- Live orphan surfacing: bookings show even without a grid slot ---');
 const tomorrow=Utilities.formatDate(day(1),null,'yyyy-MM-dd');
 let sched=[];

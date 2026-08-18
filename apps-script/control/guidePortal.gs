@@ -1036,7 +1036,13 @@ function apiMoveBooking_(p) {
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
     const out = moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage);
-    if (out && out.ok && out.moved) bumpCacheVersion_();   // a booking changed language tab
+    if (out && out.ok && out.moved) {
+      // Same as the time move: reflect it on the feed now + bump the feed version
+      // so it shows on the next poll, not only after the 5-minute rebuild.
+      writeFeedLanguage_(bookingId, toLanguage);
+      bumpFeedCacheVersion_();
+      bumpCacheVersion_();
+    }
     return out;
   } finally {
     lock.releaseLock();
@@ -1116,7 +1122,16 @@ function apiMoveBookingTime_(p) {
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
     const out = moveBookingTimeInTab_(bookingId, language, t24);
-    if (out && out.ok && out.moved) bumpCacheVersion_();   // a booking changed time slot
+    if (out && out.ok && out.moved) {
+      // Update the Portal Feed row NOW (col B), and bump the FEED version — the
+      // key the poll's feed read is cached under. bumpCacheVersion_ alone left
+      // the feed read serving the pre-move copy, so the change didn't show until
+      // the 5-minute rebuild. Bump both: feed for the reservation read, global
+      // for the schedule/config caches.
+      writeFeedTime_(bookingId, out.to);
+      bumpFeedCacheVersion_();
+      bumpCacheVersion_();
+    }
     return out;
   } finally {
     lock.releaseLock();
@@ -1771,6 +1786,51 @@ function writeFeedUncheckin_(bookingId) {
     let done = false;
     for (let i = 0; i < ids.length; i++) {
       if (String(ids[i][0] || '').trim() === id) { sh.getRange(i + 2, 13, 1, 2).setValues([['', '']]); done = true; }
+    }
+    return done;
+  } catch (e) { return false; }
+}
+
+/**
+ * Reflect a booking's NEW TIME on its Portal Feed row (col B) right away, so a
+ * manager's move appears on the very next poll instead of waiting for the
+ * 5-minute feed rebuild. The rebuild rewrites A–L from the Tours tab — which the
+ * move also updated — so it re-lands on the same value; no drift. Best-effort;
+ * updates every feed row carrying this Booking ID.
+ */
+function writeFeedTime_(bookingId, time12h) {
+  try {
+    const id = String(bookingId || '').trim();
+    if (!id) return false;
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
+    let done = false;
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || '').trim() === id) {
+        sh.getRange(i + 2, 2, 1, 1).setNumberFormat('@').setValue(String(time12h || ''));   // B = Time
+        done = true;
+      }
+    }
+    return done;
+  } catch (e) { return false; }
+}
+
+/** Reflect a booking's NEW LANGUAGE on its Portal Feed row (col C) right away —
+ *  same reasoning as writeFeedTime_. Best-effort. */
+function writeFeedLanguage_(bookingId, language) {
+  try {
+    const id = String(bookingId || '').trim();
+    if (!id) return false;
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
+    let done = false;
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || '').trim() === id) {
+        sh.getRange(i + 2, 3, 1, 1).setNumberFormat('@').setValue(String(language || ''));   // C = Language
+        done = true;
+      }
     }
     return done;
   } catch (e) { return false; }
