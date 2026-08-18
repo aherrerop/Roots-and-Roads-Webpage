@@ -116,7 +116,9 @@ check('the initial load is tagged so completed-load times are measurable', /load
 
 console.log('--- Resilient writes: one quiet retry, and reconcile after any move ---');
 check('api() retries once on a non-auth failure', /async function api\(action, params\)\{[\s\S]*catch\(err\)\{[\s\S]*if\(err && err\.kind==="auth"\) throw err;[\s\S]*return await apiCall\(action, params\);/.test(html), null);
-check('a move reconciles with loadTours whether it succeeds OR fails', /moveTime[\s\S]*loadTours\(\);   \/\/ reconcile/.test(html), null);
+check('a move reconciles with loadTours whether it succeeds OR fails', /\.mvbox[\s\S]*?loadTours\(\);   \/\/ reconcile either way/.test(html), null);
+check('one Move applies BOTH language and time in a single call', /api\("move",\{[\s\S]*?toLanguage:toLanguage,[\s\S]*?toTime: timeChange/.test(html), null);
+check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime\)/.test(html), null);
 
 console.log('--- Typed tour time: bare afternoon hours read as PM (4:30 = 16:30) ---');
 const ptStart = html.indexOf('function parseTypedTime(raw){');

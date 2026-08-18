@@ -131,6 +131,9 @@
   .chip.needs{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4}
   .bnote{font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
   .mvsel{margin-top:4px;padding:3px 6px;border:1px solid #e2e6ea;border-radius:7px;font-size:11px;color:var(--muted);background:#fff}
+  .mvbox{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;margin-left:4px}
+  .mv-go{margin-top:4px;padding:3px 10px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer}
+  .mv-go[hidden]{display:none}
   .ver{text-align:center;color:var(--muted);font-size:11px;padding:14px 0 22px;opacity:.7}
   .fresh{font-size:11px;font-weight:700;color:var(--muted);margin:0 4px 10px;display:flex;align-items:center;gap:6px}
   .fresh::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
@@ -175,7 +178,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-18-resilient-writes-time-move";
+const PORTAL_VERSION = "2026-08-18-combined-move";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -422,7 +425,7 @@ let LAST_EDIT = 0;
 // a card. So a manager watching the list keeps polling and sees another guide's
 // check-ins within seconds, while someone mid-edit is still protected.
 document.addEventListener("input",  e=>{ if(e.target.closest && e.target.closest(".bnoteta,.noteta")) LAST_EDIT=Date.now(); }, true);
-document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.closest(".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.bnoteta,.bnotesave,.of-open")) LAST_EDIT=Date.now(); }, true);
+document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.closest(".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-go,.bnoteta,.bnotesave,.of-open")) LAST_EDIT=Date.now(); }, true);
 let MUTATING = 0;   // >0 while a write (assign/save/move/…) is in flight
 function canAutoRefresh(){
   if(!store.token || document.hidden) return false;
@@ -706,19 +709,20 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   const wa = digits(b.phone) ? '<a class="wa" target="_blank" href="https://wa.me/'+digits(b.phone)+'">'+WA_ICON+'</a>' : '';
   const ph = b.phone ? '<a class="ph" href="tel:'+esc(b.phone)+'">'+esc(b.phone)+'</a>' : '';
   const note = b.note ? '<div class="bnote">'+esc(b.note)+'</div>' : '';
-  const mv = (canAssign&&b.bookingId) ?
-    '<select class="mvsel" data-move=\''+esc(JSON.stringify({bookingId:b.bookingId,from:lang,name:b.name||b.bookingId}))+'\'>'+
-    ['English','German','Spanish','French','Italian'].map(L=>'<option'+(L===lang?' selected':'')+'>'+L+'</option>').join('')+'</select>' : '';
-  // Manager: move this booking to another TIME that day. Lists the times already
-  // running (this language), plus "New time…" to type one — which creates the tour.
-  let tmv = '';
+  // Manager: move this booking to another LANGUAGE and/or TIME in ONE step. The
+  // "Move" button appears only once a dropdown is changed, then applies BOTH
+  // together — so a language + time change is a single move, no intermediate tour.
+  let mvbox = '';
   if(canAssign && b.bookingId && tour){
     const times=(dayTimes||[]).slice();
     if(!times.some(x=>x.time===tour.time)) times.unshift({time:tour.time,timeLabel:tour.timeLabel||tour.time});
-    const tinfo={bookingId:b.bookingId,language:lang,fromTime:tour.time,name:b.name||b.bookingId};
-    tmv = '<select class="tmvsel" title="Move to another time" data-tmove=\''+esc(JSON.stringify(tinfo))+'\'>'+
-      times.map(x=>'<option value="'+esc(x.time)+'"'+(x.time===tour.time?' selected':'')+'>'+esc(x.timeLabel||x.time)+'</option>').join('')+
-      '<option value="__new__">＋ New time…</option></select>';
+    const info={bookingId:b.bookingId,fromLanguage:lang,fromTime:tour.time,name:b.name||b.bookingId};
+    const langOpts=['English','German','Spanish','French','Italian'].map(L=>'<option'+(L===lang?' selected':'')+'>'+L+'</option>').join('');
+    const timeOpts=times.map(x=>'<option value="'+esc(x.time)+'"'+(x.time===tour.time?' selected':'')+'>'+esc(x.timeLabel||x.time)+'</option>').join('')+'<option value="__new__">＋ New time…</option>';
+    mvbox='<span class="mvbox" data-mv=\''+esc(JSON.stringify(info))+'\'>'+
+      '<select class="mvsel mv-lang" title="Move to another language">'+langOpts+'</select>'+
+      '<select class="mvsel mv-time" title="Move to another time">'+timeOpts+'</select>'+
+      '<button class="mv-go" hidden>Move</button></span>';
   }
   // Per-booking note: a small post-it icon next to the language dropdown.
   const ref = esc(tourId+'~'+i);
@@ -732,7 +736,7 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
     : (hasN ? '<div class="bnotepanel" data-bnp="'+ref+'" hidden><div class="noteread">'+esc(b.manualNote)+'</div>'+
       '<div class="noterow"><button class="bnoteclose">Close</button></div></div>' : '');
   return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mv+tmv+noteBtn+'</div>'+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mvbox+noteBtn+'</div>'+
     wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
     '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+((b.checked && !(MANAGER && !b.pending))?' disabled':'')+'>'+(b.checked?(b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))):'Check in')+'</button>'+
     '</div>'+ noteEditor + '</div>';
@@ -784,43 +788,37 @@ function bindTours(tours){
       if(!ok && errMsg) alert(errMsg);
     };
   });
-  // Manager: move a booking to another language's tour (guest agreed).
-  document.querySelectorAll(".mvsel").forEach(sel=>{
-    sel.onchange=async ()=>{
-      const info=JSON.parse(sel.dataset.move);
-      if(sel.value===info.from){ return; }
-      if(!confirm("Move "+info.name+" from the "+info.from+" tour to the "+sel.value+" tour?")){ sel.value=info.from; return; }
-      sel.disabled=true;
-      try{
-        const r=await api("move",{token:store.token,bookingId:info.bookingId,fromLanguage:info.from,toLanguage:sel.value});
-        if(!r.ok) alert(r.error||"Could not move");
-        loadTours();   // reconcile either way — show the true server state, correct the status
-      }catch(err){
-        alert("Couldn't confirm the move just now — reloading to show the current state. If it didn't take, try again.");
-        loadTours();
-      }
-    };
-  });
-  // Manager: move a booking to another TIME that day (creates the slot if new).
-  document.querySelectorAll(".tmvsel").forEach(sel=>{
-    sel.onchange=async ()=>{
-      const info=JSON.parse(sel.dataset.tmove);
-      let toTime=sel.value;
-      let label=(sel.options[sel.selectedIndex]&&sel.options[sel.selectedIndex].text)||sel.value;
-      if(sel.value==="__new__"){
+  // Manager: move a booking to another LANGUAGE and/or TIME in one step. Changing
+  // either dropdown reveals a "Move" button; clicking it applies BOTH at once, so
+  // a language + time change never needs two moves or an intermediate tour.
+  document.querySelectorAll(".mvbox").forEach(box=>{
+    const info=JSON.parse(box.dataset.mv);
+    const langSel=box.querySelector(".mv-lang"), timeSel=box.querySelector(".mv-time"), go=box.querySelector(".mv-go");
+    if(!langSel||!timeSel||!go) return;
+    const sync=()=>{ go.hidden = (langSel.value===info.fromLanguage && timeSel.value===info.fromTime); };
+    langSel.onchange=sync;
+    timeSel.onchange=sync;   // "＋ New time…" also just reveals Move; it's resolved on click
+    go.onclick=async ()=>{
+      const toLanguage=langSel.value;
+      let toTime=timeSel.value, timeLabel=(timeSel.options[timeSel.selectedIndex]&&timeSel.options[timeSel.selectedIndex].text)||timeSel.value;
+      if(toTime==="__new__"){
         const typed=prompt("Move "+info.name+" to what time?\nType like 4:30 PM (or 16:30).","");
-        if(!typed || !typed.trim()){ sel.value=info.fromTime; return; }
+        if(!typed || !typed.trim()){ timeSel.value=info.fromTime; sync(); return; }
         const parsed=parseTypedTime(typed);
-        if(!parsed){ alert("Couldn't read \""+typed+"\" as a time. Try 4:30 PM or 16:30."); sel.value=info.fromTime; return; }
-        toTime=parsed.t24; label=parsed.label;   // send unambiguous 24h; show the clear label
+        if(!parsed){ alert("Couldn't read \""+typed+"\" as a time. Try 4:30 PM or 16:30."); timeSel.value=info.fromTime; sync(); return; }
+        toTime=parsed.t24; timeLabel=parsed.label;   // send unambiguous 24h; show the clear label
       }
-      if(toTime===info.fromTime){ sel.value=info.fromTime; return; }
-      if(!confirm("Move "+info.name+" to "+label+"?\nIf no tour exists at that time yet, it will be created.")){ sel.value=info.fromTime; return; }
-      sel.disabled=true; LAST_EDIT=Date.now();
+      const langChange=(toLanguage!==info.fromLanguage), timeChange=(toTime!==info.fromTime);
+      if(!langChange && !timeChange){ go.hidden=true; return; }
+      const parts=[]; if(langChange) parts.push("the "+toLanguage+" tour"); if(timeChange) parts.push(timeLabel);
+      if(!confirm("Move "+info.name+" to "+parts.join(" at ")+"?\nIf no tour exists there yet, it will be created.")){
+        langSel.value=info.fromLanguage; timeSel.value=info.fromTime; sync(); return;
+      }
+      go.disabled=true; go.textContent="Moving…"; LAST_EDIT=Date.now();
       try{
-        const r=await api("moveTime",{token:store.token,bookingId:info.bookingId,language:info.language,toTime:toTime});
+        const r=await api("move",{token:store.token, bookingId:info.bookingId, fromLanguage:info.fromLanguage, toLanguage:toLanguage, toTime: timeChange? toTime : ""});
         if(!r.ok) alert(r.error||"Could not move");
-        loadTours();   // reconcile either way: the screen (and the status) show the TRUE server state
+        loadTours();   // reconcile either way: the screen + the status show the TRUE server state
       }catch(err){
         alert("Couldn't confirm the move just now — reloading to show the current state. If it didn't take, try again.");
         loadTours();

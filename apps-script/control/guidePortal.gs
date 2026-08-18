@@ -1029,21 +1029,42 @@ function apiMoveBooking_(p) {
 
   const bookingId = String(p.bookingId || '').trim();
   const fromLanguage = String(p.fromLanguage || '').trim();
-  const toLanguage = String(p.toLanguage || '').trim();
+  // toLanguage defaults to the current language, so this one action covers a
+  // language change, a time change, or BOTH at once (no intermediate tour).
+  const toLanguage = String(p.toLanguage || fromLanguage).trim();
+  const toTimeRaw = String(p.toTime || '').trim();
+  const t24 = toTimeRaw ? normTime24_(toTimeRaw) : '';
   if (!bookingId || !fromLanguage || !toLanguage) return { ok: false, error: 'Missing booking info' };
+  if (toTimeRaw && !/^\d{1,2}:\d{2}$/.test(t24)) return { ok: false, error: 'Enter a valid time like 12:30 or 12:30 PM' };
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
-    const out = moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage);
-    if (out && out.ok && out.moved) {
-      // Same as the time move: reflect it on the feed now + bump the feed version
-      // so it shows on the next poll, not only after the 5-minute rebuild.
-      writeFeedLanguage_(bookingId, toLanguage);
-      bumpFeedCacheVersion_();
-      bumpCacheVersion_();
+    let langMoved = false, timeMoved = false;
+
+    // 1. Language: move the booking's row to the target language's Tours tab.
+    //    moveBookingRowBetweenTabs_ checks both tabs exist BEFORE deleting, so a
+    //    bad target can't lose the row.
+    if (toLanguage !== fromLanguage) {
+      const lm = moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage);
+      if (!lm.ok) return lm;
+      langMoved = !!lm.moved;
+      if (langMoved) writeFeedLanguage_(bookingId, toLanguage);
     }
-    return out;
+
+    // 2. Time: set it in the (possibly new) target tab, where the row now lives.
+    let timeErr = null;
+    if (t24) {
+      const tm = moveBookingTimeInTab_(bookingId, toLanguage, t24);
+      if (tm.ok && tm.moved) { timeMoved = true; writeFeedTime_(bookingId, to12h_(t24)); }
+      else if (!tm.ok) timeErr = tm.error;   // surface, but the language move (if any) already stands
+    }
+
+    // Reflect whatever changed on the very next poll (feed already updated above).
+    if (langMoved || timeMoved) { bumpFeedCacheVersion_(); bumpCacheVersion_(); }
+
+    if (timeErr) return { ok: false, error: timeErr, moved: (langMoved || timeMoved), to: toLanguage };
+    return { ok: true, moved: (langMoved || timeMoved), to: toLanguage, toTime: t24 ? to12h_(t24) : '' };
   } finally {
     lock.releaseLock();
   }

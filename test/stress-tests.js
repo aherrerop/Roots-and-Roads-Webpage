@@ -188,6 +188,45 @@ check('a guide cannot assign', apiAssign_({ token: gtok, dateKey: DATE, time: '1
 check('a guide cannot undo a check-in', apiUncheckin_({ token: gtok, bookingId: 'B-A' }).ok === false, null);
 check('a bad token is rejected everywhere', apiTours_({ token: 'garbage.sig' }).ok === false, null);
 
+console.log('=== STRESS: manager moves — time, language, and BOTH at once ===');
+__RRX = {};
+// Language Tours tabs the move code reads, plus clean bookings dedicated to the
+// move tests (so the check-in stress above can't interfere) — in the feed too.
+const AH = ['Name', 'Phone', 'Number of Guests', 'Tour date', 'Time', 'Source', 'Income', 'Booking ID', 'Notes'];
+const enT = booking.insertSheet('English Tours');
+enT.getRange(1, 1, 1, 9).setValues([AH]);
+enT.getRange(2, 1, 2, 9).setValues([
+  ['MoveA', '+1', 2, DATE, '10:00 AM', 'GetYourGuide', 30, 'B-M1', ''],
+  ['MoveB', '+1', 1, DATE, '10:00 AM', 'GetYourGuide', 20, 'B-M2', '']]);
+const esT = booking.insertSheet('Spanish Tours');
+esT.getRange(1, 1, 1, 9).setValues([AH]);
+feed.getRange(feed.getLastRow() + 1, 1, 2, 16).setValues([
+  [DATE, '10:00 AM', 'English', 'MoveA', '+1', 2, 0, 'GetYourGuide', 30, 'B-M1', '', '', '', '', '', 'booking'],
+  [DATE, '10:00 AM', 'English', 'MoveB', '+1', 1, 0, 'GetYourGuide', 20, 'B-M2', '', '', '', '', '', 'booking']]);
+const anyBk = (rr, id) => { for (const s of (rr.allTours || [])) { const b = (s.bookings || []).find(b => b.bookingId === id); if (b) return { tour: s, b }; } return null; };
+
+// -- Time move --------------------------------------------------------------
+let mr = apiMoveBookingTime_({ token: token, bookingId: 'B-M1', language: 'English', toTime: '4:30 PM' });
+check('time move ok + moved', mr.ok === true && mr.moved === true, mr);
+let mt1 = anyBk(tours(), 'B-M1');
+check('B-M1 now shows at 16:30 (feed regrouped on the next poll)', mt1 && mt1.tour.time === '16:30' && mt1.tour.language === 'English', mt1 && [mt1.tour.language, mt1.tour.time]);
+check('English Tours tab time cell is 4:30 PM (so the rebuild keeps it)', String(enT.getRange(2, 5).getValue()) === '4:30 PM', enT.getRange(2, 5).getValue());
+check('re-moving to the same time is a no-op', apiMoveBookingTime_({ token: token, bookingId: 'B-M1', language: 'English', toTime: '16:30' }).moved === false, null);
+check('garbage time is rejected', apiMoveBookingTime_({ token: token, bookingId: 'B-M1', language: 'English', toTime: 'nope' }).ok === false, null);
+check('B-M1 still at 16:30 after a rejected move', anyBk(tours(), 'B-M1').tour.time === '16:30', null);
+check('a non-manager cannot move a time', apiMoveBookingTime_({ token: gtok, bookingId: 'B-M1', language: 'English', toTime: '11:00' }).ok === false, null);
+check('an unknown booking id is rejected', apiMoveBookingTime_({ token: token, bookingId: 'GHOST', language: 'English', toTime: '11:00' }).ok === false, null);
+
+// -- Combined move: language + time in ONE call (no intermediate tour) -------
+let mc = apiMoveBooking_({ token: token, bookingId: 'B-M2', fromLanguage: 'English', toLanguage: 'Spanish', toTime: '11:00' });
+check('combined move ok + moved', mc.ok === true && mc.moved === true, mc);
+let mt2 = anyBk(tours(), 'B-M2');
+check('B-M2 now Spanish 11:00 in one step', mt2 && mt2.tour.language === 'Spanish' && mt2.tour.time === '11:00', mt2 && [mt2.tour.language, mt2.tour.time]);
+check('B-M2 row physically in the Spanish Tours tab at 11:00 AM', esT.getRange(2, 1, Math.max(1, esT.getLastRow() - 1), 9).getValues().some(x => String(x[7]) === 'B-M2' && String(x[4]) === '11:00 AM'), esT.getDataRange().getValues());
+check('B-M2 removed from the English Tours tab (not duplicated)', !enT.getRange(2, 1, enT.getLastRow() - 1, 9).getValues().some(x => String(x[7]) === 'B-M2'), null);
+check('combined move to the same language + time is a no-op', apiMoveBooking_({ token: token, bookingId: 'B-M2', fromLanguage: 'Spanish', toLanguage: 'Spanish', toTime: '11:00' }).moved === false, null);
+check('a non-manager cannot do a combined move', apiMoveBooking_({ token: gtok, bookingId: 'B-M2', fromLanguage: 'Spanish', toLanguage: 'English', toTime: '10:00' }).ok === false, null);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
