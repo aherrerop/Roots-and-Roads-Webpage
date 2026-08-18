@@ -114,6 +114,22 @@ check('a client telemetry beacon exists', /function beacon\(ev, ms, nav\)/.test(
 check('an early reload mid-load reports an abort', /pagehide[\s\S]*beacon\("abort"/.test(html), null);
 check('the initial load is tagged so completed-load times are measurable', /loadTours\("initial"\)/.test(html), null);
 
+console.log('--- Resilient writes: one quiet retry, and reconcile after any move ---');
+check('api() retries once on a non-auth failure', /async function api\(action, params\)\{[\s\S]*catch\(err\)\{[\s\S]*if\(err && err\.kind==="auth"\) throw err;[\s\S]*return await apiCall\(action, params\);/.test(html), null);
+check('a move reconciles with loadTours whether it succeeds OR fails', /moveTime[\s\S]*loadTours\(\);   \/\/ reconcile/.test(html), null);
+
+console.log('--- Typed tour time: bare afternoon hours read as PM (4:30 = 16:30) ---');
+const ptStart = html.indexOf('function parseTypedTime(raw){');
+const parseTypedTime = (new Function(html.slice(ptStart, html.indexOf('\n}', ptStart) + 2) + '\n;return parseTypedTime;'))();
+check('"4:30" -> 16:30 (PM), labelled 4:30 PM', (function(){ const r=parseTypedTime('4:30'); return r && r.t24==='16:30' && r.label==='4:30 PM'; })(), parseTypedTime('4:30'));
+check('"16:30" -> 16:30 PM (explicit 24h respected)', (function(){ const r=parseTypedTime('16:30'); return r && r.t24==='16:30' && r.label==='4:30 PM'; })(), parseTypedTime('16:30'));
+check('"10:00" -> 10:00 AM (morning stays AM)', (function(){ const r=parseTypedTime('10:00'); return r && r.t24==='10:00' && r.label==='10:00 AM'; })(), parseTypedTime('10:00'));
+check('"11:00" -> 11:00 AM', (function(){ const r=parseTypedTime('11:00'); return r && r.t24==='11:00' && r.label==='11:00 AM'; })(), parseTypedTime('11:00'));
+check('"12:30" -> 12:30 PM (noon stays PM)', (function(){ const r=parseTypedTime('12:30'); return r && r.t24==='12:30' && r.label==='12:30 PM'; })(), parseTypedTime('12:30'));
+check('"4:30 PM" explicit is honoured', (function(){ const r=parseTypedTime('4:30 PM'); return r && r.t24==='16:30'; })(), parseTypedTime('4:30 PM'));
+check('"9 am" and "5pm" shorthand parse', parseTypedTime('9 am').t24==='9:00' && parseTypedTime('5pm').t24==='17:00', [parseTypedTime('9 am'), parseTypedTime('5pm')]);
+check('garbage input is rejected (null), never a wrong time', parseTypedTime('later')===null && parseTypedTime('25:99')===null, [parseTypedTime('later'), parseTypedTime('25:99')]);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

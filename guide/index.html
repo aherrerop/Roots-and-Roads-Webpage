@@ -175,7 +175,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-08-feed-only-undo-checkin";
+const PORTAL_VERSION = "2026-08-18-resilient-writes-time-move";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -200,7 +200,21 @@ function buildUrl(action, params){
   return PORTAL_URL + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
 }
 function mkErr(kind,msg){ const e=new Error(msg); e.kind=kind; return e; }
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+/* One quiet retry on any NON-auth failure. A freshly-created deployment can 404
+   for a minute while Google propagates it, and requests occasionally drop. Every
+   portal call either reads, or sets a target state (move / assign / check-in),
+   so re-sending is safe and can never double-apply. Auth errors are real config
+   problems, so those are surfaced immediately, not retried. */
 async function api(action, params){
+  try{ return await apiCall(action, params); }
+  catch(err){
+    if(err && err.kind==="auth") throw err;
+    await sleep(1000);
+    return await apiCall(action, params);
+  }
+}
+async function apiCall(action, params){
   const url = buildUrl(action, params);
   try{
     // Abort a hung request after 30s so the inflight guard is always released
@@ -239,6 +253,22 @@ function apiJsonp(action, params){
 }
 function serverTestLink(){
   return '<br><a class="testlink" target="_blank" rel="noopener" href="'+buildUrl("health",{})+'">Test server connection</a>';
+}
+
+/* Read a time a manager typed for a tour move. Accepts "4:30 PM", "16:30",
+   "4pm", "4:30", "16". A bare afternoon hour (1–7, no am/pm) is read as PM,
+   because tours run in the daytime — "4:30" means 16:30, not 04:30. Returns
+   {t24:"H:MM", label:"4:30 PM"} in unambiguous 24h for the server, or null. */
+function parseTypedTime(raw){
+  const s=String(raw||"").trim(); let h, mm, m;
+  if((m=s.match(/^(\d{1,2}):(\d{2})\s*([ap])m?$/i))){ h=(+m[1])%12; if(/p/i.test(m[3]))h+=12; mm=m[2]; }
+  else if((m=s.match(/^(\d{1,2})\s*([ap])m?$/i))){ h=(+m[1])%12; if(/p/i.test(m[2]))h+=12; mm="00"; }
+  else if((m=s.match(/^(\d{1,2}):(\d{2})$/))){ h=+m[1]; mm=m[2]; if(h>=1&&h<=7)h+=12; }
+  else if((m=s.match(/^(\d{1,2})$/))){ h=+m[1]; mm="00"; if(h>=1&&h<=7)h+=12; }
+  else return null;
+  if(h<0||h>23||(+mm)>59) return null;
+  const h12=((h+11)%12)+1, suf=h>=12?"PM":"AM";
+  return { t24:h+":"+mm, label:h12+":"+mm+" "+suf };
 }
 
 /* ================== STATE / HELPERS ================== */
@@ -763,9 +793,12 @@ function bindTours(tours){
       sel.disabled=true;
       try{
         const r=await api("move",{token:store.token,bookingId:info.bookingId,fromLanguage:info.from,toLanguage:sel.value});
-        if(!r.ok){ alert(r.error||"Could not move"); sel.disabled=false; sel.value=info.from; return; }
+        if(!r.ok) alert(r.error||"Could not move");
+        loadTours();   // reconcile either way — show the true server state, correct the status
+      }catch(err){
+        alert("Couldn't confirm the move just now — reloading to show the current state. If it didn't take, try again.");
         loadTours();
-      }catch(err){ alert(err.message||"Network problem — try again"); sel.disabled=false; sel.value=info.from; }
+      }
     };
   });
   // Manager: move a booking to another TIME that day (creates the slot if new).
@@ -773,19 +806,25 @@ function bindTours(tours){
     sel.onchange=async ()=>{
       const info=JSON.parse(sel.dataset.tmove);
       let toTime=sel.value;
-      if(toTime==="__new__"){
-        const typed=prompt("Move "+info.name+" to what time? e.g. 12:30 or 12:30 PM","");
+      let label=(sel.options[sel.selectedIndex]&&sel.options[sel.selectedIndex].text)||sel.value;
+      if(sel.value==="__new__"){
+        const typed=prompt("Move "+info.name+" to what time?\nType like 4:30 PM (or 16:30).","");
         if(!typed || !typed.trim()){ sel.value=info.fromTime; return; }
-        toTime=typed.trim();
+        const parsed=parseTypedTime(typed);
+        if(!parsed){ alert("Couldn't read \""+typed+"\" as a time. Try 4:30 PM or 16:30."); sel.value=info.fromTime; return; }
+        toTime=parsed.t24; label=parsed.label;   // send unambiguous 24h; show the clear label
       }
       if(toTime===info.fromTime){ sel.value=info.fromTime; return; }
-      if(!confirm("Move "+info.name+" to "+toTime+"?\nIf no tour exists at that time yet, it will be created.")){ sel.value=info.fromTime; return; }
+      if(!confirm("Move "+info.name+" to "+label+"?\nIf no tour exists at that time yet, it will be created.")){ sel.value=info.fromTime; return; }
       sel.disabled=true; LAST_EDIT=Date.now();
       try{
         const r=await api("moveTime",{token:store.token,bookingId:info.bookingId,language:info.language,toTime:toTime});
-        if(!r.ok){ alert(r.error||"Could not move"); sel.disabled=false; sel.value=info.fromTime; return; }
+        if(!r.ok) alert(r.error||"Could not move");
+        loadTours();   // reconcile either way: the screen (and the status) show the TRUE server state
+      }catch(err){
+        alert("Couldn't confirm the move just now — reloading to show the current state. If it didn't take, try again.");
         loadTours();
-      }catch(err){ alert(err.message||"Network problem — try again"); sel.disabled=false; sel.value=info.fromTime; }
+      }
     };
   });
   // Per-booking note: toggle the panel next to the language dropdown.
