@@ -9,3 +9,6 @@ apps-script/**/.clasprc.json
 # OS / editor cruft
 .DS_Store
 *.log
+
+# Local dev / preview config (per-machine, not part of the site)
+.claude/

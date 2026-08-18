@@ -5,6 +5,8 @@
   "description": "Roots & Roads website and its two Google Apps Script projects (clasp-managed).",
   "scripts": {
     "login": "clasp login",
+    "build:site": "node tools/build-i18n.js",
+    "deploy:site": "node tools/deploy-site.js",
     "check-references": "node test/check-references.js",
     "pretest": "node test/check-references.js",
     "test": "node test/run-tests.js",
