@@ -578,7 +578,13 @@ function renderTours(tours, paneId, canAssign){
     html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
     // Within a day, a tour with guests but no guide sorts to the TOP so it can't be missed.
     if(canAssign) day.items.sort((a,b)=>{ const au=(!(a.assigned&&a.assigned.length)&&a.bookedGuests>0)?0:1, bu=(!(b.assigned&&b.assigned.length)&&b.bookedGuests>0)?0:1; return au-bu || String(a.time).localeCompare(String(b.time)); });
-    day.items.forEach(t=> html+=tourCard(t, canAssign));
+    // Times already running that day per language — the options for a manager's
+    // "move to another time" dropdown (plus a "New time…" entry, added per row).
+    const _mins=s=>{ const m=String(s||"").match(/(\d{1,2}):(\d{2})/); return m?(+m[1]*60 + +m[2]):0; };
+    const timesByLang={};
+    day.items.forEach(t=>{ const a=(timesByLang[t.language]=timesByLang[t.language]||[]); if(!a.some(x=>x.time===t.time)) a.push({time:t.time,timeLabel:t.timeLabel||t.time}); });
+    Object.keys(timesByLang).forEach(L=> timesByLang[L].sort((a,b)=>_mins(a.time)-_mins(b.time)));
+    day.items.forEach(t=> html+=tourCard(t, canAssign, timesByLang[t.language]||[]));
   });
   // Manager All-tours loads the near window first; "Load more" pulls the next
   // block of days on demand (far-out tours are costly and rarely needed now).
@@ -640,7 +646,7 @@ function assignSelect(t){
   opts.forEach(n=>{ html+='<option value="'+esc(n)+'"'+(n===cur?' selected':'')+'>'+esc(n)+'</option>'; });
   return html+'</select>';
 }
-function tourCard(t, canAssign){
+function tourCard(t, canAssign, dayTimes){
   const missN = Math.max(0, t.bookedGuests - t.checkedGuests);
   const sub = missN>0 ? '<div class="sub">'+missN+' to check in</div>' : '<div class="sub done">all checked</div>';
   const assigned = (t.assigned && t.assigned.length) ? t.assigned : (canAssign ? [] : [store.name].concat(t.coGuides||[]));
@@ -651,7 +657,7 @@ function tourCard(t, canAssign){
     ? '<span class="chip needs">⚠ Needs a guide</span>'
     : '<span class="chip miss">Not assigned</span>';
   if(canAssign) chips+=assignSelect(t);
-  let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language)).join("");
+  let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language,t,dayTimes)).join("");
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   // Small round ✕ in the card's top-right corner — DELETES the tour (frees its guide).
   const closeBtn=canAssign?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Delete this tour">✕</button>':'';
@@ -666,13 +672,24 @@ function tourCard(t, canAssign){
       '<div class="savebar"><span class="msg" data-msg="'+esc(t.id)+'"></span></div>'+
     '</div></div>';
 }
-function bookingRow(tourId,b,i,canAssign,lang){
+function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   const wa = digits(b.phone) ? '<a class="wa" target="_blank" href="https://wa.me/'+digits(b.phone)+'">'+WA_ICON+'</a>' : '';
   const ph = b.phone ? '<a class="ph" href="tel:'+esc(b.phone)+'">'+esc(b.phone)+'</a>' : '';
   const note = b.note ? '<div class="bnote">'+esc(b.note)+'</div>' : '';
   const mv = (canAssign&&b.bookingId) ?
     '<select class="mvsel" data-move=\''+esc(JSON.stringify({bookingId:b.bookingId,from:lang,name:b.name||b.bookingId}))+'\'>'+
     ['English','German','Spanish','French','Italian'].map(L=>'<option'+(L===lang?' selected':'')+'>'+L+'</option>').join('')+'</select>' : '';
+  // Manager: move this booking to another TIME that day. Lists the times already
+  // running (this language), plus "New time…" to type one — which creates the tour.
+  let tmv = '';
+  if(canAssign && b.bookingId && tour){
+    const times=(dayTimes||[]).slice();
+    if(!times.some(x=>x.time===tour.time)) times.unshift({time:tour.time,timeLabel:tour.timeLabel||tour.time});
+    const tinfo={bookingId:b.bookingId,language:lang,fromTime:tour.time,name:b.name||b.bookingId};
+    tmv = '<select class="tmvsel" title="Move to another time" data-tmove=\''+esc(JSON.stringify(tinfo))+'\'>'+
+      times.map(x=>'<option value="'+esc(x.time)+'"'+(x.time===tour.time?' selected':'')+'>'+esc(x.timeLabel||x.time)+'</option>').join('')+
+      '<option value="__new__">＋ New time…</option></select>';
+  }
   // Per-booking note: a small post-it icon next to the language dropdown.
   const ref = esc(tourId+'~'+i);
   const hasN = !!b.manualNote;
@@ -685,7 +702,7 @@ function bookingRow(tourId,b,i,canAssign,lang){
     : (hasN ? '<div class="bnotepanel" data-bnp="'+ref+'" hidden><div class="noteread">'+esc(b.manualNote)+'</div>'+
       '<div class="noterow"><button class="bnoteclose">Close</button></div></div>' : '');
   return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mv+noteBtn+'</div>'+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mv+tmv+noteBtn+'</div>'+
     wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
     '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+((b.checked && !(MANAGER && !b.pending))?' disabled':'')+'>'+(b.checked?(b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))):'Check in')+'</button>'+
     '</div>'+ noteEditor + '</div>';
@@ -749,6 +766,26 @@ function bindTours(tours){
         if(!r.ok){ alert(r.error||"Could not move"); sel.disabled=false; sel.value=info.from; return; }
         loadTours();
       }catch(err){ alert(err.message||"Network problem — try again"); sel.disabled=false; sel.value=info.from; }
+    };
+  });
+  // Manager: move a booking to another TIME that day (creates the slot if new).
+  document.querySelectorAll(".tmvsel").forEach(sel=>{
+    sel.onchange=async ()=>{
+      const info=JSON.parse(sel.dataset.tmove);
+      let toTime=sel.value;
+      if(toTime==="__new__"){
+        const typed=prompt("Move "+info.name+" to what time? e.g. 12:30 or 12:30 PM","");
+        if(!typed || !typed.trim()){ sel.value=info.fromTime; return; }
+        toTime=typed.trim();
+      }
+      if(toTime===info.fromTime){ sel.value=info.fromTime; return; }
+      if(!confirm("Move "+info.name+" to "+toTime+"?\nIf no tour exists at that time yet, it will be created.")){ sel.value=info.fromTime; return; }
+      sel.disabled=true; LAST_EDIT=Date.now();
+      try{
+        const r=await api("moveTime",{token:store.token,bookingId:info.bookingId,language:info.language,toTime:toTime});
+        if(!r.ok){ alert(r.error||"Could not move"); sel.disabled=false; sel.value=info.fromTime; return; }
+        loadTours();
+      }catch(err){ alert(err.message||"Network problem — try again"); sel.disabled=false; sel.value=info.fromTime; }
     };
   });
   // Per-booking note: toggle the panel next to the language dropdown.

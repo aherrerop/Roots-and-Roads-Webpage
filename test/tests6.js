@@ -59,6 +59,19 @@ const mvFr=moveBookingRowBetweenTabs_('BRFR1','English','French');
 check('move to French ok', mvFr.ok===true && mvFr.moved===true, mvFr);
 check('row now in French Tours', fr.getLastRow()===2 && String(fr.getRange(2,8).getValue())==='BRFR1', fr.getRange(2,1,1,9).getValues());
 
+console.log('--- Manager move to another TIME (same day); creates the slot; format-safe ---');
+const _tRow = en.getLastRow()+1;
+en.getRange(_tRow,1,1,9).setValues([['Anna Smith','+1',2,d3,'11:00 AM','Website',0,'TMV1','']]);
+const mvT = moveBookingTimeInTab_('TMV1','English', normTime24_('5:00 PM'));   // 17:00
+check('move time ok, reports the 12h target', mvT.ok===true && mvT.moved===true && mvT.to==='5:00 PM', mvT);
+check('Time cell rewritten to 5:00 PM (stored as 12h, like the feed)', String(en.getRange(_tRow,5).getValue())==='5:00 PM', en.getRange(_tRow,5).getValue());
+const mvSame = moveBookingTimeInTab_('TMV1','English','17:00');
+check('moving to the same time is a no-op (no accidental churn)', mvSame.ok===true && mvSame.moved===false, mvSame);
+const mvNew = moveBookingTimeInTab_('TMV1','English', normTime24_('12:30 PM'));  // a brand-new slot
+check('a typed new time (12:30 PM) normalizes and stores', mvNew.moved===true && String(en.getRange(_tRow,5).getValue())==='12:30 PM', mvNew);
+const mvMiss = moveBookingTimeInTab_('NOPE','English','10:00');
+check('an unknown booking id is rejected, never silently moved', mvMiss.ok===false, mvMiss);
+
 console.log('--- Live orphan surfacing: bookings show even without a grid slot ---');
 const tomorrow=Utilities.formatDate(day(1),null,'yyyy-MM-dd');
 let sched=[];

@@ -155,6 +155,7 @@ function doGet(e) {
       case 'save':   out = apiSave_(p);  break;
       case 'assign': out = apiAssign_(p); break;
       case 'move':   out = apiMoveBooking_(p); break;
+      case 'moveTime': out = apiMoveBookingTime_(p); break;
       case 'setNote': out = apiSetNote_(p); break;
       case 'closeShift': out = apiCloseShift_(p); break;
       case 'uncheckin': out = apiUncheckin_(p); break;
@@ -1084,6 +1085,70 @@ function moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage) {
     toSh.getRange(row, 1, 1, 9).setValues([vals]);
   }
   return { ok: true, moved: true, to: toLanguage };
+}
+
+/**
+ * Manager: move a booking to a DIFFERENT TIME on the same day (same language
+ * tab). We only rewrite the booking's Time cell; the feed rebuild then regroups
+ * the booking under the new time, which CREATES that tour automatically if none
+ * existed (the feed is booking-driven). A brand-new time shows up unassigned —
+ * assigning it builds its schedule column the usual way (writeAssignmentToGrid_).
+ * "Manager has the power to change everything"; a wrong write here would misplace
+ * a paying guest, so it is manager-only, locked, and cache-bumped like the
+ * language move.
+ */
+function apiMoveBookingTime_(p) {
+  __RRX = {};
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+
+  const bookingId = String(p.bookingId || '').trim();
+  const language = String(p.language || '').trim();
+  const toTime = String(p.toTime || '').trim();
+  if (!bookingId || !language || !toTime) return { ok: false, error: 'Missing booking info' };
+
+  const t24 = normTime24_(toTime);
+  if (!/^\d{1,2}:\d{2}$/.test(t24)) return { ok: false, error: 'Enter a valid time like 12:30 or 12:30 PM' };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
+  try {
+    const out = moveBookingTimeInTab_(bookingId, language, t24);
+    if (out && out.ok && out.moved) bumpCacheVersion_();   // a booking changed time slot
+    return out;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function moveBookingTimeInTab_(bookingId, language, t24) {
+  const ss = bookingSS_();
+  const sh = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
+  if (!sh) return { ok: false, error: language + ' Tours tab not found' };
+
+  const idNorm = bookingId.toUpperCase().replace(/\s+/g, '');
+  const last = sh.getLastRow();
+  if (last < 2) return { ok: false, error: bookingId + ' not found in ' + language + ' Tours' };
+
+  // Columns (ACTIVE_HEADERS): E(5)=Time, H(8)=Booking ID.
+  const rows = sh.getRange(2, 1, last - 1, 9).getValues();
+  let rowNum = -1, curTime = '';
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (String(rows[i][7] || '').toUpperCase().replace(/\s+/g, '') === idNorm) {
+      rowNum = i + 2;
+      curTime = normTime24_(rows[i][4]);
+      break;
+    }
+  }
+  if (rowNum === -1) return { ok: false, error: bookingId + ' not found in ' + language + ' Tours' };
+  if (curTime === t24) return { ok: true, moved: false };
+
+  // Store in 12-hour form ("12:30 PM"), matching how times already appear in the
+  // Tours tabs and the availability feed. All reads go through normTime24_.
+  sh.getRange(rowNum, 5).setNumberFormat('@').setValue(to12h_(t24));
+  return { ok: true, moved: true, to: to12h_(t24) };
 }
 
 /**
