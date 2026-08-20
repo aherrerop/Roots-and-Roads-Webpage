@@ -1252,17 +1252,26 @@ function readWeekDates_(sheet) {
   const title = String(displayValues[0][0] || "");
   const year = extractYear_(title);
   const dayRow = displayValues[2] || [];
-  const dates = [];
-  const seen = new Set();
+  // Find the earliest dated column, then rebuild the FULL Monday–Sunday week from
+  // it. Deriving the week only from the columns already present meant Sunday —
+  // which never had a column — could never be added back on a rebuild (the tab
+  // stayed Mon–Sat forever). Anchoring to the Monday makes every rebuild span all
+  // 7 days, so Sunday appears as soon as a Sunday slot exists.
+  let earliest = null;
   for (let c = 1; c < dayRow.length; c++) {
     const label = dayRow[c];
     if (!label) continue;
-    const dateObj = parseDateFromHeader_(label, year);
-    const key = formatDate_(dateObj);
-    if (!seen.has(key)) {
-      seen.add(key);
-      dates.push({ dateObj, dateKey: key, dayName: fullDayName_(dateObj), shortLabel: shortDateLabel_(dateObj) });
-    }
+    const d = parseDateFromHeader_(label, year);
+    if (d && !isNaN(d) && (!earliest || d < earliest)) earliest = d;
+  }
+  if (!earliest) return [];
+  const monday = new Date(earliest);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));   // snap back to Monday
+  monday.setHours(12, 0, 0, 0);
+  const dates = [];
+  for (let d = 0; d < 7; d++) {
+    const dt = new Date(monday); dt.setDate(monday.getDate() + d); dt.setHours(12, 0, 0, 0);
+    dates.push({ dateObj: dt, dateKey: formatDate_(dt), dayName: fullDayName_(dt), shortLabel: shortDateLabel_(dt) });
   }
   return dates;
 }

@@ -491,6 +491,24 @@ check('Sunday exposes the standard tick times', ['10:00','10:30','11:00','17:00'
 check('availability-only rules never become tours (guidesNeeded 0)', _extra.length>0 && _extra.every(r=>r.guidesNeeded===0), _extra);
 check('the availability sheet rules now carry Sunday slots', readWeeklySchedule_ && (function(){ try{ return privateAvailabilityRules_().concat(extraAvailabilityRules_()).some(r=>r.day==='Sunday'); }catch(e){ return false; } })(), null);
 
+(function(){
+  // A rebuild of an EXISTING Mon–Sat availability tab must now span all 7 days,
+  // so Sunday is added back (the tab used to stay Mon–Sat forever).
+  const gss = new __mock.MockSS('guideavail');
+  const wk = gss.insertSheet('Week 34');
+  const mon = new Date(2026, 7, 17, 12, 0, 0);           // Mon Aug 17 2026
+  const labels = ['Name'];
+  for (let i=0;i<6;i++){ const d=new Date(mon); d.setDate(mon.getDate()+i); labels.push(shortDateLabel_(d)); }  // Mon..Sat only
+  const titleRow = ['Availability: Week 34 (Mon Aug 17 - Sat Aug 22, 2026)'].concat(new Array(labels.length-1).fill(''));
+  wk.getRange(1,1,1,labels.length).setValues([titleRow]);
+  wk.getRange(2,1,1,labels.length).setValues([['tick your shifts'].concat(new Array(labels.length-1).fill(''))]);
+  wk.getRange(3,1,1,labels.length).setValues([labels]);
+  const wd = readWeekDates_(wk);
+  check('a Mon–Sat tab now reads back as all 7 days', wd.length===7, wd.map(d=>d.dayName));
+  check('Sunday is included', wd.some(d=>d.dayName==='Sunday'), wd.map(d=>d.dayName));
+  check('the week still starts on Monday', wd[0] && wd[0].dayName==='Monday', wd[0]);
+})();
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
