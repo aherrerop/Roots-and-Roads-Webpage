@@ -484,6 +484,13 @@ const mPriv=computeMoney_('GetYourGuide',5,true,99.98,_mrates);
 check('private: FLAT 75 to the guide regardless of headcount', mPriv.weOwe===75 && mPriv.theyOwe===0 && mPriv.type==='Private', mPriv);
 check('private: R&R makes OTA income minus the flat 75', mPriv.rrMakes===round2_(99.98-75), mPriv.rrMakes);
 
+console.log('--- Sunday now appears on the guide availability sheet ---');
+const _extra = extraAvailabilityRules_();
+check('extra availability rules include Sunday', _extra.some(r=>r.day==='Sunday'), _extra.map(r=>r.day));
+check('Sunday exposes the standard tick times', ['10:00','10:30','11:00','17:00'].every(t=>_extra.some(r=>r.day==='Sunday'&&r.time===t)), _extra.filter(r=>r.day==='Sunday').map(r=>r.time));
+check('availability-only rules never become tours (guidesNeeded 0)', _extra.length>0 && _extra.every(r=>r.guidesNeeded===0), _extra);
+check('the availability sheet rules now carry Sunday slots', readWeeklySchedule_ && (function(){ try{ return privateAvailabilityRules_().concat(extraAvailabilityRules_()).some(r=>r.day==='Sunday'); }catch(e){ return false; } })(), null);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
