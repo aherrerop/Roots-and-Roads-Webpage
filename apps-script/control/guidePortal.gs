@@ -1060,6 +1060,11 @@ function apiMoveBooking_(p) {
       else if (!tm.ok) timeErr = tm.error;   // surface, but the language move (if any) already stands
     }
 
+    // A moved booking must not carry its old tour's guide into the new slot — the
+    // new tour starts unassigned (the manager decides). The target keeps its own
+    // guide if its other bookings already have one.
+    if (langMoved || timeMoved) clearFeedGuide_(bookingId);
+
     // Reflect whatever changed on the very next poll (feed already updated above).
     if (langMoved || timeMoved) { bumpFeedCacheVersion_(); bumpCacheVersion_(); }
 
@@ -1150,6 +1155,7 @@ function apiMoveBookingTime_(p) {
       // the 5-minute rebuild. Bump both: feed for the reservation read, global
       // for the schedule/config caches.
       writeFeedTime_(bookingId, out.to);
+      clearFeedGuide_(bookingId);   // new time = new tour, unassigned (manager decides)
       bumpFeedCacheVersion_();
       bumpCacheVersion_();
     }
@@ -1852,6 +1858,30 @@ function writeFeedLanguage_(bookingId, language) {
         sh.getRange(i + 2, 3, 1, 1).setNumberFormat('@').setValue(String(language || ''));   // C = Language
         done = true;
       }
+    }
+    return done;
+  } catch (e) { return false; }
+}
+
+/**
+ * Clear the Guide (col O) on a booking's Portal Feed row(s). Called on a MOVE so
+ * the booking never drags its old tour's guide into the new time/language: the
+ * tour's guide is read from its bookings' Guide column (buildScheduleFromFeed_),
+ * so a moved booking that kept its old guide would wrongly show that guide on the
+ * new tour (e.g. an English guide appearing on a moved-to Spanish slot). Cleared,
+ * a moved booking lands in an UNASSIGNED tour — the manager decides — unless the
+ * TARGET tour already has its own guide from its other bookings. Best-effort.
+ */
+function clearFeedGuide_(bookingId) {
+  try {
+    const id = String(bookingId || '').trim();
+    if (!id) return false;
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
+    let done = false;
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || '').trim() === id) { sh.getRange(i + 2, 15, 1, 1).setValue(''); done = true; }   // O = Guide
     }
     return done;
   } catch (e) { return false; }

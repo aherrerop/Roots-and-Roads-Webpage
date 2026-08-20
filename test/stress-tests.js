@@ -227,6 +227,14 @@ check('B-M2 removed from the English Tours tab (not duplicated)', !enT.getRange(
 check('combined move to the same language + time is a no-op', apiMoveBooking_({ token: token, bookingId: 'B-M2', fromLanguage: 'Spanish', toLanguage: 'Spanish', toTime: '11:00' }).moved === false, null);
 check('a non-manager cannot do a combined move', apiMoveBooking_({ token: gtok, bookingId: 'B-M2', fromLanguage: 'Spanish', toLanguage: 'English', toTime: '10:00' }).ok === false, null);
 
+// -- A moved booking must NOT carry its old tour's guide into the new tour ---
+enT.getRange(enT.getLastRow() + 1, 1, 1, 9).setValues([['MoveC', '+1', 2, DATE, '10:00 AM', 'GetYourGuide', 30, 'B-M3', '']]);
+feed.getRange(feed.getLastRow() + 1, 1, 1, 16).setValues([[DATE, '10:00 AM', 'English', 'MoveC', '+1', 2, 0, 'GetYourGuide', 30, 'B-M3', '', '', '', '', 'Carlos', 'booking']]);
+check('sanity: B-M3 starts assigned to Carlos (its feed Guide)', (function () { const x = anyBk(tours(), 'B-M3'); return x && (x.tour.assigned || []).indexOf('Carlos') !== -1; })(), null);
+apiMoveBookingTime_({ token: token, bookingId: 'B-M3', language: 'English', toTime: '3:00 PM' });
+const m3 = anyBk(tours(), 'B-M3');
+check('a moved booking lands in an UNASSIGNED tour (old guide dropped)', m3 && m3.tour.time === '15:00' && (!m3.tour.assigned || m3.tour.assigned.length === 0), m3 && [m3.tour.time, m3.tour.assigned]);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

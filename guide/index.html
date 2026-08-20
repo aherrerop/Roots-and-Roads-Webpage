@@ -178,7 +178,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-18-combined-move";
+const PORTAL_VERSION = "2026-08-18-move-unassigns-and-no-mid-edit-reload";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -187,7 +187,12 @@ async function checkForUpdate(){
     const res = await fetch(location.pathname + "?_v=" + Date.now(), { cache: "no-store" });
     const txt = await res.text();
     const m = txt.match(/PORTAL_VERSION\s*=\s*"([^"]+)"/);
-    if(m && m[1] && m[1] !== PORTAL_VERSION){ location.reload(); }
+    if(m && m[1] && m[1] !== PORTAL_VERSION){
+      // Never hard-reload out from under someone mid-action — a half-typed new
+      // tour, an open form, or an in-flight write. It reloads on the next check.
+      if(MUTATING>0 || document.querySelector("details.openform[open]") || Date.now()-LAST_EDIT<8000) return;
+      location.reload();
+    }
   }catch(e){ /* offline / transient — try again next time */ }
 }
 
@@ -424,15 +429,22 @@ let LAST_EDIT = 0;
 // Only ACTUAL edit controls suppress the refresh — not merely tapping to expand
 // a card. So a manager watching the list keeps polling and sees another guide's
 // check-ins within seconds, while someone mid-edit is still protected.
-document.addEventListener("input",  e=>{ if(e.target.closest && e.target.closest(".bnoteta,.noteta")) LAST_EDIT=Date.now(); }, true);
-document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.closest(".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-go,.bnoteta,.bnotesave,.of-open")) LAST_EDIT=Date.now(); }, true);
+// Any touch/type/change on an edit control (a note, the move dropdowns, or the
+// "Open a schedule" form) marks the user as mid-edit so the poll holds off.
+const EDIT_SEL = ".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-lang,.mv-time,.mv-go,.bnoteta,.bnotesave,.of-open,.of-date,.of-time,.of-lang,.of-guide,.openform";
+document.addEventListener("input",  e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
+document.addEventListener("change", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
+document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
 let MUTATING = 0;   // >0 while a write (assign/save/move/…) is in flight
 function canAutoRefresh(){
   if(!store.token || document.hidden) return false;
   if(MUTATING > 0) return false;                          // never poll mid-write
-  if(Date.now()-LAST_EDIT < 6000) return false;           // just used an edit control
+  // Never re-render while the "Open a schedule" form is open — a poll would wipe
+  // the half-filled new tour before it can be submitted.
+  if(document.querySelector("details.openform[open]")) return false;
+  if(Date.now()-LAST_EDIT < 8000) return false;           // just used a control
   const a=document.activeElement;
-  if(a && /^(INPUT|TEXTAREA)$/.test(a.tagName||"") && a.closest && a.closest("#toursPane,#schedPane")) return false; // typing a note
+  if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName||"") && a.closest && a.closest("#toursPane,#schedPane")) return false; // typing/choosing in a field
   return true;
 }
 function startAutoRefresh(){
@@ -614,10 +626,13 @@ function renderTours(tours, paneId, canAssign){
     // Times already running that day per language — the options for a manager's
     // "move to another time" dropdown (plus a "New time…" entry, added per row).
     const _mins=s=>{ const m=String(s||"").match(/(\d{1,2}):(\d{2})/); return m?(+m[1]*60 + +m[2]):0; };
-    const timesByLang={};
-    day.items.forEach(t=>{ const a=(timesByLang[t.language]=timesByLang[t.language]||[]); if(!a.some(x=>x.time===t.time)) a.push({time:t.time,timeLabel:t.timeLabel||t.time}); });
-    Object.keys(timesByLang).forEach(L=> timesByLang[L].sort((a,b)=>_mins(a.time)-_mins(b.time)));
-    day.items.forEach(t=> html+=tourCard(t, canAssign, timesByLang[t.language]||[]));
+    // ALL times running that day (any language) — so a move can go back to a time
+    // that currently only exists in another language (e.g. 5 PM English) in one
+    // step by also picking the language. "＋ New time…" is added per row.
+    const dayTimes=[];
+    day.items.forEach(t=>{ if(!dayTimes.some(x=>x.time===t.time)) dayTimes.push({time:t.time,timeLabel:t.timeLabel||t.time}); });
+    dayTimes.sort((a,b)=>_mins(a.time)-_mins(b.time));
+    day.items.forEach(t=> html+=tourCard(t, canAssign, dayTimes));
   });
   // Manager All-tours loads the near window first; "Load more" pulls the next
   // block of days on demand (far-out tours are costly and rarely needed now).
@@ -814,14 +829,15 @@ function bindTours(tours){
       if(!confirm("Move "+info.name+" to "+parts.join(" at ")+"?\nIf no tour exists there yet, it will be created.")){
         langSel.value=info.fromLanguage; timeSel.value=info.fromTime; sync(); return;
       }
-      go.disabled=true; go.textContent="Moving…"; LAST_EDIT=Date.now();
+      go.disabled=true; go.textContent="Moving…"; MUTATING++; LAST_EDIT=Date.now();
       try{
         const r=await api("move",{token:store.token, bookingId:info.bookingId, fromLanguage:info.fromLanguage, toLanguage:toLanguage, toTime: timeChange? toTime : ""});
         if(!r.ok) alert(r.error||"Could not move");
-        loadTours();   // reconcile either way: the screen + the status show the TRUE server state
       }catch(err){
         alert("Couldn't confirm the move just now — reloading to show the current state. If it didn't take, try again.");
-        loadTours();
+      }finally{
+        MUTATING--;      // release the poll-hold before we reconcile
+        loadTours();     // reconcile either way: the screen + status show the TRUE server state
       }
     };
   });
