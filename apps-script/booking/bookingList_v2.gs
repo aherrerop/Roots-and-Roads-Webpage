@@ -598,6 +598,26 @@ function ensureProcessedLabel_() {
 /**
  * Website booking endpoint.
  */
+/**
+ * A log-safe view of website booking params. The Errors tab is a persistent store
+ * anyone with sheet access can read, so it must NOT hold raw personal data. Keep
+ * enough to diagnose (date/time/language/guests/source) but mask name, email and
+ * phone and drop the free-text message. (GDPR data-minimisation; the full details
+ * still go to management's own inbox for the busy-system manual-entry case.)
+ */
+function redactParams_(params) {
+  const p = params || {};
+  const maskEmail = e => { e = String(e || ''); const at = e.indexOf('@'); return at > 0 ? (e.charAt(0) + '***@' + e.slice(at + 1)) : (e ? '***' : ''); };
+  const maskPhone = t => { t = String(t || '').replace(/\D/g, ''); return t ? ('***' + t.slice(-3)) : ''; };
+  return JSON.stringify({
+    date: p.date || p.tour_date || '', time: p.time || p.tour_time || '',
+    language: p.language || '', guests: p.guests || '', source: p.source || 'website',
+    name: p.name ? (String(p.name).trim().charAt(0) + '.') : '',
+    email: maskEmail(p.email), phone: maskPhone(p.phone),
+    message: p.message ? ('[' + String(p.message).length + ' chars redacted]') : ''
+  });
+}
+
 function doPost(e) {
   const lock = LockService.getScriptLock();
 
@@ -605,8 +625,7 @@ function doPost(e) {
     // A long booking run holds the lock. NEVER lose the reservation: log it
     // and email the raw details to management for manual entry.
     try {
-      const raw = JSON.stringify(e && e.parameter ? e.parameter : {});
-      logError_('Website booking arrived while system busy — NOT saved automatically', 'manual entry needed', raw);
+      logError_('Website booking arrived while system busy — NOT saved automatically', 'manual entry needed', redactParams_(e && e.parameter ? e.parameter : {}));
       MailApp.sendEmail({
         to: RNR.INTERNAL_ALERT_TO,
         subject: 'R&R: WEBSITE BOOKING NEEDS MANUAL ENTRY (system was busy)',
@@ -641,7 +660,7 @@ function doPost(e) {
     logError_(
       'Website booking error',
       err,
-      JSON.stringify(e && e.parameter ? e.parameter : {})
+      redactParams_(e && e.parameter ? e.parameter : {})
     );
     return textResponse_('ERROR');
 

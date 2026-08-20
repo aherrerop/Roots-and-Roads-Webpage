@@ -139,7 +139,17 @@ const D = [
     it: "Siamo cresciuti in questa città e ora la condividiamo con te. Anni di esperienza ci hanno regalato storie e uno sguardo che non troverai in nessun copione o guida, aiutando i visitatori a collegare l’antico, il nuovo e la vita quotidiana di Barcellona. Unisciti a noi e scopri Barcellona come la vivono i locali!"
   }],
   ["Contact us at:", { es: "Escríbenos a:", fr: "Contactez-nous à :", de: "Kontaktieren Sie uns unter:", it: "Scrivici a:" }],
-  [">Guide Portal</a>", { es: ">Portal de guías</a>", fr: ">Portail guides</a>", de: ">Guide-Portal</a>", it: ">Portale guide</a>" }]
+  [">Guide Portal</a>", { es: ">Portal de guías</a>", fr: ">Portail guides</a>", de: ">Guide-Portal</a>", it: ">Portale guide</a>" }],
+
+  // ---- Cookie-consent banner (uses curly ’ in FR so the single-quoted JS string can't break) ----
+  ["We use cookies to measure traffic and for marketing. Accept to allow them, or reject to keep only the essential ones.", {
+    es: "Usamos cookies para medir el tráfico y para marketing. Acepta para permitirlas o recházalas para conservar solo las esenciales.",
+    fr: "Nous utilisons des cookies de mesure d’audience et de marketing. Acceptez pour les autoriser ou refusez pour ne garder que l’essentiel.",
+    de: "Wir verwenden Cookies zur Reichweitenmessung und für Marketing. Akzeptieren Sie, um sie zu erlauben, oder lehnen Sie ab, um nur die essenziellen zu behalten.",
+    it: "Usiamo cookie per misurare il traffico e per marketing. Accetta per consentirli o rifiuta per mantenere solo quelli essenziali."
+  }],
+  [">Reject</button>", { es: ">Rechazar</button>", fr: ">Refuser</button>", de: ">Ablehnen</button>", it: ">Rifiuta</button>" }],
+  [">Accept</button>", { es: ">Aceptar</button>", fr: ">Accepter</button>", de: ">Akzeptieren</button>", it: ">Accetta</button>" }]
 ];
 
 function transform(html, lang) {

@@ -307,16 +307,41 @@
       ttq.load('D6PH03BC77UD56GIE9L0'); ttq.page();
     }(window, document, 'ttq');
   }
-  var evts = ['pointerdown', 'keydown', 'touchstart', 'scroll', 'mousemove'];
-  function fire() { evts.forEach(function (ev) { window.removeEventListener(ev, fire); }); loadAnalytics(); }
-  evts.forEach(function (ev) { window.addEventListener(ev, fire, { passive: true, once: true }); });
-  // Fallback so a no-interaction bounce is still tracked: idle callback, else a
-  // short timer after load.
-  if ('requestIdleCallback' in window) { requestIdleCallback(loadAnalytics, { timeout: 4000 }); }
-  else { window.addEventListener('load', function () { setTimeout(loadAnalytics, 2500); }); }
+  // Once consent is given, load on first interaction or idle so the scripts
+  // never block first paint (a no-interaction bounce is still caught by idle).
+  function armDeferredLoad() {
+    var evts = ['pointerdown', 'keydown', 'touchstart', 'scroll', 'mousemove'];
+    function fire() { evts.forEach(function (ev) { window.removeEventListener(ev, fire); }); loadAnalytics(); }
+    evts.forEach(function (ev) { window.addEventListener(ev, fire, { passive: true, once: true }); });
+    if ('requestIdleCallback' in window) { requestIdleCallback(loadAnalytics, { timeout: 4000 }); }
+    else { window.addEventListener('load', function () { setTimeout(loadAnalytics, 2500); }); }
+  }
+
+  // ---- CONSENT GATE -------------------------------------------------------
+  // GA, Meta and TikTok are non-essential (analytics + marketing) and set
+  // cookies, so under the ePrivacy Directive / LOPDGDD they must NOT load until
+  // the visitor opts in. Nothing above runs until "Accept"; "Reject" loads none.
+  var KEY = 'rr_cookie_consent';
+  function decide(choice) {
+    try { localStorage.setItem(KEY, choice); } catch (e) {}
+    var b = document.getElementById('cookie-consent'); if (b && b.parentNode) b.parentNode.removeChild(b);
+    if (choice === 'accepted') armDeferredLoad();
+  }
+  var stored = null; try { stored = localStorage.getItem(KEY); } catch (e) {}
+  if (stored === 'accepted') { armDeferredLoad(); return; }
+  if (stored === 'rejected') { return; }
+  window.addEventListener('DOMContentLoaded', function () {
+    var css = document.createElement('style');
+    css.textContent = '#cookie-consent{position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;max-width:520px;margin:0 auto;background:#111;color:#fff;border-radius:14px;padding:16px 18px;box-shadow:0 8px 30px rgba(0,0,0,.35);font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45}#cookie-consent p{margin:0 0 12px}#cookie-consent .cc-row{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}#cookie-consent button{border:0;border-radius:999px;padding:9px 18px;font-size:14px;font-weight:600;cursor:pointer}#cookie-consent .cc-reject{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.55)}#cookie-consent .cc-accept{background:#f5cb5c;color:#111}';
+    document.head.appendChild(css);
+    var d = document.createElement('div'); d.id = 'cookie-consent'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Cookies');
+    d.innerHTML = '<p>Usamos cookies para medir el tráfico y para marketing. Acepta para permitirlas o recházalas para conservar solo las esenciales.</p><div class="cc-row"><button type="button" class="cc-reject">Rechazar</button><button type="button" class="cc-accept">Aceptar</button></div>';
+    document.body.appendChild(d);
+    d.querySelector('.cc-accept').addEventListener('click', function () { decide('accepted'); });
+    d.querySelector('.cc-reject').addEventListener('click', function () { decide('rejected'); });
+  });
 })();
 </script>
-<noscript><img height="1" width="1" alt="" style="display:none" src="https://www.facebook.com/tr?id=4098374887121207&ev=PageView&noscript=1" /></noscript>
 
 
 <script type="application/ld+json">{
