@@ -90,17 +90,6 @@ const ASSIGN_CFG = {
     Friday:    ['10:00', '10:30', '17:00'],
     Saturday:  ['17:00'],
     Sunday:    []
-  },
-
-  // Availability-only slots that are NOT part of the regular weekly tour offer.
-  // They add tick columns to the guide availability sheet so guides can flag
-  // whether they can work shifts we schedule AD HOC — e.g. Sunday tours created
-  // by hand in Control. Like PRIVATE_AVAILABILITY these NEVER create tours; the
-  // Weekly_Schedule (which drives the actual offer) is untouched. This is why
-  // Sunday had no columns before: nothing produced a Sunday slot. Edit these
-  // times to change which Sunday shifts guides can tick.
-  EXTRA_AVAILABILITY: {
-    Sunday: ['10:00', '10:30', '11:00', '17:00']
   }
 };
 
@@ -112,20 +101,6 @@ function privateAvailabilityRules_() {
   Object.keys(ASSIGN_CFG.PRIVATE_AVAILABILITY).forEach(day => {
     ASSIGN_CFG.PRIVATE_AVAILABILITY[day].forEach(time => {
       out.push({ day, time, language: 'Private', guidesNeeded: 0, activeFrom: null, activeUntil: null });
-    });
-  });
-  return out;
-}
-
-/** Same shape as privateAvailabilityRules_, for the availability-only EXTRA
- *  slots (e.g. Sunday). Concatenated into the availability sheet's rules so those
- *  days get tick columns without ever becoming tours. */
-function extraAvailabilityRules_() {
-  const out = [];
-  const cfg = ASSIGN_CFG.EXTRA_AVAILABILITY || {};
-  Object.keys(cfg).forEach(day => {
-    (cfg[day] || []).forEach(time => {
-      out.push({ day, time, language: 'Availability', guidesNeeded: 0, activeFrom: null, activeUntil: null });
     });
   });
   return out;
@@ -728,7 +703,7 @@ function syncAvailabilityFile() {
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
 
   const guideNames = readActiveGuideNames_(controlSS);
-  const scheduleRules = readWeeklySchedule_(controlSS).concat(privateAvailabilityRules_()).concat(extraAvailabilityRules_());
+  const scheduleRules = readWeeklySchedule_(controlSS).concat(privateAvailabilityRules_());
 
   guideSS.getSheets().forEach(sheet => {
     if (!sheet.getName().startsWith("Week ")) return;
@@ -860,7 +835,7 @@ function ensureWeekTabs_() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
   const guideNames = readActiveGuideNames_(controlSS);
-  const scheduleRules = readWeeklySchedule_(controlSS).concat(privateAvailabilityRules_()).concat(extraAvailabilityRules_());
+  const scheduleRules = readWeeklySchedule_(controlSS).concat(privateAvailabilityRules_());
 
   const today = dateOnly_(new Date());
   const dow = (today.getDay() + 6) % 7;
@@ -1322,12 +1297,19 @@ function rebuildAvailabilityWeekSheet_(sheet, weekDates, scheduleRules, guideNam
 
   const title = `Availability: ${sheet.getName()} (${weekDates[0].shortLabel} - ${weekDates[weekDates.length - 1].shortLabel}, ${weekDates[0].dateObj.getFullYear()})`;
 
-  sheet.getRange(1, 1, 1, totalCols).merge().setValue(title)
-    .setBackground("#2563eb").setFontColor("#ffffff").setFontWeight("bold").setHorizontalAlignment("center");
+  // Banner across the whole row, but do NOT merge the title across all columns.
+  // A merged cell spanning the full 7-day width makes Google Sheets REPEAT the
+  // text when you scroll right (it looked like a corrupted title). Left-aligned
+  // text in an unmerged A1/A2 overflows across the coloured banner and reads
+  // cleanly with no repeat.
+  sheet.getRange(1, 1, 1, totalCols).setBackground("#2563eb");
+  sheet.getRange(1, 1).setValue(title)
+    .setFontColor("#ffffff").setFontWeight("bold").setHorizontalAlignment("left").setVerticalAlignment("middle");
 
-  sheet.getRange(2, 1, 1, totalCols).merge()
+  sheet.getRange(2, 1, 1, totalCols).setBackground("#dbeafe");
+  sheet.getRange(2, 1)
     .setValue("Select your name in column A, then tick the shifts you can work. This is availability only.")
-    .setBackground("#dbeafe").setFontStyle("italic").setHorizontalAlignment("center");
+    .setFontStyle("italic").setHorizontalAlignment("left");
 
   sheet.getRange("A3:A4").merge().setValue("Name")
     .setBackground("#2563eb").setFontColor("#ffffff").setFontWeight("bold")
