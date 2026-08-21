@@ -649,10 +649,18 @@ function doPost(e) {
       throw new Error('Invalid website booking');
     }
 
-    upsertActiveBooking_(booking);   // inserts in sorted position
+    upsertActiveBooking_(booking);   // THE RESERVATION IS SAVED HERE.
 
-    sendWebsiteReservationAlert_(booking, params);       // internal alert
-    sendWebsiteConfirmationViaBrevo_(booking, params);   // customer confirmation
+    // The two emails are best-effort notifications, NOT part of saving the
+    // booking. A Brevo/MailApp hiccup (quota, a transient API error) must never
+    // turn a saved reservation into an "ERROR" — that maxim is "cannot miss a
+    // booking". Failures are logged so they're visible, and the booking still
+    // returns OK. (The confirmation-email sweep can also reconcile later.)
+    try { sendWebsiteReservationAlert_(booking, params); }
+    catch (mailErr) { logError_('Website internal alert failed — booking WAS saved', mailErr, 'id=' + booking.bookingId); }
+
+    try { sendWebsiteConfirmationViaBrevo_(booking, params); }
+    catch (mailErr) { logError_('Website confirmation email failed — booking WAS saved', mailErr, 'id=' + booking.bookingId); }
 
     return textResponse_('OK');
 
