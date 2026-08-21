@@ -1,0 +1,12 @@
+Fredoka — SIL Open Font License, Version 1.1
+Copyright 2021 The Fredoka Project Authors (https://github.com/hafontia/Fredoka)
+
+This font (fredoka-latin.woff2, the Latin subset) is licensed under the SIL Open
+Font License, Version 1.1. It is free to use — including for commercial purposes —
+and may be bundled and redistributed with this website. It must not be sold on its
+own, and this notice must travel with the font file.
+
+Full licence text: https://openfontlicense.org  (mirror: https://scripts.sil.org/OFL)
+
+Used here as the site's heading font (CSS variable --font-primary), replacing
+"The Youngest", which was licensed for personal use only.

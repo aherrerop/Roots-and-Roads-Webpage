@@ -57,12 +57,10 @@
 <link rel="preload" as="image" href="images/batllo_v1.webp" fetchpriority="high">
 <link rel="preconnect" href="https://script.google.com">
 <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
-<link rel="preconnect" href="https://fonts.cdnfonts.com" crossorigin>
-<!-- Load the display font WITHOUT blocking render: the browser paints in a
-     fallback immediately and swaps the font in when it arrives (media=print
-     trick). Removes a render-blocking third-party request from first paint. -->
-<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/the-youngest" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.cdnfonts.com/css/the-youngest"></noscript>
+<!-- Heading font is self-hosted (Fredoka, OFL) — no third-party font CDN, so no
+     visitor-IP leak and no dependency on an external service being up. Preloaded
+     because headings are above the fold; @font-face lives in main_css.css. -->
+<link rel="preload" href="/fonts/fredoka-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/main_css.css">
 <script defer src="main_js.js"></script>
 

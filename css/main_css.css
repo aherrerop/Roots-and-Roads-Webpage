@@ -1,4 +1,17 @@
 /* ================================= */
+/* HEADING FONT — self-hosted (no third-party font CDN) */
+/* Fredoka, SIL Open Font License (free for commercial use). Replaced "The
+/* Youngest" (personal-use licence only) which loaded from fonts.cdnfonts.com. */
+/* ================================= */
+@font-face {
+  font-family: "Fredoka";
+  font-style: normal;
+  font-weight: 300 700;            /* variable weight */
+  font-display: swap;
+  src: url("/fonts/fredoka-latin.woff2") format("woff2");
+}
+
+/* ================================= */
 /* ROOT VARIABLES */
 /* ================================= */
 
@@ -30,7 +43,7 @@
 
 /* FONTS */
 
---font-primary: "The Youngest", sans-serif;
+--font-primary: "Fredoka", sans-serif;
 --font-secondary: Georgia, "Times New Roman", serif;
 
 /* COLORS */
