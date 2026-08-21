@@ -178,7 +178,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-18-move-unassigns-and-no-mid-edit-reload";
+const PORTAL_VERSION = "2026-08-20-post-login";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -375,12 +375,24 @@ function to12(t){ const m=String(t).match(/^(\d{1,2}):(\d{2})$/); if(!m) return 
 /* ================== LOGIN ================== */
 $("loginBtn").onclick = doLogin;
 $("password").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
+// Send credentials in the POST BODY, not the URL query string (so the password
+// never lands in a request URL / server log). Falls back to the GET api() if a
+// POST response can't be read, so login can never break.
+async function loginRequest_(email, password){
+  try{
+    const body=new URLSearchParams({action:"login", _:Date.now(), email:email, password:password});
+    const res=await fetch(PORTAL_URL, {method:"POST", body:body, redirect:"follow", cache:"no-store"});
+    return JSON.parse(await res.text());
+  }catch(e){
+    return await api("login", {email:email, password:password});
+  }
+}
 async function doLogin(){
   const email=$("email").value.trim(), password=$("password").value;
   if(!email||!password){ $("loginErr").textContent="Enter email and password."; return; }
   $("loginBtn").disabled=true; $("loginErr").textContent="";
   try{
-    const r=await api("login",{email,password});
+    const r=await loginRequest_(email,password);
     if(!r.ok){ $("loginErr").textContent=r.error||"Login failed"; $("loginBtn").disabled=false; return; }
     store.token=r.token; store.name=r.guide.name; showDash();
   }catch(err){

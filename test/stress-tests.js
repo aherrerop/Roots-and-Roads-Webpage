@@ -235,6 +235,15 @@ apiMoveBookingTime_({ token: token, bookingId: 'B-M3', language: 'English', toTi
 const m3 = anyBk(tours(), 'B-M3');
 check('a moved booking lands in an UNASSIGNED tour (old guide dropped)', m3 && m3.tour.time === '15:00' && (!m3.tour.assigned || m3.tour.assigned.length === 0), m3 && [m3.tour.time, m3.tour.assigned]);
 
+console.log('=== STRESS: data-subject access (export) + erasure across all stores ===');
+const exHits = exportClientData('B-M1');
+check('export finds the booking across tabs (feed + Tours)', exHits.length >= 2 && exHits.every(function (h) { return /B-M1/i.test(h.data); }), exHits.map(function (h) { return h.tab; }));
+check('erase requires an exact id (guards mass-delete by name)', (function () { try { eraseClientData('a'); return false; } catch (e) { return true; } })(), null);
+const erased = eraseClientData('B-M1');
+check('erase removes every matching row and reports a count', erased >= 2, erased);
+check('after erasure nothing references the id anywhere', exportClientData('B-M1').length === 0, null);
+check('an unrelated booking is untouched by the erase', exportClientData('B-M3').length >= 1, null);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

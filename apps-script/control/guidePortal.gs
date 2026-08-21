@@ -141,6 +141,10 @@ var __RRX = {};
 // the frequent auto-refresh cheap.
 const PORTAL_MUTATIONS = { assign: 1, save: 1, move: 1, setNote: 1, closeShift: 1, uncheckin: 1 };
 
+// Same dispatch as doGet, so sensitive actions (login) can be sent as a POST —
+// the password rides in the request body instead of the URL query string.
+function doPost(e) { return doGet(e); }
+
 function doGet(e) {
   __RRX = {};                       // fresh per-request memo (prod globals reset anyway; explicit for safety + tests)
   const p = (e && e.parameter) ? e.parameter : {};
@@ -3258,6 +3262,63 @@ function minutesToTime_(minutes) {
 /******************************************************
  * 9. ONE-TIME / MANUAL HELPERS
  ******************************************************/
+
+/* ---- Data-subject rights (GDPR access + erasure) -------------------------
+ * Client PII isn't in one tab — it's spread across the Booking sheet (language
+ * Tours tabs, Portal Feed, Completed Log) and the Ledger. Rather than keep a
+ * permanent "all clients" copy (which GDPR's storage-limitation principle works
+ * AGAINST), these run on demand from the editor:
+ *   exportClientData('name / phone / booking id')  -> lists everywhere they appear
+ *   eraseClientData('EXACT-BOOKING-ID')            -> deletes every matching row
+ * Email lives in Brevo + Gmail, not the sheets, so erase those separately.
+ * -------------------------------------------------------------------------- */
+
+/** ACCESS request: log every row across the Booking sheet + Ledger that mentions
+ *  the query (a booking id, name, phone or email fragment). Read-only. */
+function exportClientData(query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) throw new Error('Pass a booking id, name, phone or email fragment.');
+  const hits = [];
+  [bookingSS_(), ledgerSS_()].forEach(function (ss) {
+    ss.getSheets().forEach(function (sh) {
+      if (sh.getLastRow() < 2) return;
+      const vals = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+      const header = vals[0];
+      for (let r = 1; r < vals.length; r++) {
+        if (vals[r].some(function (c) { return String(c).toLowerCase().indexOf(q) !== -1; })) {
+          hits.push({ tab: sh.getName(), row: r + 1, data: header.map(function (h, i) { return h + '=' + vals[r][i]; }).join(' | ') });
+        }
+      }
+    });
+  });
+  Logger.log(hits.length + ' row(s) reference "' + query + '":\n' +
+    hits.map(function (h) { return '• [' + h.tab + ' r' + h.row + '] ' + h.data; }).join('\n'));
+  return hits;
+}
+
+/** ERASURE request: delete EVERY row whose cells contain the EXACT booking id,
+ *  across the Booking sheet + Ledger. Requires the exact id (never mass-deletes
+ *  by name). Returns rows removed. Run exportClientData first to review. */
+function eraseClientData(bookingId) {
+  const id = String(bookingId || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (id.length < 3) throw new Error('Pass the exact Booking ID to erase (run exportClientData first).');
+  let removed = 0;
+  [bookingSS_(), ledgerSS_()].forEach(function (ss) {
+    ss.getSheets().forEach(function (sh) {
+      if (sh.getLastRow() < 2) return;
+      const vals = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+      for (let r = vals.length - 1; r >= 1; r--) {   // bottom-up so indices stay valid
+        if (vals[r].some(function (c) { return String(c).toUpperCase().replace(/\s+/g, '') === id; })) {
+          sh.deleteRow(r + 1); removed++;
+        }
+      }
+    });
+  });
+  if (removed) { bumpCacheVersion_(); bumpFeedCacheVersion_(); }
+  Logger.log('Erased ' + removed + ' row(s) for Booking ID ' + bookingId +
+    '. Email is in Brevo + Gmail, not the sheets — delete those threads/contacts separately.');
+  return removed;
+}
 
 /** Run once from the editor to create the ledger + Rates tab + one tab per guide. */
 function setupLedger() {
