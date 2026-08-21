@@ -335,7 +335,7 @@
     css.textContent = '#cookie-consent{position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;max-width:520px;margin:0 auto;background:#111;color:#fff;border-radius:14px;padding:16px 18px;box-shadow:0 8px 30px rgba(0,0,0,.35);font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45}#cookie-consent p{margin:0 0 12px}#cookie-consent .cc-row{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}#cookie-consent button{border:0;border-radius:999px;padding:9px 18px;font-size:14px;font-weight:600;cursor:pointer}#cookie-consent .cc-reject{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.55)}#cookie-consent .cc-accept{background:#f5cb5c;color:#111}';
     document.head.appendChild(css);
     var d = document.createElement('div'); d.id = 'cookie-consent'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Cookies');
-    d.innerHTML = '<p>We use cookies to measure traffic and for marketing. Accept to allow them, or reject to keep only the essential ones.</p><div class="cc-row"><button type="button" class="cc-reject">Reject</button><button type="button" class="cc-accept">Accept</button></div>';
+    d.innerHTML = '<p>We use cookies to measure traffic and for marketing. Accept to allow them, or reject to keep only the essential ones. <a href="/privacy/" style="color:#f5cb5c">Privacy policy</a></p><div class="cc-row"><button type="button" class="cc-reject">Reject</button><button type="button" class="cc-accept">Accept</button></div>';
     document.body.appendChild(d);
     d.querySelector('.cc-accept').addEventListener('click', function () { decide('accepted'); });
     d.querySelector('.cc-reject').addEventListener('click', function () { decide('rejected'); });
@@ -902,7 +902,7 @@ maze of the city, the <strong>Gothic Quarter</strong>.
         <div class="form-consent rr-full">
           <label class="checkbox-label">
             <input type="checkbox" id="consent" name="consent" required />
-            <span>I agree that Roots &amp; Roads uses my details to manage this booking and send tour-related messages.</span>
+            <span>I agree that Roots &amp; Roads uses my details to manage this booking and send tour-related messages. <a href="/privacy/" target="_blank" rel="noopener">Privacy policy</a></span>
           </label>
           <p class="field-error" data-error-for="consent"></p>
         </div>
@@ -1157,6 +1157,8 @@ was worth for you.
   <div class="about-footer">
     © Roots & Roads Barcelona
     <br>
+    <a href="/privacy/" class="footer-guide-link">Privacy policy</a>
+    &nbsp;·&nbsp;
     <a href="/guide/" class="footer-guide-link">Guide Portal</a>
   </div>
 </section>

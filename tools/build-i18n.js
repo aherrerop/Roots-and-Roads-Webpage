@@ -114,7 +114,7 @@ const D = [
   [">Number of guests</label>", { es: ">Número de asistentes</label>", fr: ">Nombre de participants</label>", de: ">Anzahl der Teilnehmer</label>", it: ">Numero di partecipanti</label>" }],
   [">Anything we should know? (optional)</label>", { es: ">¿Algo que debamos saber? (opcional)</label>", fr: ">Quelque chose à savoir ? (facultatif)</label>", de: ">Sollen wir etwas wissen? (optional)</label>", it: ">Qualcosa che dovremmo sapere? (facoltativo)</label>" }],
   ['placeholder="Special accommodations, requests, questions..."', { es: 'placeholder="Adaptaciones especiales, peticiones, preguntas..."', fr: 'placeholder="Aménagements particuliers, demandes, questions..."', de: 'placeholder="Besondere Wünsche, Anfragen, Fragen..."', it: 'placeholder="Esigenze particolari, richieste, domande..."' }],
-  ["<span>I agree that Roots &amp; Roads uses my details to manage this booking and send tour-related messages.</span>", { es: "<span>Acepto que Roots &amp; Roads use mis datos para gestionar esta reserva y enviarme mensajes relacionados con el tour.</span>", fr: "<span>J’accepte que Roots &amp; Roads utilise mes informations pour gérer cette réservation et m’envoyer des messages liés à la visite.</span>", de: "<span>Ich stimme zu, dass Roots &amp; Roads meine Daten verwendet, um diese Buchung zu verwalten und tourbezogene Nachrichten zu senden.</span>", it: "<span>Accetto che Roots &amp; Roads utilizzi i miei dati per gestire questa prenotazione e inviarmi messaggi relativi al tour.</span>" }],
+  ["I agree that Roots &amp; Roads uses my details to manage this booking and send tour-related messages.", { es: "Acepto que Roots &amp; Roads use mis datos para gestionar esta reserva y enviarme mensajes relacionados con el tour.", fr: "J’accepte que Roots &amp; Roads utilise mes informations pour gérer cette réservation et m’envoyer des messages liés à la visite.", de: "Ich stimme zu, dass Roots &amp; Roads meine Daten verwendet, um diese Buchung zu verwalten und tourbezogene Nachrichten zu senden.", it: "Accetto che Roots &amp; Roads utilizzi i miei dati per gestire questa prenotazione e inviarmi messaggi relativi al tour." }],
   [">Reserve your spot</button>", { es: ">Reserva tu plaza</button>", fr: ">Réservez votre place</button>", de: ">Platz reservieren</button>", it: ">Prenota il tuo posto</button>" }],
 
   // ---- How it works ----
@@ -149,7 +149,8 @@ const D = [
     it: "Usiamo cookie per misurare il traffico e per marketing. Accetta per consentirli o rifiuta per mantenere solo quelli essenziali."
   }],
   [">Reject</button>", { es: ">Rechazar</button>", fr: ">Refuser</button>", de: ">Ablehnen</button>", it: ">Rifiuta</button>" }],
-  [">Accept</button>", { es: ">Aceptar</button>", fr: ">Accepter</button>", de: ">Akzeptieren</button>", it: ">Accetta</button>" }]
+  [">Accept</button>", { es: ">Aceptar</button>", fr: ">Accepter</button>", de: ">Akzeptieren</button>", it: ">Accetta</button>" }],
+  [">Privacy policy</a>", { es: ">Política de privacidad</a>", fr: ">Politique de confidentialité</a>", de: ">Datenschutz</a>", it: ">Informativa sulla privacy</a>" }]
 ];
 
 function transform(html, lang) {

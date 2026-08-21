@@ -335,7 +335,7 @@
     css.textContent = '#cookie-consent{position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;max-width:520px;margin:0 auto;background:#111;color:#fff;border-radius:14px;padding:16px 18px;box-shadow:0 8px 30px rgba(0,0,0,.35);font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45}#cookie-consent p{margin:0 0 12px}#cookie-consent .cc-row{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}#cookie-consent button{border:0;border-radius:999px;padding:9px 18px;font-size:14px;font-weight:600;cursor:pointer}#cookie-consent .cc-reject{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.55)}#cookie-consent .cc-accept{background:#f5cb5c;color:#111}';
     document.head.appendChild(css);
     var d = document.createElement('div'); d.id = 'cookie-consent'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Cookies');
-    d.innerHTML = '<p>Wir verwenden Cookies zur Reichweitenmessung und für Marketing. Akzeptieren Sie, um sie zu erlauben, oder lehnen Sie ab, um nur die essenziellen zu behalten.</p><div class="cc-row"><button type="button" class="cc-reject">Ablehnen</button><button type="button" class="cc-accept">Akzeptieren</button></div>';
+    d.innerHTML = '<p>Wir verwenden Cookies zur Reichweitenmessung und für Marketing. Akzeptieren Sie, um sie zu erlauben, oder lehnen Sie ab, um nur die essenziellen zu behalten. <a href="/privacy/" style="color:#f5cb5c">Datenschutz</a></p><div class="cc-row"><button type="button" class="cc-reject">Ablehnen</button><button type="button" class="cc-accept">Akzeptieren</button></div>';
     document.body.appendChild(d);
     d.querySelector('.cc-accept').addEventListener('click', function () { decide('accepted'); });
     d.querySelector('.cc-reject').addEventListener('click', function () { decide('rejected'); });
@@ -902,7 +902,7 @@ Labyrinth der Stadt, dem <strong>Gotischen Viertel</strong>.
         <div class="form-consent rr-full">
           <label class="checkbox-label">
             <input type="checkbox" id="consent" name="consent" required />
-            <span>Ich stimme zu, dass Roots &amp; Roads meine Daten verwendet, um diese Buchung zu verwalten und tourbezogene Nachrichten zu senden.</span>
+            <span>Ich stimme zu, dass Roots &amp; Roads meine Daten verwendet, um diese Buchung zu verwalten und tourbezogene Nachrichten zu senden. <a href="/privacy/" target="_blank" rel="noopener">Datenschutz</a></span>
           </label>
           <p class="field-error" data-error-for="consent"></p>
         </div>
@@ -1157,6 +1157,8 @@ die Tour wert war.
   <div class="about-footer">
     © Roots & Roads Barcelona
     <br>
+    <a href="/privacy/" class="footer-guide-link">Datenschutz</a>
+    &nbsp;·&nbsp;
     <a href="/guide/" class="footer-guide-link">Guide-Portal</a>
   </div>
 </section>
