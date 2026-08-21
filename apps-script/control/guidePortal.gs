@@ -360,6 +360,100 @@ function jsonp_(callback, obj) {
  ******************************************************/
 
 /** action=login  -> { ok, token, guide, languages } */
+/* =========================================================================
+ * Guide password hashing (salted HMAC-SHA-256).
+ * A stored value is either a legacy plaintext string or "h1:<saltHex>:<hmacHex>".
+ * Login verifies both and upgrades plaintext to a hash on first success, so no
+ * guide is locked out and no manual migration is needed. Management can reset one
+ * (setGuidePassword) or migrate all at once (hashAllGuidePasswords). Not PBKDF2
+ * (Apps Script has no cheap key-stretch), but salted+hashed defeats the real
+ * threat here: someone reading the Guides sheet and harvesting cleartext logins.
+ * ========================================================================= */
+function bytesToHex_(bytes) {
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) out += ('0' + (bytes[i] & 0xff).toString(16)).slice(-2);
+  return out;
+}
+function newSalt_() { return String(Utilities.getUuid()).replace(/-/g, ''); }   // 32 hex chars
+function hashPassword_(plain, salt) {
+  const s = salt || newSalt_();
+  const mac = Utilities.computeHmacSha256Signature(String(plain == null ? '' : plain), s);
+  return 'h1:' + s + ':' + bytesToHex_(mac);
+}
+function isLegacyPlaintext_(stored) { return String(stored == null ? '' : stored).slice(0, 3) !== 'h1:'; }
+function safeEqual_(a, b) {
+  a = String(a); b = String(b);
+  if (a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+function verifyPassword_(stored, submitted) {
+  const s = String(stored == null ? '' : stored);
+  const sub = String(submitted == null ? '' : submitted);
+  if (s.slice(0, 3) === 'h1:') {
+    const parts = s.split(':');
+    if (parts.length !== 3 || !parts[1]) return false;
+    return safeEqual_(hashPassword_(sub, parts[1]), s);
+  }
+  return s !== '' && s === sub;   // legacy plaintext, verified one last time
+}
+/** Write a hashed password into a guide's row, found fresh (uncached) by email. */
+function upgradeGuidePasswordHash_(email, plain) {
+  const e = String(email || '').trim().toLowerCase();
+  const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
+  if (!sh || !sh.getLastRow()) return false;
+  const values = sh.getDataRange().getValues();
+  const cols = guideColumns_(values[0].map(function (h) { return String(h).trim(); }));
+  if (cols.passwordCol < 0 || cols.emailCol < 0) return false;
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][cols.emailCol] || '').trim().toLowerCase() === e) {
+      if (isLegacyPlaintext_(values[i][cols.passwordCol])) {
+        sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(hashPassword_(String(plain)));
+        bumpCacheVersion_();   // the Guides read is cached; refresh it
+      }
+      return true;
+    }
+  }
+  return false;
+}
+/** Management: set/reset a guide's password (stored hashed).
+ *  Run from the editor:  setGuidePassword('guide@email.com', 'new-password') */
+function setGuidePassword(email, newPassword) {
+  const e = String(email || '').trim().toLowerCase();
+  const pw = String(newPassword || '');
+  if (!e || pw.length < 6) throw new Error('Give an email and a password of at least 6 characters.');
+  const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
+  if (!sh) throw new Error('Guides tab not found');
+  const values = sh.getDataRange().getValues();
+  const cols = guideColumns_(values[0].map(function (h) { return String(h).trim(); }));
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][cols.emailCol] || '').trim().toLowerCase() === e) {
+      sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(hashPassword_(pw));
+      bumpCacheVersion_();
+      return 'Password set for ' + e + ' (stored hashed).';
+    }
+  }
+  throw new Error('No guide with email ' + e);
+}
+/** Management one-time: hash every still-plaintext guide password. Safe to re-run. */
+function hashAllGuidePasswords() {
+  const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
+  if (!sh) throw new Error('Guides tab not found');
+  const values = sh.getDataRange().getValues();
+  const cols = guideColumns_(values[0].map(function (h) { return String(h).trim(); }));
+  let n = 0;
+  for (let i = 1; i < values.length; i++) {
+    const cur = values[i][cols.passwordCol];
+    if (cur !== '' && cur != null && isLegacyPlaintext_(cur)) {
+      sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(hashPassword_(String(cur)));
+      n++;
+    }
+  }
+  if (n) bumpCacheVersion_();
+  return 'Hashed ' + n + ' plaintext password(s). Login is unaffected.';
+}
+
 function apiLogin_(p) {
   __RRX = {};
   const email = String(p.email || '').trim().toLowerCase();
@@ -370,9 +464,16 @@ function apiLogin_(p) {
   const guide = findGuideByEmail_(email);
   if (!guide) return { ok: false, error: 'No guide with that email' };
 
-  // Plaintext compare (management keeps readable passwords, by design).
-  if (String(guide.password) !== password) return { ok: false, error: 'Wrong password' };
+  // Verify against a salted hash (or a legacy plaintext value, one last time).
+  if (!verifyPassword_(guide.password, password)) return { ok: false, error: 'Wrong password' };
   if (!guide.active) return { ok: false, error: 'This guide account is inactive' };
+
+  // Upgrade any still-plaintext password to a salted hash on first login — so
+  // guides keep their current password and no manual migration is needed. Never
+  // let the upgrade write block or fail the login.
+  if (isLegacyPlaintext_(guide.password)) {
+    try { upgradeGuidePasswordHash_(email, password); } catch (e) { /* best-effort */ }
+  }
 
   return {
     ok: true,

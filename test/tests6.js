@@ -503,6 +503,17 @@ console.log('--- Sunday now appears on the guide availability sheet ---');
   check('the week still starts on Monday', wd[0] && wd[0].dayName==='Monday', wd[0]);
 })();
 
+console.log('--- Guide passwords: salted hash, legacy plaintext still verifies + upgrades ---');
+const _h = hashPassword_('correct horse');
+check('hash has the h1:salt:hash shape', /^h1:[0-9a-f]{16,}:[0-9a-f]{64}$/.test(_h), _h);
+check('the right password verifies against the hash', verifyPassword_(_h, 'correct horse') === true, null);
+check('a wrong password does NOT verify', verifyPassword_(_h, 'wrong') === false, null);
+check('two hashes of the same password differ (random salt)', hashPassword_('same') !== hashPassword_('same'), null);
+check('legacy plaintext still verifies (no lockout during migration)', verifyPassword_('oldplain', 'oldplain') === true, null);
+check('legacy plaintext rejects a wrong password', verifyPassword_('oldplain', 'nope') === false, null);
+check('empty stored never authenticates', verifyPassword_('', '') === false && verifyPassword_(null, '') === false, null);
+check('isLegacyPlaintext_ flags plaintext, not hashes', isLegacyPlaintext_('oldplain') === true && isLegacyPlaintext_(_h) === false, null);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
