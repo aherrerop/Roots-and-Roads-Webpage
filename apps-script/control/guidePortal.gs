@@ -1710,6 +1710,13 @@ function findGuideByName_(guideName) {
  */
 function readSchedule_(opts) {
   const includePast = !!(opts && opts.includePast);
+  // Memoise per-run (__RRX): the hourly queue build reads the schedule grids up to
+  // 3× (no-show, unassigned-with-past, GuruWalk); reading every Schedule_ grid is
+  // one of the slowest calls, so one read per (includePast) variant serves them all
+  // — a big slice off the run that was hitting the 6-min kill. Safe: nothing writes
+  // the schedule grids between these reads within a run.
+  const memoKey = includePast ? 'schedPast' : 'sched';
+  if (__RRX.qRun && __RRX[memoKey]) return __RRX[memoKey];
   const ss = control_();
   const today = todayKey_();
   const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
@@ -1808,6 +1815,7 @@ function readSchedule_(opts) {
   });
 
   deduped.sort((a, b) => (a.dateKey + a.time).localeCompare(b.dateKey + b.time));
+  if (__RRX.qRun) __RRX[memoKey] = deduped;
   return deduped;
 }
 
@@ -3671,7 +3679,10 @@ function updateManagementQueuesCore_() {
   // Budget the run so it ALWAYS returns before the ~6-min hard kill. Each step is
   // idempotent and rebuilt hourly, so skipping the tail of a slow (Google-I/O
   // stalled) cycle just defers that work to the next run — never a failure email.
-  __RRX = {};                                  // fresh per-run memo (readAllCheckins_ etc.)
+  __RRX = { qRun: true };                      // fresh per-run memo; qRun enables the
+                                               // heavy-read memoisation only in THIS
+                                               // background job (the poll never sets it,
+                                               // so a read-after-write there stays fresh).
   QUEUES_DEADLINE_ = Date.now() + PORTAL.QUEUES_BUDGET_MS;
   const step = (fn) => { if (queuesHaveTimeLeft_()) fn(); };
   try {
@@ -3697,7 +3708,7 @@ function queuesHaveTimeLeft_() { return !QUEUES_DEADLINE_ || Date.now() < QUEUES
  *  no-show, GuruWalk) and no guide-ledger write happens between them, so one read
  *  serves all three — a big slice off the run that was hitting the 6-min kill. */
 function readAllCheckins_() {
-  if (__RRX.checkins) return __RRX.checkins;
+  if (__RRX.qRun && __RRX.checkins) return __RRX.checkins;
   const ss = ledgerSS_();
   const out = {};
   ss.getSheets().forEach(sh => {
@@ -3730,12 +3741,18 @@ function readAllCheckins_() {
       };
     });
   });
-  return (__RRX.checkins = out);
+  if (__RRX.qRun) __RRX.checkins = out;
+  return out;
 }
 
-/** Completed bookings from the BookingSheet's hidden Completed Log tab. */
+/** Completed bookings from the BookingSheet's hidden Completed Log tab.
+ *  Memoised per-run (__RRX): the hourly queue build reads it 3× (unassigned,
+ *  no-show, GuruWalk) and only the booking project ever writes it, so one read
+ *  serves the whole run — trimming the run that was hitting the 6-min kill. */
 function readCompletedLog_() {
+  if (__RRX.qRun && __RRX.completedLog) return __RRX.completedLog;
   const out = [];
+  if (__RRX.qRun) __RRX.completedLog = out;   // cache now; a mid-read failure still memoises what we have
   try {
     const sh = bookingSS_().getSheetByName('Completed Log');
     if (!sh || sh.getLastRow() < 2) return out;
