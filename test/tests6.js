@@ -32,14 +32,13 @@ check('Italian guide does NOT also speak English (no fallback)', g('Giulia').lan
 console.log('--- Eligibility: Italian / French, no cross-language fallback ---');
 const d3=key(day(3));
 const gbl={English:['Albert','Hans'],Spanish:['Sofia'],Italian:['Giulia','Sofia'],French:['Pierre']};
-const busy=buildBusyMap_([]);
-const eligIt=eligibleGuidesForShift_({dateKey:d3,minutes:11*60,language:'Italian',private:false},busy,gbl);
+const eligIt=eligibleGuidesForShift_({dateKey:d3,minutes:11*60,language:'Italian',private:false},gbl);
 check('Italian 11:00 eligible = Italian speakers only', eligIt.slice().sort().join()==='Giulia,Sofia', eligIt);
 check('English-only guide NOT eligible for Italian shift', eligIt.indexOf('Albert')===-1, eligIt);
-const eligFr=eligibleGuidesForShift_({dateKey:d3,minutes:17*60,language:'French',private:false},busy,gbl);
+const eligFr=eligibleGuidesForShift_({dateKey:d3,minutes:17*60,language:'French',private:false},gbl);
 check('French 17:00 eligible = Pierre', eligFr.join()==='Pierre', eligFr);
 check('non-French guide NOT eligible for French shift', eligFr.indexOf('Giulia')===-1, eligFr);
-const eligEn=eligibleGuidesForShift_({dateKey:d3,minutes:11*60,language:'English',private:false},busy,gbl);
+const eligEn=eligibleGuidesForShift_({dateKey:d3,minutes:11*60,language:'English',private:false},gbl);
 check('regression: English 11:00 eligible = Albert,Hans', eligEn.slice().sort().join()==='Albert,Hans', eligEn);
 
 console.log('--- Booking routing: move into Italian / French Tours ---');
@@ -430,12 +429,10 @@ check('shiftDomId_ regular = shiftKey_',
 check('shiftDomId_ private = key|P<idx>',
   shiftDomId_({dateKey:'2026-07-30',minutes:660,language:'Italian',private:true,privIndex:2})==='2026-07-30|660|italian|P2', null);
 check('an unclosed shift is not in the closed set', !closedSet['2026-07-30|660|french'], closedSet);
-// New semantics: a closed shift with a booking must reappear.
-const _closeFilter=(shifts,closed,bbk)=>shifts.filter(s=>{
-  if(!closed[shiftDomId_(s)]) return true;
-  const list=bbk[shiftKey_(s.dateKey,s.minutes,s.language)]||[];
-  return list.some(b=>s.private?/privat/i.test(b.note||''):!/privat/i.test(b.note||''));
-});
+// New semantics: a closed slot stays hidden while EMPTY, but a real booking
+// landing on it must resurface it. Exercises the REAL production helper.
+const _closeFilter=(shifts,closed,bbk)=>shifts.filter(s=>
+  !closed[shiftDomId_(s)] || bookingsForShift_(bbk,s).length>0);
 const _s1={dateKey:'2026-07-30',minutes:660,language:'Italian',private:false};
 const _s2={dateKey:'2026-07-31',minutes:660,language:'Italian',private:false};
 const _closed={'2026-07-30|660|italian':true,'2026-07-31|660|italian':true};
@@ -443,6 +440,28 @@ const _bbk={}; _bbk[shiftKey_('2026-07-31',660,'Italian')]=[{bookingId:'X',note:
 const _kept=_closeFilter([_s1,_s2],_closed,_bbk);
 check('closed shift with NO booking stays hidden', !_kept.some(s=>s.dateKey==='2026-07-30'), _kept);
 check('closed shift WITH a booking comes back', _kept.some(s=>s.dateKey==='2026-07-31'), _kept);
+
+// bookingsForShift_: a slot holding BOTH a private and a regular tour splits
+// correctly (Jorge-style regular booking overlapping David's private one).
+const _ov={}; _ov[shiftKey_('2026-08-25',600,'English')]=[
+  {bookingId:'DAVID',note:'Private'}, {bookingId:'JORGE',note:''},
+  {bookingId:'SHIFT',note:'',rowType:'shift'}];
+const _reg=bookingsForShift_(_ov,{dateKey:'2026-08-25',minutes:600,language:'English',private:false});
+const _prv=bookingsForShift_(_ov,{dateKey:'2026-08-25',minutes:600,language:'English',private:true});
+check('overlap: regular shift takes only the non-private booking',
+  _reg.length===1 && _reg[0].bookingId==='JORGE', _reg);
+check('overlap: private shift takes only the private booking',
+  _prv.length===1 && _prv[0].bookingId==='DAVID', _prv);
+check('overlap: 0-person placeholder is never a booking',
+  !_reg.concat(_prv).some(b=>b.bookingId==='SHIFT'), _reg.concat(_prv));
+
+// EVERY guide who speaks the language is offered for overlapping tours, so the
+// manager can put one guide on two nearby slots (contacts + retime). Busy state
+// no longer filters anyone out — a guide already on 10:00 still appears for 10:30.
+const _shift={dateKey:'2026-08-25',minutes:630,language:'English',private:false}; // 10:30
+const _elig=eligibleGuidesForShift_(_shift,{English:['Carlos','Susi'],German:['Hans']});
+check('every English guide is offered for an overlapping tour', _elig.indexOf('Carlos')>-1 && _elig.indexOf('Susi')>-1, _elig);
+check('other-language guides are still NOT offered', _elig.indexOf('Hans')===-1, _elig);
 
 console.log('--- Token signing: auto-provisioned secret, round-trip, tampering fails ---');
 const _secret = tokenSecret_();

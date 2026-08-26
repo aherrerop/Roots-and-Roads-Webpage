@@ -119,7 +119,15 @@ const PORTAL = {
   // the Weekly_Schedule, and Closed_Shifts. A 5-min TTL means far fewer cold reads
   // (the main source of the Google I/O stalls that spiked `assemble` to 30-100s),
   // and the only cost is a direct sheet edit taking <=5 min to show.
-  CONFIG_TTL: 300
+  CONFIG_TTL: 300,
+
+  // Wall-clock budget (ms) for the hourly updateManagementQueues run. Apps Script
+  // hard-kills an execution at ~6 min with "Exceeded maximum execution time" — a
+  // termination that no try/catch can trap, so it always emails a failure summary.
+  // Every queue step is idempotent and rebuilt hourly, so once we cross this budget
+  // we STOP cleanly and let the next hourly run finish. 4.5 min leaves margin for
+  // the step already in flight to complete under the 6-min kill.
+  QUEUES_BUDGET_MS: 270000
 };
 
 // PER-EXECUTION memo. Apps Script re-creates globals on every request, so this
@@ -602,12 +610,18 @@ function apiTours_(p) {
     });
   }
 
-  // A deleted (closed) shift stays gone — it does NOT reappear even if it still
-  // has a booking (manager's explicit call; the grid cell was also cleared, which
-  // frees its guide). Reopen from the Closed_Shifts tab to bring it back.
+  // A closed (deleted) shift stays hidden ONLY while it is empty — closing frees
+  // its guide and stops a Weekly_Schedule offer from re-surfacing an empty slot.
+  // But a close must NEVER swallow a real booking: a NEW reservation landing on a
+  // previously-closed slot (same date|time|language) has to resurface it, or the
+  // guest is invisible and unassigned. Maxim: cannot miss a booking. So a closed
+  // shift is dropped only when it has no matching (private/regular) reservation;
+  // once one exists the slot reappears (Not assigned) for the manager to staff.
   schedule = _t('closed', function () {
     const closed = readClosedShifts_();
-    return schedule.filter(s => !closed[shiftDomId_(s)]);
+    return schedule.filter(s =>
+      !closed[shiftDomId_(s)] ||                              // not closed -> show
+      bookingsForShift_(bookingsByKey, s).length > 0);        // closed but has a real booking -> resurface
   });
 
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
@@ -616,9 +630,7 @@ function apiTours_(p) {
     const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
     // A private shift shows only its private booking(s); a regular shift only
     // the non-private ones. That's what splits Fake (regular) from Fake 2 (private).
-    const bookings = (bookingsByKey[key] || [])
-      .filter(b => (b.rowType || 'booking') !== 'shift')   // skip 0-person shift placeholders
-      .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''))
+    const bookings = bookingsForShift_(bookingsByKey, shift)
       .map(b => {
         const kk = key + '|' + b.bookingId;
         const ck = priorCheckins[kk];                 // ledger check-in, if any
@@ -690,7 +702,6 @@ function apiTours_(p) {
   // check-ins), and can save on a guide's behalf.
   let allTours = [];
   let guidesByLanguage = null;
-  let busyMap = null;
   if (isManager) _t('mgrGuides', function () {
     guidesByLanguage = {};
     const seniorityOf = {};
@@ -707,15 +718,13 @@ function apiTours_(p) {
       });
     });
     // Most senior first (then alphabetical), so the assign list's top choice is
-    // the guide management would usually pick — often a one-tap decision.
+    // the guide management would usually pick — often a one-tap decision. Every
+    // guide who speaks the language is offered (overlaps allowed), so there is no
+    // "busy" filtering to compute here any more.
     Object.keys(guidesByLanguage).forEach(l => {
       guidesByLanguage[l].sort((a, b) =>
         (seniorityOf[a] - seniorityOf[b]) || a.localeCompare(b));
     });
-    // Eligibility counts only REAL assignments as "busy" — a weekly DEFAULT never
-    // blocks a manual assignment (the manager can always override a default), so
-    // a guide defaulted onto 10:00 is still offered for the adjacent 11:00.
-    busyMap = buildBusyMap_(schedule.filter(s => !s.weeklyDefault));
     return 0;
   });
   // The manager "All tours" list loads the near-term window first (today .. +N
@@ -732,9 +741,7 @@ function apiTours_(p) {
     allTours = schedule.filter(s => s.dateKey <= managerHorizon).map(shift => {
       const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
       const primary = shift.assigned[0] || '';
-      const bookings = (bookingsByKey[key] || [])
-        .filter(b => (b.rowType || 'booking') !== 'shift')   // skip 0-person shift placeholders
-        .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''))
+      const bookings = bookingsForShift_(bookingsByKey, shift)
         .map(b => {
           const kk = key + '|' + b.bookingId;
           const cke = priorCheckins[kk];              // ledger check-in, if any
@@ -758,7 +765,7 @@ function apiTours_(p) {
         dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
         time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
         privIndex: shift.privIndex || 1,
-        eligible: eligibleGuidesForShift_(shift, busyMap, guidesByLanguage),
+        eligible: eligibleGuidesForShift_(shift, guidesByLanguage),
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
         bookedGuests: bookings.reduce((s, b) => s + Number(b.guests || 0), 0),
@@ -1061,26 +1068,11 @@ function apiAssign_(p) {
       return { ok: false, error: guide + ' does not speak ' + language };
     }
 
-    // Incompatibility check: another tour within MIN_SEPARATION_HOURS.
-    // Management can ENFORCE the change anyway with force=1 (the portal asks
-    // for confirmation first) — the decision is theirs, but never accidental.
-    if (String(p.force || '') !== '1') {
-      const target = { dateKey, minutes: timeToMinutes_(time), language, private: isPriv, privIndex };
-      const myKey = shiftKeyFull_(target);
-      const st = shiftStartMs_(dateKey, target.minutes);
-      const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
-      const b = buildBusyMap_(readSchedule_())[guide.trim().toLowerCase()] || [];
-      const clash = b.find(x => x.k !== myKey && Math.abs(x.ms - st) < sepMs);
-      if (clash) {
-        const parts = clash.k.split('|');
-        return {
-          ok: false, conflict: true,
-          error: guide + ' already has a tour on ' + parts[0] + ' at ' +
-                 to12h_(minutesToTime_(Number(parts[1]))) + ' (' + parts[2] + ') — less than ' +
-                 ASSIGN_CFG.MIN_SEPARATION_HOURS + 'h apart.'
-        };
-      }
-    }
+    // Overlapping tours are ALLOWED for EVERY guide: management deliberately puts
+    // one guide on two nearby tours so that guide gets both parties' contacts and
+    // can change their start times. So there is no MIN_SEPARATION block here — the
+    // manager decides who runs what. (The batch auto-scheduler in assignShifts.gs
+    // still spaces guides out; this manual assign is the intentional override.)
   }
 
   const lock = LockService.getScriptLock();
@@ -1139,13 +1131,16 @@ function apiMoveBooking_(p) {
   const toLanguage = String(p.toLanguage || fromLanguage).trim();
   const toTimeRaw = String(p.toTime || '').trim();
   const t24 = toTimeRaw ? normTime24_(toTimeRaw) : '';
+  const toDate = String(p.toDate || '').trim();   // yyyy-MM-dd, or '' to keep the day
   if (!bookingId || !fromLanguage || !toLanguage) return { ok: false, error: 'Missing booking info' };
   if (toTimeRaw && !/^\d{1,2}:\d{2}$/.test(t24)) return { ok: false, error: 'Enter a valid time like 12:30 or 12:30 PM' };
+  if (toDate && !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) return { ok: false, error: 'Pick a valid date' };
+  if (toDate && toDate < todayKey_()) return { ok: false, error: 'Cannot move a guest to a past date' };
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
-    let langMoved = false, timeMoved = false;
+    let langMoved = false, timeMoved = false, dateMoved = false;
 
     // 1. Language: move the booking's row to the target language's Tours tab.
     //    moveBookingRowBetweenTabs_ checks both tabs exist BEFORE deleting, so a
@@ -1165,16 +1160,28 @@ function apiMoveBooking_(p) {
       else if (!tm.ok) timeErr = tm.error;   // surface, but the language move (if any) already stands
     }
 
+    // 3. Day: rewrite the Tour date in the same target tab. The feed regroups the
+    //    booking onto the new day (booking-driven), CREATING that day's tour if none
+    //    existed — exactly like a time move, just the date cell instead.
+    let dateErr = null;
+    if (toDate) {
+      const dm = moveBookingDateInTab_(bookingId, toLanguage, toDate);
+      if (dm.ok && dm.moved) { dateMoved = true; writeFeedDate_(bookingId, toDate); }
+      else if (!dm.ok) dateErr = dm.error;
+    }
+
+    const anyMove = langMoved || timeMoved || dateMoved;
     // A moved booking must not carry its old tour's guide into the new slot — the
     // new tour starts unassigned (the manager decides). The target keeps its own
     // guide if its other bookings already have one.
-    if (langMoved || timeMoved) clearFeedGuide_(bookingId);
+    if (anyMove) clearFeedGuide_(bookingId);
 
     // Reflect whatever changed on the very next poll (feed already updated above).
-    if (langMoved || timeMoved) { bumpFeedCacheVersion_(); bumpCacheVersion_(); }
+    if (anyMove) { bumpFeedCacheVersion_(); bumpCacheVersion_(); }
 
-    if (timeErr) return { ok: false, error: timeErr, moved: (langMoved || timeMoved), to: toLanguage };
-    return { ok: true, moved: (langMoved || timeMoved), to: toLanguage, toTime: t24 ? to12h_(t24) : '' };
+    const err = timeErr || dateErr;
+    if (err) return { ok: false, error: err, moved: anyMove, to: toLanguage };
+    return { ok: true, moved: anyMove, to: toLanguage, toTime: t24 ? to12h_(t24) : '', toDate: toDate };
   } finally {
     lock.releaseLock();
   }
@@ -1296,6 +1303,41 @@ function moveBookingTimeInTab_(bookingId, language, t24) {
   // Tours tabs and the availability feed. All reads go through normTime24_.
   sh.getRange(rowNum, 5).setNumberFormat('@').setValue(to12h_(t24));
   return { ok: true, moved: true, to: to12h_(t24) };
+}
+
+/**
+ * Manager: move a booking to a DIFFERENT DAY (same language tab). We only rewrite
+ * the booking's Tour date cell; the feed rebuild then regroups the booking under
+ * the new date, CREATING that day's tour if none existed (the feed is
+ * booking-driven) — the mirror of moveBookingTimeInTab_. Manager-only, locked and
+ * cache-bumped by apiMoveBooking_. dateKey is "yyyy-MM-dd".
+ */
+function moveBookingDateInTab_(bookingId, language, dateKey) {
+  const ss = bookingSS_();
+  const sh = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
+  if (!sh) return { ok: false, error: language + ' Tours tab not found' };
+
+  const idNorm = bookingId.toUpperCase().replace(/\s+/g, '');
+  const last = sh.getLastRow();
+  if (last < 2) return { ok: false, error: bookingId + ' not found in ' + language + ' Tours' };
+
+  // Columns (ACTIVE_HEADERS): D(4)=Tour date, H(8)=Booking ID.
+  const rows = sh.getRange(2, 1, last - 1, 9).getValues();
+  let rowNum = -1, curKey = '';
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (String(rows[i][7] || '').toUpperCase().replace(/\s+/g, '') === idNorm) {
+      rowNum = i + 2;
+      curKey = toDateKey_(rows[i][3]);
+      break;
+    }
+  }
+  if (rowNum === -1) return { ok: false, error: bookingId + ' not found in ' + language + ' Tours' };
+  if (curKey === dateKey) return { ok: true, moved: false };
+
+  // The Tours tabs hold real Date values (the booking sync writes a stripped date);
+  // noon avoids any UTC/local off-by-one, and every read goes through toDateKey_.
+  sh.getRange(rowNum, 4).setValue(new Date(dateKey + 'T12:00:00'));
+  return { ok: true, moved: true, to: dateKey };
 }
 
 /**
@@ -1941,6 +1983,28 @@ function writeFeedTime_(bookingId, time12h) {
     for (let i = 0; i < ids.length; i++) {
       if (String(ids[i][0] || '').trim() === id) {
         sh.getRange(i + 2, 2, 1, 1).setNumberFormat('@').setValue(String(time12h || ''));   // B = Time
+        done = true;
+      }
+    }
+    return done;
+  } catch (e) { return false; }
+}
+
+/** Reflect a booking's NEW DAY on its Portal Feed row (col A) right away, so a
+ *  manager's day-move shows on the next poll instead of waiting for the 5-min feed
+ *  rebuild (which re-reads the Tours tab the move also updated). Best-effort. The
+ *  feed's Date column is the ISO dateKey ("yyyy-MM-dd"), stored as text. */
+function writeFeedDate_(bookingId, dateKey) {
+  try {
+    const id = String(bookingId || '').trim();
+    if (!id) return false;
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
+    let done = false;
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || '').trim() === id) {
+        sh.getRange(i + 2, 1, 1, 1).setNumberFormat('@').setValue(String(dateKey || ''));   // A = Date
         done = true;
       }
     }
@@ -3056,6 +3120,20 @@ function shiftKeyFull_(s) {
 }
 
 /** guideNameLower -> [{ms, k}] of every assignment in the schedule. */
+/**
+ * The real (non-placeholder) bookings that belong to a shift. A slot (date|time|
+ * language) can hold BOTH a private and a regular tour; a private shift takes the
+ * "Private"-noted bookings, a regular shift the rest. 0-person 'shift' placeholder
+ * rows are never bookings. This is the single definition used everywhere the
+ * schedule is rendered or a closed slot is tested — so the split can't drift.
+ */
+function bookingsForShift_(bookingsByKey, shift) {
+  const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
+  return (bookingsByKey[key] || [])
+    .filter(b => (b.rowType || 'booking') !== 'shift')
+    .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''));
+}
+
 function buildBusyMap_(schedule) {
   const busy = {};
   (schedule || []).forEach(s => {
@@ -3071,19 +3149,14 @@ function buildBusyMap_(schedule) {
 }
 
 /**
- * Guides who can take this shift WITHOUT creating an incompatibility:
- * speak the language, active, and no other assigned tour within
- * MIN_SEPARATION_HOURS. This feeds the portal's assign dropdown, so managers
- * are only offered compatible choices by default.
+ * Guides offered for this shift's assign dropdown: EVERY active guide who speaks
+ * the language. A guide already on a nearby tour is still offered on purpose —
+ * management deliberately assigns overlapping tours to one guide so they get the
+ * guests' contacts and can retime them. (The old MIN_SEPARATION filter blocked
+ * that; the batch auto-scheduler in assignShifts.gs still spaces guides out.)
  */
-function eligibleGuidesForShift_(shift, busy, guidesByLanguage) {
-  const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
-  const myKey = shiftKeyFull_(shift);
-  const st = shiftStartMs_(shift.dateKey, shift.minutes);
-  return (guidesByLanguage[shift.language] || []).filter(n => {
-    const b = busy[String(n).trim().toLowerCase()] || [];
-    return !b.some(x => x.k !== myKey && Math.abs(x.ms - st) < sepMs);
-  });
+function eligibleGuidesForShift_(shift, guidesByLanguage) {
+  return (guidesByLanguage[shift.language] || []).slice();
 }
 
 /** yyyy-MM-dd of the Sunday ending the current week (today..Sunday window). */
@@ -3595,22 +3668,36 @@ function updateManagementQueues() {
 function updateManagementQueuesCore_() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) return;
+  // Budget the run so it ALWAYS returns before the ~6-min hard kill. Each step is
+  // idempotent and rebuilt hourly, so skipping the tail of a slow (Google-I/O
+  // stalled) cycle just defers that work to the next run — never a failure email.
+  __RRX = {};                                  // fresh per-run memo (readAllCheckins_ etc.)
+  QUEUES_DEADLINE_ = Date.now() + PORTAL.QUEUES_BUDGET_MS;
+  const step = (fn) => { if (queuesHaveTimeLeft_()) fn(); };
   try {
     ensureQueueTabs_();
-    reconcilePortalFeed_();          // keep the feed's check-ins and the ledger honest
-    syncFeedGuides_();               // keep the feed's Guide column in step with the schedule
-    updateNoShowQueues_();
-    updateGuruwalkCheckinQueue_();
-    rebuildUnassignedLedger_();
+    step(reconcilePortalFeed_);      // keep the feed's check-ins and the ledger honest
+    step(syncFeedGuides_);           // keep the feed's Guide column in step with the schedule
+    step(updateNoShowQueues_);
+    step(updateGuruwalkCheckinQueue_);
+    step(rebuildUnassignedLedger_);
     markHealthEvent_('HB_QUEUES');
-    updateControlHealth_();
+    step(updateControlHealth_);
   } finally {
     lock.releaseLock();
   }
 }
 
-/** All check-in keys across every guide tab: "bookingId|dateKey" -> guide. */
+// Wall-clock deadline for the current updateManagementQueues run (0 = unset).
+var QUEUES_DEADLINE_ = 0;
+function queuesHaveTimeLeft_() { return !QUEUES_DEADLINE_ || Date.now() < QUEUES_DEADLINE_; }
+
+/** All check-in keys across every guide tab: "bookingId|dateKey" -> guide.
+ *  Memoised per-run (__RRX): the hourly queue build reads this 3× (reconcile,
+ *  no-show, GuruWalk) and no guide-ledger write happens between them, so one read
+ *  serves all three — a big slice off the run that was hitting the 6-min kill. */
 function readAllCheckins_() {
+  if (__RRX.checkins) return __RRX.checkins;
   const ss = ledgerSS_();
   const out = {};
   ss.getSheets().forEach(sh => {
@@ -3643,7 +3730,7 @@ function readAllCheckins_() {
       };
     });
   });
-  return out;
+  return (__RRX.checkins = out);
 }
 
 /** Completed bookings from the BookingSheet's hidden Completed Log tab. */

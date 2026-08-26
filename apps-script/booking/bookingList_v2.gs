@@ -1519,7 +1519,7 @@ function processCancellationLabel_(labelName, source) {
         // code) must survive a stale cancellation email for that code.
         if (isReinstated_(source, cancelled.bookingId)) { acted++; continue; }
 
-        removeActiveBooking_(cancelled);
+        removeActiveBooking_(cancelled, true);   // lenient: a cancellation may lack a phone/id (Airbnb)
         acted++;
         if (cancelled.bookingId) {
           removeActiveBookingBySourceAndId_(source, cancelled.bookingId);
@@ -1618,12 +1618,18 @@ function getCancellationCache_() {
 
 
 function cancellationBookingsFromThread_(thread, source) {
-  const parsed = uniqueBookings_(parseThread_(thread, source, 'cancel'));
   const out = [];
 
-  parsed.forEach(b => {
+  // Parse WITHOUT uniqueBookings_: that runs isValidBooking_, which REQUIRES a
+  // bookingId — and a codeless cancellation (Airbnb sends no confirmation code)
+  // would be silently dropped, so the cancelled tour never left the list. A
+  // cancellation is actionable from a name alone; it is matched to its booking
+  // downstream by id OR date+time+name (cancellationMatchesBooking_). Dedupe the
+  // same way so a thread carrying the same cancellation twice yields one entry.
+  parseThread_(thread, source, 'cancel').forEach(b => {
     const n = normalizeBooking_({ ...b, source });
-    if (n.bookingId || n.name) out.push(n);
+    if (!(n.bookingId || n.name)) return;
+    if (!out.some(x => cancellationMatchesBooking_(x, n))) out.push(n);
   });
 
   if (out.length) return out;
@@ -3090,10 +3096,14 @@ function writeBookingRow_(sh, rowNumber, booking) {
 }
 
 
-function removeActiveBooking_(booking) {
+function removeActiveBooking_(booking, lenient) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const target = normalizeBooking_(booking);
 
+  // A CANCELLATION matches like cancellationMatchesBooking_: same id, OR same
+  // date+time with a compatible name OR phone. The strict sameBooking_ needs BOTH
+  // name AND phone, which never matches a phone-less source — Airbnb gives no phone,
+  // so a strict cancellation left the tour on the list forever (Vladimir, TA4XBEYM).
   activeSheetNames_().forEach(sheetName => {
     const sh = ss.getSheetByName(sheetName);
     if (!sh || sh.getLastRow() < 2) return;
@@ -3102,7 +3112,9 @@ function removeActiveBooking_(booking) {
     const deleteRows = [];
 
     for (let i = 0; i < rows.length; i++) {
-      if (sameBooking_(rowToBooking_(rows[i], sheetName), target)) deleteRows.push(i + 2);
+      const rb = rowToBooking_(rows[i], sheetName);
+      const hit = lenient ? cancellationMatchesBooking_(target, rb) : sameBooking_(rb, target);
+      if (hit) deleteRows.push(i + 2);
     }
 
     deleteRows.sort((a, b) => b - a).forEach(row => sh.deleteRow(row));
@@ -3498,10 +3510,22 @@ function parseViatorMessage_(msg, mode) {
   const rawTime = extractViatorTime_(text);
   const rawPhone = extractViatorPhone_(text);
 
+  // LANGUAGE: the customer's chosen language is the TOUR GRADE (the product
+  // variant they actually booked), e.g. "Tour Grade: Italian Tour 16:00" /
+  // "Tour Grade Description: Italian-language tour". The separate "Tour Language:"
+  // line is often a generic default ("English - Guide") even on a non-English
+  // tour, so it must NEVER override the grade — that sent an Italian booking to
+  // the English tour. Prefer the grade; fall back to "Tour Language:" only when
+  // the grade names no language.
+  const gradeText = extractFirst_(text, [
+    /Tour Grade Description:\s*([^\n\r]+)/i,
+    /Tour Grade:\s*([^\n\r]+)/i
+  ]);
   const languageText = extractFirst_(text, [
     /Tour Language:\s*([^\n\r]+)/i,
     /Language:\s*([^\n\r]+)/i
   ]);
+  const language = languageFromText_(gradeText) || normalizeLanguage_(languageText);
 
   const income = extractViatorNetRate_(text);
   const isPrivate = RNR.PRIVATE_TOUR_KEYWORDS.test(text);   // Viator private tours
@@ -3512,7 +3536,7 @@ function parseViatorMessage_(msg, mode) {
     guests: explicitGuests || 1,
     date: normalizeDate_(dateText),
     time: rawTime ? normalizeTime_(rawTime) : '',
-    language: normalizeLanguage_(languageText),
+    language: language,
     source: RNR.SOURCE.VIATOR,
     income,
     bookingId,
@@ -3739,6 +3763,12 @@ function parseAirbnbMessage_(msg, mode) {
   const isCancel =
     /cancelled your experience/i.test(subject) ||
     /canceled your experience/i.test(subject) ||
+    // Guest-initiated cancellations read "<Name> canceled their reservation"
+    // (subject AND body) with a "Canceled reservation" heading — the word order
+    // is reversed from "reservation canceled", so it needs its own patterns or
+    // the whole cancellation is missed and the booking never leaves the list.
+    /cancell?ed (?:their|the) reservation/i.test(text) ||
+    /cancell?ed reservation/i.test(text) ||
     /reservation (was )?cancelled/i.test(text) ||
     /reservation (was )?canceled/i.test(text) ||
     /guest (has )?cancelled/i.test(text) ||
@@ -3761,6 +3791,10 @@ function parseAirbnbMessage_(msg, mode) {
     /Confirmed:\s*([A-Za-zÀ-ÿ' -]+?)\s+booked your experience/i,
     /Fwd:\s*Confirmed:\s*([A-Za-zÀ-ÿ' -]+?)\s+booked your experience/i,
     /^([A-Za-zÀ-ÿ' -]+?)\s+booked your experience/im,
+    // Cancellation: "<Name> canceled their reservation". Needed so a cancellation
+    // (which carries NO confirmation code) can still be matched to its booking by
+    // name + date + time.
+    /([A-Za-zÀ-ÿ' -]+?)\s+cancell?ed (?:their|the) reservation/i,
     /\n([A-Za-zÀ-ÿ' -]+)\n\s*Identity verified/i
   ]);
 
@@ -3769,18 +3803,30 @@ function parseAirbnbMessage_(msg, mode) {
     /Guests\s+(\d+)\s+adults?/i,
     /Guests\s*\n\s*(\d+)\s+guests?/i,
     /Guests\s+(\d+)\s+guests?/i,
-    /(\d+)\s+adults?/i
+    /(\d+)\s+adults?/i,
+    /·\s*(\d+)\s+guests?/i,                             // cancellation: "… 11:00 AM · 2 guests"
+    /(\d+)\s+guests?/i
   ]);
 
   const dateText = extractFirst_(text, [
     /Date and time[\s\S]{0,220}?([A-Za-z]{3},\s+[A-Za-z]+\s+\d{1,2},\s+\d{4})/i,
     /Date and time[\s\S]{0,220}?([A-Za-z]+\s+\d{1,2},\s+\d{4})/i,
-    /booked your experience for\s+([A-Za-z]+\s+\d{1,2})/i
+    /booked your experience for\s+([A-Za-z]+\s+\d{1,2})/i,
+    // Cancellation body: "Friday, August 28  11:00 AM · 2 guests" (no year, no
+    // "Date and time" label). The full weekday name ("Friday", not "Fri") anchors
+    // it to the TOUR line, never the forwarded "Date: Fri, Aug 21" header. Date
+    // and time are read independently — HTML→text can split them onto separate
+    // lines — so no adjacency is required. normalizeAirbnbDate_ fills the year.
+    /[A-Za-z]+day,?\s+([A-Za-z]+\s+\d{1,2})\b/i
   ]);
 
   const timeText = extractFirst_(text, [
     /Date and time[\s\S]{0,260}?(\d{1,2}:\d{2}\s*(?:AM|PM))/i,
-    /(\d{1,2}:\d{2}\s*(?:AM|PM))\s*[–-]\s*\d{1,2}:\d{2}/i
+    /(\d{1,2}:\d{2}\s*(?:AM|PM))\s*[–-]\s*\d{1,2}:\d{2}/i,
+    // Cancellation: the tour time near the weekday-date line. Anchored on the full
+    // weekday so it takes "11:00 AM" from "Friday, August 28 … 11:00 AM" and never
+    // the forwarded email header's "Fri, Aug 21 … 11:27 AM". Tolerates a line break.
+    /[A-Za-z]+day,?\s+[A-Za-z]+\s+\d{1,2}[\s\S]{0,25}?(\d{1,2}:\d{2}\s*(?:AM|PM))/i
   ]);
 
   const incomeText = extractFirst_(text, [
@@ -3819,9 +3865,12 @@ function parseAirbnbMessage_(msg, mode) {
 
 function normalizeAirbnbDate_(dateText, fallbackMsgDate) {
   const s = cleanText_(dateText);
-  const full = normalizeDate_(s);
-  if (full) return full;
 
+  // A YEAR-LESS "Month Day" (e.g. "August 28" from a cancellation) MUST take its
+  // year from the email date. This case is handled FIRST: normalizeDate_ would
+  // otherwise parse "August 28" with JavaScript's default year (2001), and the
+  // cancellation's 2001-dateKey would never match the booking's real-year one, so
+  // the cancelled tour would never be removed from the list.
   const m = s.match(/^([A-Za-z]+)\s+(\d{1,2})$/);
   if (m) {
     const base = fallbackMsgDate instanceof Date ? fallbackMsgDate : new Date();
@@ -3833,7 +3882,7 @@ function normalizeAirbnbDate_(dateText, fallbackMsgDate) {
       if (!isNaN(d)) return stripTime_(d);
     }
   }
-  return null;
+  return normalizeDate_(s) || null;   // strings that already carry a year
 }
 
 
@@ -4464,6 +4513,21 @@ function normalizeLanguage_(x) {
   }
   // Genuinely unknown languages default to English (unchanged legacy behaviour).
   return RNR.LANGUAGE.ENGLISH;
+}
+
+/** Like normalizeLanguage_ but returns '' when the text names NO language we run
+ *  (instead of defaulting to English), so a caller can fall back to another
+ *  field. Used to read the customer's chosen language from a Viator "Tour Grade"
+ *  ("Italian Tour 16:00" / "Italian-language tour") without it silently becoming
+ *  English. */
+function languageFromText_(x) {
+  const s = String(x || '').toLowerCase();
+  if (/spanish|español|espanol|castellano|spanisch|espagnol/.test(s)) return RNR.LANGUAGE.SPANISH;
+  if (/german|deutsch|alem[aá]n|alemao|allemand/.test(s)) return RNR.LANGUAGE.GERMAN;
+  if (/italian|italiano|italiana|italien|italienisch/.test(s)) return RNR.LANGUAGE.ITALIAN;
+  if (/french|français|francais|francese|franc[eé]s|französisch|franzosisch/.test(s)) return RNR.LANGUAGE.FRENCH;
+  if (/english|inglés|ingles|anglais|englisch/.test(s)) return RNR.LANGUAGE.ENGLISH;
+  return '';
 }
 
 /**

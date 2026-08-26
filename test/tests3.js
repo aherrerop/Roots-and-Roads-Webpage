@@ -32,23 +32,19 @@ check('orphan staffed from nearest availability (Carlos @17:00, 30min off)', orp
 check('private booking NOT duplicated as orphan', !withOrphans.some(s=>s.time==='10:00'&&!s.isPrivate), null);
 check('existing 11:00 not duplicated', withOrphans.filter(s=>s.time==='11:00').length===1, null);
 
-/* --- 2. ELIGIBILITY: conflicting guides are filtered from the dropdown --- */
-console.log('--- Eligibility ---');
+/* --- 2. ELIGIBILITY: every guide who speaks the language is offered. Overlaps
+   are ALLOWED — management deliberately assigns one guide to two nearby tours so
+   they get the contacts and can retime them; only the language gates the list. */
+console.log('--- Eligibility (overlaps allowed) ---');
 const gbl={English:['Albert','Carlos','Mario'],Spanish:['Carlos']};
-const sched=[
- {dateKey:d3,minutes:17*60,language:'English',private:false,assigned:['Carlos']},
- {dateKey:d3,minutes:11*60,language:'English',private:false,assigned:[]}];
-const busy=buildBusyMap_(sched);
-const elig17es=eligibleGuidesForShift_({dateKey:d3,minutes:17*60,language:'Spanish',private:false},busy,gbl);
-check('Carlos EXCLUDED from Spanish 17:00 (already on English 17:00)', elig17es.length===0, elig17es);
-const elig11=eligibleGuidesForShift_({dateKey:d3,minutes:11*60,language:'English',private:false},busy,gbl);
-check('Albert+Mario eligible for English 11:00; Carlos excluded (17:00 is <5h? no, 6h -> included)',
-  elig11.indexOf('Albert')>-1 && elig11.indexOf('Mario')>-1 && elig11.indexOf('Carlos')>-1, elig11);
-const elig15=eligibleGuidesForShift_({dateKey:d3,minutes:15*60,language:'English',private:false},busy,gbl);
-check('Carlos excluded at 15:00 (2h from his 17:00)', elig15.indexOf('Carlos')===-1, elig15);
-/* self-exclusion: guide keeps own shift in dropdown */
-const eligSelf=eligibleGuidesForShift_({dateKey:d3,minutes:17*60,language:'English',private:false},busy,gbl);
-check('Carlos still eligible for HIS OWN 17:00 shift', eligSelf.indexOf('Carlos')>-1, eligSelf);
+const elig17es=eligibleGuidesForShift_({dateKey:d3,minutes:17*60,language:'Spanish',private:false},gbl);
+check('Spanish 17:00 offers the Spanish speaker even if busy elsewhere (overlap OK)', elig17es.join()==='Carlos', elig17es);
+const elig11=eligibleGuidesForShift_({dateKey:d3,minutes:11*60,language:'English',private:false},gbl);
+check('English 11:00 offers ALL English guides', elig11.indexOf('Albert')>-1 && elig11.indexOf('Mario')>-1 && elig11.indexOf('Carlos')>-1, elig11);
+check('a guide who does NOT speak the language is never offered',
+  eligibleGuidesForShift_({dateKey:d3,minutes:11*60,language:'Spanish',private:false},gbl).indexOf('Albert')===-1, null);
+const eligSelf=eligibleGuidesForShift_({dateKey:d3,minutes:17*60,language:'English',private:false},gbl);
+check('a guide is offered for a slot even while on a nearby one (overlap OK)', eligSelf.indexOf('Carlos')>-1, eligSelf);
 
 /* --- 3. MOVE BOOKING between language tabs --- */
 console.log('--- Language move ---');

@@ -118,7 +118,8 @@ console.log('--- Resilient writes: one quiet retry, and reconcile after any move
 check('api() retries once on a non-auth failure', /async function api\(action, params\)\{[\s\S]*catch\(err\)\{[\s\S]*if\(err && err\.kind==="auth"\) throw err;[\s\S]*return await apiCall\(action, params\);/.test(html), null);
 check('a move reconciles with loadTours whether it succeeds OR fails', /\.mvbox[\s\S]*?loadTours\(\);\s+\/\/ reconcile either way/.test(html), null);
 check('one Move applies BOTH language and time in a single call', /api\("move",\{[\s\S]*?toLanguage:toLanguage,[\s\S]*?toTime: timeChange/.test(html), null);
-check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime\)/.test(html), null);
+check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime && \(!dateSel \|\| dateSel\.value===info\.fromDate\)\)/.test(html), null);
+check('a day move is offered (date input) and passed to the move call', /class="mvsel mv-date"/.test(html) && /toDate: dateChange\? toDate : ""/.test(html), null);
 
 console.log('--- Auto-refresh never interrupts a mid-action user (no wiped forms) ---');
 check('the poll pauses while the "Open a schedule" form is open', /details\.openform\[open\]"\)\) return false;/.test(html), null);

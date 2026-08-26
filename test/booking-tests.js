@@ -222,6 +222,82 @@ check('Airbnb real: 2 adults',               ab && ab.guests===2, ab && ab.guest
 check('Airbnb real: net income €18.19',      ab && Math.abs(ab.income-18.19)<0.001, ab && ab.income);
 check('Airbnb real: confirmation code',      ab && ab.bookingId==='TAFPNM3A', ab && ab.bookingId);
 
+// Airbnb CANCELLATION — guest-initiated "<Name> canceled their reservation"
+// (real forwarded email). It carries NO confirmation code, so it must be matched
+// to its booking by name + date + time. Regression: this format was unrecognised
+// (isCancel=false) so the cancelled tour was never removed from the list.
+const airbnbCancelReal = [
+  '---------- Forwarded message ---------',
+  'From: Airbnb <automated@airbnb.com>',
+  'Subject: Vladimir canceled their reservation: Barcelona Walking Tour:',
+  'Vladimir canceled their reservation',
+  'They’ll receive a full refund because they canceled at least 24 hours before the start time.',
+  'Canceled reservation',
+  'Barcelona Walking Tour: Gaudí, Modernism, & Gothic', 'Hosted by Albert',
+  'Friday, August 28 11:00 AM · 2 guests'
+].join('\n');
+const abcSubj = 'Fwd: Vladimir canceled their reservation: Barcelona Walking Tour: Gaudí, Modernism, & Gothic';
+check('Airbnb cancel: rejected in confirm mode', parseAirbnbMessage_(makeFakeMsg_(abcSubj, airbnbCancelReal),'confirm')===null, null);
+const abc = parseAirbnbMessage_(makeFakeMsg_(abcSubj, airbnbCancelReal), 'cancel');
+// (validity's future-date gate depends on "now"; the real email is future-dated
+// and valid — here we assert the parse + fields + matching, which is what removal needs.)
+check('Airbnb cancel: detected + parsed',     !!abc && abc.source===RNR.SOURCE.AIRBNB, abc);
+check('Airbnb cancel: name Vladimir',         abc && abc.name==='Vladimir', abc && abc.name);
+check('Airbnb cancel: time 11:00 AM',         abc && abc.time==='11:00 AM', abc && abc.time);
+check('Airbnb cancel: date is Aug 28 (with the email\'s year, not JS default 2001)', abc && abc.date && abc.date.getMonth()===7 && abc.date.getDate()===28 && abc.date.getFullYear()>=2026, abc && abc.date);
+check('Airbnb cancel: flagged isCancellation',abc && abc.isCancellation===true, abc && abc.isCancellation);
+// It must MATCH the active Vladimir booking (no id/phone -> by name+date+time)…
+const abActive = normalizeBooking_({ name:'Vladimir', phone:'', guests:2, date:abc&&abc.date, time:'11:00 AM', language:'English', source:RNR.SOURCE.AIRBNB, bookingId:'TA4XBEYM' });
+check('Airbnb cancel: matches its booking',   abc && cancellationMatchesBooking_(abc, abActive)===true, null);
+// …and must NOT sweep away a different guest sharing the slot.
+check('Airbnb cancel: no false match',        abc && cancellationMatchesBooking_(abc, normalizeBooking_({ name:'Someone Else', phone:'', guests:2, date:abc&&abc.date, time:'11:00 AM', language:'English', source:RNR.SOURCE.AIRBNB, bookingId:'ZZZ' }))===false, null);
+// htmlToText_ can split the date and time onto SEPARATE lines, and the forward
+// carries its own "Date: Fri, Aug 21 … 11:27 AM" header — the parser must still
+// read the TOUR date/time (Aug 28, 11:00 AM), never the header's (Aug 21, 11:27).
+const airbnbCancelSplit = [
+  '---------- Forwarded message ---------',
+  'From: Airbnb <automated@airbnb.com>',
+  'Date: Fri, Aug 21, 2026 at 11:27 AM',
+  'Subject: Vladimir canceled their reservation: Barcelona Walking Tour: Gaudí, Modernism, & Gothic',
+  'Vladimir canceled their reservation',
+  'Barcelona Walking Tour: Gaudí, Modernism, & Gothic', 'Hosted by Albert',
+  'Friday, August 28', '11:00 AM', '2 guests'
+].join('\n');
+const abc2 = parseAirbnbMessage_(makeFakeMsg_(abcSubj, airbnbCancelSplit), 'cancel');
+check('Airbnb cancel (split lines): date is Aug 28', abc2 && abc2.date && abc2.date.getMonth()===7 && abc2.date.getDate()===28, abc2 && abc2.date);
+check('Airbnb cancel (split lines): time 11:00 AM (not the 11:27 header)', abc2 && abc2.time==='11:00 AM', abc2 && abc2.time);
+// PRODUCTION PATH: getBestMessageText_ prefers the HTML body (getBody), which the
+// default makeFakeMsg_ leaves empty — so exercise the real HTML->text path. Airbnb
+// renders "Friday, August 28\r\n11:00 AM · 2 guests" in a white-space:pre-line cell.
+const abHtmlMsg = {
+  getId:()=>'ABHTML1', getSubject:()=>abcSubj, getPlainBody:()=>'x',
+  // Long enough (>200 chars of text) that pickBestBody_ chooses this HTML over the
+  // plain body — the same choice production makes on the real (long) Airbnb email.
+  getBody:()=>'<h1>Vladimir canceled their reservation</h1><div>They will receive a full refund because they canceled at least 24 hours before the start time. Show reservation. This booking has been removed from your calendar.</div><h2>Canceled reservation</h2><p>Barcelona Walking Tour: Gaudi, Modernism, and Gothic</p><p>Hosted by Albert</p><p style="white-space:pre-line">Friday, August 28\r\n11:00 AM · 2 guests</p>',
+  getDate:()=>new Date('2026-08-21T11:15:00Z')
+};
+const abc3 = parseAirbnbMessage_(abHtmlMsg, 'cancel');
+check('Airbnb cancel (HTML path): parsed', !!abc3 && abc3.isCancellation===true, abc3);
+check('Airbnb cancel (HTML path): full date 2026-08-28', abc3 && abc3.date && abc3.date.getMonth()===7 && abc3.date.getDate()===28 && abc3.date.getFullYear()===2026, abc3 && abc3.date);
+check('Airbnb cancel (HTML path): matches its 2026 booking',
+  abc3 && cancellationMatchesBooking_(abc3, normalizeBooking_({ name:'Vladimir', phone:'', guests:2, date:new Date(2026,7,28), time:'11:00 AM', language:'English', source:RNR.SOURCE.AIRBNB, bookingId:'TA4XBEYM' }))===true, abc3 && abc3.date);
+// removeActiveBooking_ must use the LENIENT (cancellation) matcher: a phone-less
+// Airbnb cancellation vs the phone-less active Airbnb booking FAILS the strict
+// sameBooking_ (it requires BOTH name AND phone) but matches cancellationMatchesBooking_.
+// Using the strict matcher is exactly why the cancelled tour was never removed.
+const abCancelNoPhone = normalizeBooking_({ name:'Vladimir', phone:'', guests:2, date:new Date(2026,7,28), time:'11:00 AM', language:'English', source:RNR.SOURCE.AIRBNB, bookingId:'' });
+const abActiveNoPhone = normalizeBooking_({ name:'Vladimir', phone:'', guests:2, date:new Date(2026,7,28), time:'11:00 AM', language:'English', source:RNR.SOURCE.AIRBNB, bookingId:'TA4XBEYM' });
+check('strict sameBooking_ does NOT match a phone-less cancellation (the old bug)', !sameBooking_(abActiveNoPhone, abCancelNoPhone), null);
+check('lenient cancellationMatchesBooking_ DOES match it (the fix path)', cancellationMatchesBooking_(abCancelNoPhone, abActiveNoPhone)===true, null);
+// THE ROOT BLOCKER: cancellationBookingsFromThread_ ran uniqueBookings_ →
+// isValidBooking_, which REQUIRES a bookingId. A codeless Airbnb cancellation was
+// dropped BEFORE it could reach removal, so the tour never left the list. This
+// exercises the full thread path and asserts the codeless cancellation survives.
+const abCancelThread = { getId:()=>'ABT1', getFirstMessageSubject:()=>abcSubj, getMessages:()=>[abHtmlMsg] };
+const abCxs = cancellationBookingsFromThread_(abCancelThread, RNR.SOURCE.AIRBNB);
+check('codeless Airbnb cancellation SURVIVES cancellationBookingsFromThread_', abCxs.length===1 && abCxs[0].name==='Vladimir' && !abCxs[0].bookingId, abCxs);
+check('  …and carries the tour date+time so it can be matched', abCxs.length===1 && abCxs[0].date && abCxs[0].date.getDate()===28 && abCxs[0].time==='11:00 AM', abCxs[0]);
+
 // GetYourGuide ITALIAN confirmation — exact fields from a real GYG email
 // (as htmlToText_ renders it): tests language routing + the labelled-date fix.
 const gygItalReal = [
@@ -422,6 +498,23 @@ console.log('--- Portal Feed rebuild (one read-optimised tab, preserves check-in
   check('a booking with no prior check-in has blank check-in cols', p&&(p[12]===''||p[12]==null), p&&p[12]);
   check('a booking with no prior guide has a blank Guide col', p&&(p[14]===''||p[14]==null), p&&p[14]);
 })();
+
+// REGRESSION (real incident): Viator names the customer's chosen language in the
+// TOUR GRADE ("Italian Tour" / "Italian-language tour"), while a generic
+// "Tour Language: English - Guide" line lies. The grade MUST win, or an Italian
+// booking is sent to the English tour. Time still comes from the grade code.
+const vItBody=[
+  'Booking Details','Booking Reference: BR-1438955061',
+  'Tour Name: Barcelona Walking Tour: Sagrada Familia, Gaudi and Gothic Quarter',
+  'Travel Date: Sun, Aug 23, 2026','Lead Traveler Name: Emanuele Trotta',
+  'Traveler Names: Emanuele Trotta, Emanuele Trotta','Travelers: 2 Adults',
+  'Product Code: 5631527P3','Tour Grade: Italian Tour 16:00','Tour Grade Code: TG8~16:00',
+  'Tour Grade Description: Italian-language tour','Tour Language: English - Guide'
+].join('\n');
+const vIt=parseViatorMessage_(makeFakeMsg_('Confirmed Booking: Sun, Aug 23, 2026', vItBody),'confirm');
+check('Viator: "Tour Grade: Italian Tour" wins over "Tour Language: English"', vIt && vIt.language==='Italian', vIt && vIt.language);
+check('Viator: time still from Tour Grade Code TG8~16:00 (stored 12h)', vIt && vIt.time==='4:00 PM', vIt && vIt.time);
+check('Viator: no language in grade -> falls back to Tour Language', (function(){ const b=parseViatorMessage_(makeFakeMsg_('Confirmed Booking: Sun, Aug 23, 2026', 'Booking Reference: BR-1\nTravel Date: Sun, Aug 23, 2026\nLead Traveler Name: X\nTravelers: 1 Adult\nTour Grade Code: TG1~11:00\nTour Language: German - Guide'),'confirm'); return b && b.language==='German'; })(), null);
 
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');

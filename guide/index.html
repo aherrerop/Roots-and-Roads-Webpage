@@ -178,7 +178,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-20-post-login";
+const PORTAL_VERSION = "2026-08-23-move-day";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -443,7 +443,7 @@ let LAST_EDIT = 0;
 // check-ins within seconds, while someone mid-edit is still protected.
 // Any touch/type/change on an edit control (a note, the move dropdowns, or the
 // "Open a schedule" form) marks the user as mid-edit so the poll holds off.
-const EDIT_SEL = ".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-lang,.mv-time,.mv-go,.bnoteta,.bnotesave,.of-open,.of-date,.of-time,.of-lang,.of-guide,.openform";
+const EDIT_SEL = ".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-lang,.mv-time,.mv-date,.mv-go,.bnoteta,.bnotesave,.of-open,.of-date,.of-time,.of-lang,.of-guide,.openform";
 document.addEventListener("input",  e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
 document.addEventListener("change", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
 document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
@@ -743,12 +743,13 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   if(canAssign && b.bookingId && tour){
     const times=(dayTimes||[]).slice();
     if(!times.some(x=>x.time===tour.time)) times.unshift({time:tour.time,timeLabel:tour.timeLabel||tour.time});
-    const info={bookingId:b.bookingId,fromLanguage:lang,fromTime:tour.time,name:b.name||b.bookingId};
+    const info={bookingId:b.bookingId,fromLanguage:lang,fromTime:tour.time,fromDate:tour.dateKey,name:b.name||b.bookingId};
     const langOpts=['English','German','Spanish','French','Italian'].map(L=>'<option'+(L===lang?' selected':'')+'>'+L+'</option>').join('');
     const timeOpts=times.map(x=>'<option value="'+esc(x.time)+'"'+(x.time===tour.time?' selected':'')+'>'+esc(x.timeLabel||x.time)+'</option>').join('')+'<option value="__new__">＋ New time…</option>';
     mvbox='<span class="mvbox" data-mv=\''+esc(JSON.stringify(info))+'\'>'+
       '<select class="mvsel mv-lang" title="Move to another language">'+langOpts+'</select>'+
       '<select class="mvsel mv-time" title="Move to another time">'+timeOpts+'</select>'+
+      '<input type="date" class="mvsel mv-date" value="'+esc(tour.dateKey||'')+'" title="Move to another day">'+
       '<button class="mv-go" hidden>Move</button></span>';
   }
   // Per-booking note: a small post-it icon next to the language dropdown.
@@ -820,11 +821,12 @@ function bindTours(tours){
   // a language + time change never needs two moves or an intermediate tour.
   document.querySelectorAll(".mvbox").forEach(box=>{
     const info=JSON.parse(box.dataset.mv);
-    const langSel=box.querySelector(".mv-lang"), timeSel=box.querySelector(".mv-time"), go=box.querySelector(".mv-go");
+    const langSel=box.querySelector(".mv-lang"), timeSel=box.querySelector(".mv-time"), dateSel=box.querySelector(".mv-date"), go=box.querySelector(".mv-go");
     if(!langSel||!timeSel||!go) return;
-    const sync=()=>{ go.hidden = (langSel.value===info.fromLanguage && timeSel.value===info.fromTime); };
+    const sync=()=>{ go.hidden = (langSel.value===info.fromLanguage && timeSel.value===info.fromTime && (!dateSel || dateSel.value===info.fromDate)); };
     langSel.onchange=sync;
     timeSel.onchange=sync;   // "＋ New time…" also just reveals Move; it's resolved on click
+    if(dateSel) dateSel.onchange=sync;   // a new day also reveals Move
     go.onclick=async ()=>{
       const toLanguage=langSel.value;
       let toTime=timeSel.value, timeLabel=(timeSel.options[timeSel.selectedIndex]&&timeSel.options[timeSel.selectedIndex].text)||timeSel.value;
@@ -835,15 +837,18 @@ function bindTours(tours){
         if(!parsed){ alert("Couldn't read \""+typed+"\" as a time. Try 4:30 PM or 16:30."); timeSel.value=info.fromTime; sync(); return; }
         toTime=parsed.t24; timeLabel=parsed.label;   // send unambiguous 24h; show the clear label
       }
-      const langChange=(toLanguage!==info.fromLanguage), timeChange=(toTime!==info.fromTime);
-      if(!langChange && !timeChange){ go.hidden=true; return; }
-      const parts=[]; if(langChange) parts.push("the "+toLanguage+" tour"); if(timeChange) parts.push(timeLabel);
-      if(!confirm("Move "+info.name+" to "+parts.join(" at ")+"?\nIf no tour exists there yet, it will be created.")){
-        langSel.value=info.fromLanguage; timeSel.value=info.fromTime; sync(); return;
+      const toDate=dateSel?dateSel.value:"";
+      const langChange=(toLanguage!==info.fromLanguage), timeChange=(toTime!==info.fromTime), dateChange=(!!toDate && toDate!==info.fromDate);
+      if(!langChange && !timeChange && !dateChange){ go.hidden=true; return; }
+      // Build a clear "Move X to: …" summary from whatever changed.
+      const bits=[]; if(langChange) bits.push(toLanguage); if(timeChange) bits.push(timeLabel);
+      if(dateChange) bits.push(dayTitle(toDate)+" "+monthTitle(toDate));
+      if(!confirm("Move "+info.name+" to:\n"+bits.join(" · ")+"\n\nIf no tour exists there yet, it will be created.")){
+        langSel.value=info.fromLanguage; timeSel.value=info.fromTime; if(dateSel) dateSel.value=info.fromDate; sync(); return;
       }
       go.disabled=true; go.textContent="Moving…"; MUTATING++; LAST_EDIT=Date.now();
       try{
-        const r=await api("move",{token:store.token, bookingId:info.bookingId, fromLanguage:info.fromLanguage, toLanguage:toLanguage, toTime: timeChange? toTime : ""});
+        const r=await api("move",{token:store.token, bookingId:info.bookingId, fromLanguage:info.fromLanguage, toLanguage:toLanguage, toTime: timeChange? toTime : "", toDate: dateChange? toDate : ""});
         if(!r.ok) alert(r.error||"Could not move");
       }catch(err){
         alert("Couldn't confirm the move just now — reloading to show the current state. If it didn't take, try again.");
