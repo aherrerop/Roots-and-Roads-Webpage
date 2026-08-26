@@ -410,26 +410,8 @@ function verifyPassword_(stored, submitted) {
   }
   return s !== '' && s === sub;   // legacy plaintext, verified one last time
 }
-/** Write a hashed password into a guide's row, found fresh (uncached) by email. */
-function upgradeGuidePasswordHash_(email, plain) {
-  const e = String(email || '').trim().toLowerCase();
-  const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
-  if (!sh || !sh.getLastRow()) return false;
-  const values = sh.getDataRange().getValues();
-  const cols = guideColumns_(values[0].map(function (h) { return String(h).trim(); }));
-  if (cols.passwordCol < 0 || cols.emailCol < 0) return false;
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][cols.emailCol] || '').trim().toLowerCase() === e) {
-      if (isLegacyPlaintext_(values[i][cols.passwordCol])) {
-        sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(hashPassword_(String(plain)));
-        bumpCacheVersion_();   // the Guides read is cached; refresh it
-      }
-      return true;
-    }
-  }
-  return false;
-}
-/** Management: set/reset a guide's password (stored hashed).
+/** Management: set/reset a guide's password. Stored as PLAINTEXT so a manager can
+ *  read/copy it from the Control sheet to log in as that guide.
  *  Run from the editor:  setGuidePassword('guide@email.com', 'new-password') */
 function setGuidePassword(email, newPassword) {
   const e = String(email || '').trim().toLowerCase();
@@ -441,31 +423,13 @@ function setGuidePassword(email, newPassword) {
   const cols = guideColumns_(values[0].map(function (h) { return String(h).trim(); }));
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][cols.emailCol] || '').trim().toLowerCase() === e) {
-      sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(hashPassword_(pw));
+      sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(pw);
       bumpCacheVersion_();
-      return 'Password set for ' + e + ' (stored hashed).';
+      return 'Password set for ' + e + ' (readable in the Guides tab).';
     }
   }
   throw new Error('No guide with email ' + e);
 }
-/** Management one-time: hash every still-plaintext guide password. Safe to re-run. */
-function hashAllGuidePasswords() {
-  const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
-  if (!sh) throw new Error('Guides tab not found');
-  const values = sh.getDataRange().getValues();
-  const cols = guideColumns_(values[0].map(function (h) { return String(h).trim(); }));
-  let n = 0;
-  for (let i = 1; i < values.length; i++) {
-    const cur = values[i][cols.passwordCol];
-    if (cur !== '' && cur != null && isLegacyPlaintext_(cur)) {
-      sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(hashPassword_(String(cur)));
-      n++;
-    }
-  }
-  if (n) bumpCacheVersion_();
-  return 'Hashed ' + n + ' plaintext password(s). Login is unaffected.';
-}
-
 function apiLogin_(p) {
   __RRX = {};
   const email = String(p.email || '').trim().toLowerCase();
@@ -476,16 +440,15 @@ function apiLogin_(p) {
   const guide = findGuideByEmail_(email);
   if (!guide) return { ok: false, error: 'No guide with that email' };
 
-  // Verify against a salted hash (or a legacy plaintext value, one last time).
+  // Verify against a plaintext password (or a salted hash, for any account still
+  // stored hashed from before). We deliberately DO NOT hash plaintext passwords:
+  // management logs in as a guide by copy-pasting that guide's password from the
+  // Control sheet, which requires the password to stay readable there. (These are
+  // the company's own staff portal credentials in an access-controlled sheet, not
+  // guest data.) verifyPassword_ still accepts an "h1:" hash so a not-yet-restored
+  // account keeps working until its plaintext is put back.
   if (!verifyPassword_(guide.password, password)) return { ok: false, error: 'Wrong password' };
   if (!guide.active) return { ok: false, error: 'This guide account is inactive' };
-
-  // Upgrade any still-plaintext password to a salted hash on first login — so
-  // guides keep their current password and no manual migration is needed. Never
-  // let the upgrade write block or fail the login.
-  if (isLegacyPlaintext_(guide.password)) {
-    try { upgradeGuidePasswordHash_(email, password); } catch (e) { /* best-effort */ }
-  }
 
   return {
     ok: true,
