@@ -120,6 +120,7 @@ check('a move reconciles with loadTours whether it succeeds OR fails', /\.mvbox[
 check('one Move applies BOTH language and time in a single call', /api\("move",\{[\s\S]*?toLanguage:toLanguage,[\s\S]*?toTime: timeChange/.test(html), null);
 check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime && \(!dateSel \|\| dateSel\.value===info\.fromDate\)\)/.test(html), null);
 check('a day move is offered (date input) and passed to the move call', /class="mvsel mv-date"/.test(html) && /toDate: dateChange\? toDate : ""/.test(html), null);
+check('guides (not managers) get a green tour with guests, red when empty', /const peopleCls = MANAGER \? '' : \(Number\(t\.bookedGuests\)>0 \? ' has-people' : ' no-people'\)/.test(html) && /\.tour\.has-people\{/.test(html) && /\.tour\.no-people\{/.test(html), null);
 
 console.log('--- Auto-refresh never interrupts a mid-action user (no wiped forms) ---');
 check('the poll pauses while the "Open a schedule" form is open', /details\.openform\[open\]"\)\) return false;/.test(html), null);

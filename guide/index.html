@@ -73,6 +73,10 @@
   .badge.today{color:var(--ok)} .badge.tom{color:var(--blue)}
 
   .tour{position:relative;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
+  /* Guide view only: a tour with guests reads GREEN, an empty one RED — a
+     colored left stripe plus a faint tint so it's obvious at a glance. */
+  .tour.has-people{border-left:6px solid #16a34a;background:linear-gradient(90deg,rgba(22,163,74,.08),var(--card) 140px)}
+  .tour.no-people{border-left:6px solid #dc2626;background:linear-gradient(90deg,rgba(220,38,38,.09),var(--card) 140px)}
   .head{display:flex;align-items:center;gap:10px;padding:15px 16px;cursor:pointer}
   .tour .head{padding-right:38px}
   .tour.static .head{cursor:default}
@@ -178,7 +182,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-23-move-day";
+const PORTAL_VERSION = "2026-08-23-guide-green-red";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -721,7 +725,10 @@ function tourCard(t, canAssign, dayTimes){
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   // Small round ✕ in the card's top-right corner — DELETES the tour (frees its guide).
   const closeBtn=canAssign?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Delete this tour">✕</button>':'';
-  return '<div class="tour" data-tour="'+esc(t.id)+'">'+ closeBtn +
+  // GUIDES (not management) get a green tour when people are signed up, red when
+  // it's empty. Managers keep the plain card (they have the counts + assign UI).
+  const peopleCls = MANAGER ? '' : (Number(t.bookedGuests)>0 ? ' has-people' : ' no-people');
+  return '<div class="tour'+peopleCls+'" data-tour="'+esc(t.id)+'">'+ closeBtn +
     '<div class="head js-toggle">'+
       '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+ flagImg(t.language)+
       (t.isPrivate?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
