@@ -54,7 +54,8 @@ const PORTAL = {
   TOKEN_TTL_HOURS: 720,   // 30 days — guides stay logged in on their phones
 
   // Which sources are "paid" (we owe the guide). Everything else is "free".
-  PAID_SOURCES: ['Viator', 'GetYourGuide', 'Airbnb'],
+  // "GYG" is our second GetYourGuide account — same paid model as GetYourGuide.
+  PAID_SOURCES: ['Viator', 'GetYourGuide', 'GYG', 'Airbnb'],
 
   // Default rates (€ per checked-in person). The Rates tab overrides these.
   DEFAULT_PAID_RATE: 10,       // paid tours: we owe the guide, € per checked-in person
@@ -2589,6 +2590,11 @@ function readRates_() {
       }
     });
   }
+  // "GYG" (our second GetYourGuide account) is paid whenever GetYourGuide is —
+  // even if the live Rates tab's paid-sources list was written before GYG existed.
+  if (paidSources.indexOf('GetYourGuide') !== -1 && paidSources.indexOf('GYG') === -1) {
+    paidSources = paidSources.concat('GYG');
+  }
   PORTAL._paidSources = paidSources; // cache for isPaidSource_
   return { paid, free, privatePay, freeCommissions, paidSources };
 }
@@ -3781,7 +3787,8 @@ function updateNoShowQueues_() {
 
   const newRows = { 'viator': [], 'getyourguide': [] };
   completed.forEach(b => {
-    const srcKey = String(b.source || '').trim().toLowerCase();
+    let srcKey = String(b.source || '').trim().toLowerCase();
+    if (srcKey === 'gyg') srcKey = 'getyourguide';      // 2nd GYG account -> same no-show queue
     if (!targets[srcKey]) return;                       // only Viator + GYG queues
     const key = b.bookingId + '|' + b.dateKey;
     // Checked in with >0 guests -> someone came, not a no-show. But a check-in of

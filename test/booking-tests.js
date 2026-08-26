@@ -41,6 +41,18 @@ check('Italian cancel parsed with isCancellation', !!itCancel&&itCancel.isCancel
 const dup=uniqueBookings_([gygIt, parseGygMessage_(makeFakeMsg_(RNR_FIXTURES_.gygItalian.subject, RNR_FIXTURES_.gygItalian.body),'confirm')]);
 check('dedup: same Italian booking id -> 1 unique', dup.length===1, dup.length);
 
+console.log('--- Second GetYourGuide account (destinationstewards) tagged source "GYG" ---');
+// The 2nd GYG account auto-forwards here; the forwarded copy keeps the original
+// "To:" (that 2nd address), so a message addressed to it is tagged "GYG" — same
+// parser + pipeline, only the source name differs. No getTo -> "GetYourGuide".
+const _gygMkTo=(to)=>{ const m=makeFakeMsg_(RNR_FIXTURES_.gygItalian.subject, RNR_FIXTURES_.gygItalian.body); m.getTo=()=>to; m.getCc=()=>''; return m; };
+const gyg2=parseGygMessage_(_gygMkTo('DestinationStewards@gmail.com'),'confirm');   // case-insensitive
+check('email to destinationstewards -> source "GYG"', gyg2 && gyg2.source==='GYG' && gyg2.source===RNR.SOURCE.GYG2, gyg2 && gyg2.source);
+const gyg1=parseGygMessage_(_gygMkTo('rootsandroadstours@gmail.com'),'confirm');
+check('email to the main inbox -> source "GetYourGuide"', gyg1 && gyg1.source==='GetYourGuide', gyg1 && gyg1.source);
+check('a message with no readable recipient -> "GetYourGuide" (safe default)', gygIt.source==='GetYourGuide', gygIt.source);
+check('"GYG" is a PAID source-model (we owe the guide)', RNR.MODEL[RNR.SOURCE.GYG2]==='paid', RNR.MODEL[RNR.SOURCE.GYG2]);
+
 console.log('--- Website availability + capacity (Italian / French) ---');
 const controlSS=new __mock.MockSS(WEBSITE_CONTROL_SPREADSHEET_ID);
 __mock.SS_BY_ID[WEBSITE_CONTROL_SPREADSHEET_ID]=controlSS;

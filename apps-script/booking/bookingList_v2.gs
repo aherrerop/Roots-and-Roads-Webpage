@@ -200,8 +200,15 @@ const RNR = {
     WEBSITE: 'Website',
     AIRBNB: 'Airbnb',
     GYG: 'GetYourGuide',
+    GYG2: 'GYG',            // our SECOND GetYourGuide account (a different listing/password)
     FREETOUR: 'Free Tour'
   },
+
+  // The SECOND GetYourGuide account forwards its emails into this mailbox. They
+  // ride the SAME GetYourGuide labels + parser + reschedule handling; we only tag
+  // the SOURCE as "GYG" (vs "GetYourGuide") so the two accounts are told apart on
+  // the sheet. Detection is by the address the email was sent to (see parseGyg).
+  GYG_SECOND_EMAIL: 'destinationstewards@gmail.com',
 
   /**
    * Guest accounting model per source.
@@ -212,6 +219,7 @@ const RNR = {
     Viator: 'paid',
     Airbnb: 'paid',
     GetYourGuide: 'paid',
+    GYG: 'paid',            // second GetYourGuide account — same paid model
     Guruwalk: 'free',
     'Free Tour': 'free',
     Website: 'free'
@@ -2136,7 +2144,7 @@ function processGygModificationsLabel_() {
 
       const finalBooking = normalizeBooking_({
         name, phone, guests, children, infants, date, time, language,
-        source: RNR.SOURCE.GYG,
+        source: (base && base.source) || RNR.SOURCE.GYG,   // keep the account of the booking being changed (GYG vs GetYourGuide)
         income,
         bookingId: id,
         notes,
@@ -2150,8 +2158,9 @@ function processGygModificationsLabel_() {
       if (isCompleted_(finalBooking)) { handled = true; return; }  // tour already ran -> nothing to change
 
       // A rescheduled booking is active. Neutralise any stale cancellation for
-      // this code for the rest of the run.
-      markReinstated_(RNR.SOURCE.GYG, id);
+      // this code for the rest of the run — under the SAME source as the booking
+      // (GYG vs GetYourGuide), since the reinstatement cache is keyed by source.
+      markReinstated_(finalBooking.source, id);
 
       upsertActiveBooking_(finalBooking, true, true);   // modification: lenient match
       moveMatchingConfirmationOutOfInbox_(finalBooking);
@@ -3358,7 +3367,7 @@ function sameBooking_(a, b, opts) {
 
   // Viator and GetYourGuide ids are globally unique per booking, so an id
   // match alone is authoritative even if the name text differs slightly.
-  if (sameId && (A.source === RNR.SOURCE.VIATOR || A.source === RNR.SOURCE.GYG)) return true;
+  if (sameId && (A.source === RNR.SOURCE.VIATOR || A.source === RNR.SOURCE.GYG || A.source === RNR.SOURCE.GYG2)) return true;
 
   // DIFFERENT ids => DIFFERENT bookings. Never merge two rows that both carry a
   // platform id when those ids differ, even if the name/phone/date/time line up
@@ -3944,7 +3953,7 @@ function parseGygMessage_(msg, mode) {
     time,
     language: f.langRaw ? normalizeLanguage_(f.langRaw) : RNR.LANGUAGE.ENGLISH,
     languageUncertain: !languageRecognised_(f.langRaw),   // flag if it didn't match a language we run
-    source: RNR.SOURCE.GYG,
+    source: gygSourceFor_(msg),   // "GYG" for the second account (forwarded), else "GetYourGuide"
     income,
     notes: composeNotes_(f.isPrivate, pp.children, pp.infants, ''),
     isCancellation: isCancel,
@@ -3954,6 +3963,22 @@ function parseGygMessage_(msg, mode) {
     hasExplicitIncome: income > 0,
     bookingId: f.bookingId
   });
+}
+
+/**
+ * Which GetYourGuide account a message belongs to. Our SECOND GYG account
+ * (RNR.GYG_SECOND_EMAIL) auto-forwards its emails here; the forwarded copy keeps
+ * the original "To:" (that second address), so a message addressed to it is tagged
+ * source "GYG" — otherwise the normal "GetYourGuide". Falls back to GetYourGuide if
+ * the recipient can't be read (a mock message, or a Gmail quirk).
+ */
+function gygSourceFor_(msg) {
+  try {
+    if (!RNR.GYG_SECOND_EMAIL || !msg) return RNR.SOURCE.GYG;
+    const to = (String((msg.getTo && msg.getTo()) || '') + ' ' +
+                String((msg.getCc && msg.getCc()) || '')).toLowerCase();
+    return to.indexOf(RNR.GYG_SECOND_EMAIL.toLowerCase()) !== -1 ? RNR.SOURCE.GYG2 : RNR.SOURCE.GYG;
+  } catch (e) { return RNR.SOURCE.GYG; }
 }
 
 
