@@ -56,6 +56,34 @@ processConfirmationLabel_(RNR.LABELS.GYG_CONFIRM, RNR.SOURCE.GYG);
 check('an invalid confirmation is NOT put on the list', !idsOnList()['GYGBAD002'], Object.keys(idsOnList()));
 check('an invalid confirmation is NOT marked Processed (no lying label)', badThread.hasLabel(P) === false, [...badThread.labelSet]);
 
+console.log('--- 2nd GetYourGuide account (destinationstewards) reaches the Portal Feed as "GYG" ---');
+// A tour date within the feed window, whenever the suite runs.
+const _soon = new Date(Date.now() + 10 * 86400000);
+const _dateStr = _soon.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) + ' 10:00 AM';
+resetWorld();
+const dsThread = __gmail.add([RNR.LABELS.GYG_CONFIRM],
+  __gmail.msg('Reserva - S888888 - GYGDEST01', gygBody('GYGDEST01', 'Dieter', _dateStr, 2, 'Inglés'),
+    new Date(), 'destinationstewards@gmail.com'));   // <- forwarded 2nd-account email keeps this To
+processConfirmationLabel_(RNR.LABELS.GYG_CONFIRM, RNR.SOURCE.GYG);
+check('2nd-account confirmation lands on the booking list', idsOnList()['GYGDEST01'] === true, Object.keys(idsOnList()));
+check('2nd-account confirmation IS marked Processed', dsThread.hasLabel(P) === true, [...dsThread.labelSet]);
+rebuildPortalFeed_();   // the guide portal reads exactly this tab
+const _feed = SpreadsheetApp._active.getSheetByName(RNR.SHEETS.PORTAL_FEED);
+const _rows = _feed.getLastRow() > 1 ? _feed.getRange(2, 1, _feed.getLastRow() - 1, 16).getValues() : [];
+const _dsRow = _rows.find(r => String(r[9]).trim() === 'GYGDEST01');   // J = Booking ID
+check('the booking reaches the Portal Feed (this is what the portal shows)', !!_dsRow, _rows.map(r => r[9]));
+check('its Source is "GYG" on the feed (not GetYourGuide)', _dsRow && String(_dsRow[7]) === 'GYG', _dsRow && _dsRow[7]);
+check('the English tour routed it to the English feed row', _dsRow && String(_dsRow[2]) === 'English', _dsRow && _dsRow[2]);
+
+// Control: a normal GYG email (to the main inbox) stays "GetYourGuide".
+resetWorld();
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Reserva - S779080 - GYGMAIN01', gygBody('GYGMAIN01', 'Hans', _dateStr, 2, 'Inglés')));
+processConfirmationLabel_(RNR.LABELS.GYG_CONFIRM, RNR.SOURCE.GYG);
+rebuildPortalFeed_();
+const _m = SpreadsheetApp._active.getSheetByName(RNR.SHEETS.PORTAL_FEED);
+const _mRow = _m.getRange(2, 1, 1, 16).getValues()[0];
+check('the main account stays Source = "GetYourGuide"', String(_mRow[7]) === 'GetYourGuide', _mRow[7]);
+
 console.log('--- Confirmation: undeterminable language is registered but flagged UNREAD ---');
 resetWorld();
 const langThread = __gmail.add([RNR.LABELS.GYG_CONFIRM],

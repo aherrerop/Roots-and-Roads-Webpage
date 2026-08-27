@@ -19,12 +19,14 @@
     }
   }
   class MockMsg {
-    constructor(subject, body, date) { this._s = subject || ''; this._b = body || ''; this._d = date || new Date(); this._id = 'm' + (++seq); }
+    constructor(subject, body, date, to) { this._s = subject || ''; this._b = body || ''; this._d = date || new Date(); this._id = 'm' + (++seq); this._to = to || 'rootsandroadstours@gmail.com'; }
     getId() { return this._id; }
     getSubject() { return this._s; }
     getPlainBody() { return this._b; }
     getBody() { return ''; }   // force getBestMessageText_ to use the plain body (newlines intact)
     getDate() { return this._d; }
+    getTo() { return this._to; }   // recipient — lets us test the 2nd-account (GYG) tagging
+    getCc() { return ''; }
     markRead() { return this; }
     markUnread() { return this; }
   }
@@ -48,7 +50,7 @@
   global.__gmail = {
     reset() { ALL.length = 0; labels.clear(); seq = 0; },
     ensure(names) { (names || []).forEach(ensureLabel); },
-    msg(subject, body, date) { return new MockMsg(subject, body, date); },
+    msg(subject, body, date, to) { return new MockMsg(subject, body, date, to); },
     add(labelNames, msgs) {
       const t = new MockThread(Array.isArray(msgs) ? msgs : [msgs]);
       (labelNames || []).forEach(n => { ensureLabel(n); t.labelSet.add(n); });
