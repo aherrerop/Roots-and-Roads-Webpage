@@ -373,43 +373,12 @@ function jsonp_(callback, obj) {
  ******************************************************/
 
 /** action=login  -> { ok, token, guide, languages } */
-/* =========================================================================
- * Guide password hashing (salted HMAC-SHA-256).
- * A stored value is either a legacy plaintext string or "h1:<saltHex>:<hmacHex>".
- * Login verifies both and upgrades plaintext to a hash on first success, so no
- * guide is locked out and no manual migration is needed. Management can reset one
- * (setGuidePassword) or migrate all at once (hashAllGuidePasswords). Not PBKDF2
- * (Apps Script has no cheap key-stretch), but salted+hashed defeats the real
- * threat here: someone reading the Guides sheet and harvesting cleartext logins.
- * ========================================================================= */
-function bytesToHex_(bytes) {
-  let out = '';
-  for (let i = 0; i < bytes.length; i++) out += ('0' + (bytes[i] & 0xff).toString(16)).slice(-2);
-  return out;
-}
-function newSalt_() { return String(Utilities.getUuid()).replace(/-/g, ''); }   // 32 hex chars
-function hashPassword_(plain, salt) {
-  const s = salt || newSalt_();
-  const mac = Utilities.computeHmacSha256Signature(String(plain == null ? '' : plain), s);
-  return 'h1:' + s + ':' + bytesToHex_(mac);
-}
-function isLegacyPlaintext_(stored) { return String(stored == null ? '' : stored).slice(0, 3) !== 'h1:'; }
-function safeEqual_(a, b) {
-  a = String(a); b = String(b);
-  if (a.length !== b.length) return false;
-  let r = 0;
-  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return r === 0;
-}
+/* Guide passwords are stored as PLAINTEXT in the Control sheet on purpose:
+ * management logs in as a guide by copy-pasting that guide's password. (Salted
+ * hashing was tried and reverted — it broke that workflow; see git history.) */
 function verifyPassword_(stored, submitted) {
   const s = String(stored == null ? '' : stored);
-  const sub = String(submitted == null ? '' : submitted);
-  if (s.slice(0, 3) === 'h1:') {
-    const parts = s.split(':');
-    if (parts.length !== 3 || !parts[1]) return false;
-    return safeEqual_(hashPassword_(sub, parts[1]), s);
-  }
-  return s !== '' && s === sub;   // legacy plaintext, verified one last time
+  return s !== '' && s === String(submitted == null ? '' : submitted);
 }
 /** Management: set/reset a guide's password. Stored as PLAINTEXT so a manager can
  *  read/copy it from the Control sheet to log in as that guide.
@@ -3293,12 +3262,6 @@ function rebuildUnassignedLedger_() {
   if (rows.length) sh.getRange(3, 1, rows.length, header.length).setValues(rows);
   sh.setFrozenRows(2);
   return rows.length;
-}
-
-/** Recover the display language from a booking key by matching the "* Tours" tab. */
-function tabLanguageForKey_(key) {
-  const lang = key.split('|')[2] || '';
-  return lang ? lang.charAt(0).toUpperCase() + lang.slice(1) : '';
 }
 
 function minutesToTime_(minutes) {

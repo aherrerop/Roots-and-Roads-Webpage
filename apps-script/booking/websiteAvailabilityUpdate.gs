@@ -343,11 +343,6 @@ function websiteSheetToLanguage_(sheetName) {
 }
 
 
-function debugWebsiteAvailabilityJuly2026() {
-  const result = websiteBuildMonthAvailability_('2026-07');
-  console.log(JSON.stringify(result, null, 2));
-}
-
 /**
  * Remote-run endpoint used by the Control sheet's Mobile Controls block.
  * Only the two whitelisted booking functions can run, and only with the

@@ -3135,19 +3135,6 @@ function removeActiveBooking_(booking, lenient) {
 }
 
 
-function bookingToRow_(b) {
-  return [
-    b.name,
-    cleanPhone_(b.phone),
-    Number(b.guests || 0),
-    stripTime_(b.date),
-    normalizeTime_(b.time),
-    b.source,
-    Number(b.income || 0),
-    b.bookingId,
-    b.notes || ''
-  ];
-}
 
 
 function rowToBooking_(row, sheetName) {
