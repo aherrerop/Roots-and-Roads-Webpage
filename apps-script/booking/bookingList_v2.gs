@@ -1635,7 +1635,11 @@ function cancellationBookingsFromThread_(thread, source) {
   // downstream by id OR date+time+name (cancellationMatchesBooking_). Dedupe the
   // same way so a thread carrying the same cancellation twice yields one entry.
   parseThread_(thread, source, 'cancel').forEach(b => {
-    const n = normalizeBooking_({ ...b, source });
+    // KEEP the parser's source: it may be "GYG" (our 2nd GetYourGuide account,
+    // detected by recipient) rather than the config source "GetYourGuide". A
+    // cancellation must carry the same source as the booking it cancels, or
+    // cancellationMatchesBooking_ (same-source required) can never match it.
+    const n = normalizeBooking_({ ...b, source: b.source || source });
     if (!(n.bookingId || n.name)) return;
     if (!out.some(x => cancellationMatchesBooking_(x, n))) out.push(n);
   });

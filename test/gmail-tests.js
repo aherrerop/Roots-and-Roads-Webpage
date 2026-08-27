@@ -84,6 +84,24 @@ const _m = SpreadsheetApp._active.getSheetByName(RNR.SHEETS.PORTAL_FEED);
 const _mRow = _m.getRange(2, 1, 1, 16).getValues()[0];
 check('the main account stays Source = "GetYourGuide"', String(_mRow[7]) === 'GetYourGuide', _mRow[7]);
 
+console.log('--- 2nd GYG account: a cancellation removes ONLY its own booking (no cross-account harm) ---');
+resetWorld();
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Reserva - S779080 - GYGMAINX',
+  gygBody('GYGMAINX', 'Tom', _dateStr, 2, 'Inglés')));                                   // main account
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Reserva - S888888 - GYGDESTX',
+  gygBody('GYGDESTX', 'Tom', _dateStr, 2, 'Inglés'), new Date(), 'destinationstewards@gmail.com'));  // 2nd account
+processConfirmationLabel_(RNR.LABELS.GYG_CONFIRM, RNR.SOURCE.GYG);
+check('both accounts land (unique ids, distinct sources)', !!idsOnList()['GYGMAINX'] && !!idsOnList()['GYGDESTX'], Object.keys(idsOnList()));
+// Cancel the 2nd account's booking — the cancellation email is also to destinationstewards.
+__gmail.add([RNR.LABELS.GYG_CANCEL], __gmail.msg('Se ha cancelado una reserva - S888888 - GYGDESTX',
+  ['Se ha cancelado una reserva', 'Número de referencia: GYGDESTX'].join('\n'), new Date(), 'destinationstewards@gmail.com'));
+resetRunCaches_();   // the cancellation arrives on a LATER run — fresh thread/cancellation caches
+RNR_RUN_STARTED_AT_ = Date.now();
+processCancellations_();
+removeActiveBookingsThatHaveCancellationEmails_();
+check('the 2nd-account cancellation removes the 2nd-account booking', !idsOnList()['GYGDESTX'], Object.keys(idsOnList()));
+check('the main-account booking is left untouched', idsOnList()['GYGMAINX'] === true, Object.keys(idsOnList()));
+
 console.log('--- Confirmation: undeterminable language is registered but flagged UNREAD ---');
 resetWorld();
 const langThread = __gmail.add([RNR.LABELS.GYG_CONFIRM],
