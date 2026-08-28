@@ -1,0 +1,14 @@
+{
+  "name": "viator-autoclose",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Closes empty Viator departures inside their per-product window, driven by the BookingSheet all-platform guest counts.",
+  "scripts": {
+    "start": "node close-empty-tours.js",
+    "capture": "node capture-session.js",
+    "test": "node selftest.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}

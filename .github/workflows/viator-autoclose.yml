@@ -1,0 +1,50 @@
+name: Viator auto-close empty tours
+
+# Closes empty Viator departures inside each product's close-window.
+# DRY_RUN defaults to true in the script — set the repo variable
+# VIATOR_DRY_RUN to "false" (Settings → Secrets and variables → Actions →
+# Variables) once you've confirmed a few dry runs look right.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # every 30 min (UTC; delivery can lag a few min)
+  workflow_dispatch:          # manual "Run workflow" button for testing
+
+concurrency:
+  group: viator-autoclose
+  cancel-in-progress: false
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        working-directory: viator-autoclose
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      # Reuse the verified Viator session between runs (refreshed each run).
+      - name: Restore session
+        uses: actions/cache@v4
+        with:
+          path: viator-autoclose/state.json
+          key: viator-session-v1
+
+      - name: Run bot
+        working-directory: viator-autoclose
+        env:
+          BOOKING_WEBAPP_URL: ${{ secrets.BOOKING_WEBAPP_URL }}
+          ADMIN_KEY: ${{ secrets.ADMIN_KEY }}
+          VIATOR_EMAIL: ${{ secrets.VIATOR_EMAIL }}
+          VIATOR_PASSWORD: ${{ secrets.VIATOR_PASSWORD }}
+          VIATOR_STORAGE_STATE_B64: ${{ secrets.VIATOR_STORAGE_STATE_B64 }}
+          DRY_RUN: ${{ vars.VIATOR_DRY_RUN || 'true' }}
+          HEADLESS: 'true'
+        run: node close-empty-tours.js

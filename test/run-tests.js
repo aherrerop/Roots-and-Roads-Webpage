@@ -31,7 +31,8 @@ const CONTROL = [
 ];
 const BOOKING = [
   path.join(AS, 'booking', 'bookingList_v2.gs'),
-  path.join(AS, 'booking', 'websiteAvailabilityUpdate.gs')
+  path.join(AS, 'booking', 'websiteAvailabilityUpdate.gs'),
+  path.join(AS, 'booking', 'viatorAutoClose.gs')
 ];
 
 // Each suite = [project sources, suite file].
@@ -43,7 +44,8 @@ const SUITES = [
   [CONTROL, 'tests5.js'],
   [CONTROL, 'tests6.js'],          // Italian + French: control side
   [CONTROL, 'cache-tests.js'],     // cachedRead_ hit/miss + version-bump freshness (real cache)
-  [BOOKING, 'booking-tests.js']    // Italian + French: booking side
+  [BOOKING, 'booking-tests.js'],   // Italian + French: booking side
+  [BOOKING, 'viator-tests.js']     // Viator auto-close: 2FA code extraction + slot time
 ];
 
 // Gmail-side integration suite needs the stateful Gmail mock layered on top.

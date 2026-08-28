@@ -15,8 +15,8 @@ const path = require('path');
 const AS = path.join(__dirname, '..', 'apps-script');
 
 const PROJECTS = {
-  'BookingSheet': ['booking/bookingList_v2.gs', 'booking/websiteAvailabilityUpdate.gs'],
-  'Control': ['control/guidePortal.gs', 'control/assignShifts.gs', 'control/mobileControls.gs']
+  'BookingSheet': ['booking/bookingList_v2.gs', 'booking/websiteAvailabilityUpdate.gs', 'booking/viatorAutoClose.gs'],
+  'Control': ['control/guidePortal.gs', 'control/assignShifts.gs', 'control/mobileControls.gs', 'control/viatorControls.gs']
 };
 
 // Built-ins and Apps Script services that legitimately look like calls.

@@ -32,6 +32,14 @@ function doGet(e) {
     return websiteAdminRun_(e);
   }
 
+  // ---- VIATOR AUTO-CLOSE: read-only, ADMIN_KEY-guarded data for the bot ----
+  // GET ?closecheck=1&key=<ADMIN_KEY>[&hours=10]  |  ?viatorcode=1&key=<ADMIN_KEY>
+  if (String(e?.parameter?.closecheck || '') === '1' ||
+      String(e?.parameter?.viatorcode || '') === '1' ||
+      String(e?.parameter?.viatoralert || '') === '1') {
+    return viatorRespond_(e);
+  }
+
   let payload;
 
   try {
