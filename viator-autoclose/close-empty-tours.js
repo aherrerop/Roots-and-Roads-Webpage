@@ -132,6 +132,9 @@ async function main() {
 
 /* ------------------------------- login ------------------------------- */
 
+// Viator supplier login is TWO-STEP: email + "Next" -> password + submit ->
+// (sometimes) a 2FA code emailed to Gmail. Selectors confirmed against the real
+// page (email is type=text, placeholder "Email address").
 async function ensureLoggedIn(page) {
   await page.goto(CFG.availabilityUrl, { waitUntil: 'domcontentloaded' });
   if (await isLoggedIn(page)) { log('Session reused — already logged in.'); return; }
@@ -139,35 +142,86 @@ async function ensureLoggedIn(page) {
   log('Not logged in — signing in.');
   await page.goto(CFG.loginUrl, { waitUntil: 'domcontentloaded' });
 
-  // TUNING POINT #1: confirm these selectors on the real login page.
-  await page.fill('input[type="email"], input[name="email"], input[name="username"]', CFG.email);
-  await page.fill('input[type="password"], input[name="password"]', CFG.password);
-  await Promise.all([
-    page.waitForLoadState('networkidle').catch(() => {}),
-    page.click('button[type="submit"], button:has-text("Log in"), button:has-text("Sign in")')
-  ]);
-
-  if (await hasCaptcha(page)) {
-    throw new BlockedError('CAPTCHA on Viator login — manual close required.');
+  // Step 1 — email, then "Next".
+  const emailField = page.locator(
+    'input[placeholder="Email address" i], input[type="email"], input[name="email"], input[name="username"]'
+  ).first();
+  try {
+    await emailField.waitFor({ state: 'visible', timeout: 15000 });
+  } catch (e) {
+    log('LOGIN inputs on page:', JSON.stringify(await describeInputs(page)));
+    if (await hasCaptcha(page)) throw new BlockedError('CAPTCHA on Viator login — manual close required.');
+    throw new Error('Email field not found on login page.');
   }
+  await emailField.fill(CFG.email);
+  await clickFirst(page, ['button[type="submit"]', 'button:has-text("Next")', 'button:has-text("Continue")']);
+  await page.waitForTimeout(1500);
 
+  // Step 2 — password, then submit.
+  const pwField = page.locator('input[type="password"], input[name="password"]').first();
+  try {
+    await pwField.waitFor({ state: 'visible', timeout: 15000 });
+  } catch (e) {
+    log('PASSWORD-STEP inputs on page:', JSON.stringify(await describeInputs(page)));
+    if (await hasCaptcha(page)) throw new BlockedError('CAPTCHA on Viator login — manual close required.');
+    throw new Error('Password field not found after email step.');
+  }
+  await pwField.fill(CFG.password);
+  await clickFirst(page, ['button[type="submit"]', 'button:has-text("Log in")', 'button:has-text("Sign in")', 'button:has-text("Next")', 'button:has-text("Continue")']);
+  await page.waitForTimeout(2500);
+
+  if (await hasCaptcha(page)) throw new BlockedError('CAPTCHA on Viator login — manual close required.');
+
+  // Step 3 — 2FA code (only sometimes).
   if (await needsCode(page)) {
+    log('2FA code requested — fetching from Gmail.');
     const code = await waitForLoginCode();
     if (!code) throw new BlockedError('2FA code needed but none arrived in Gmail in time.');
-    // TUNING POINT #1b: confirm the code input + submit selectors.
-    await page.fill('input[autocomplete="one-time-code"], input[name="code"], input[type="tel"], input[type="text"]', code);
-    await Promise.all([
-      page.waitForLoadState('networkidle').catch(() => {}),
-      page.click('button[type="submit"], button:has-text("Verify"), button:has-text("Submit"), button:has-text("Continue")')
-    ]);
+    const codeField = page.locator(
+      'input[autocomplete="one-time-code"], input[name*="code" i], input[placeholder*="code" i], input[type="tel"]'
+    ).first();
+    try {
+      await codeField.waitFor({ state: 'visible', timeout: 8000 });
+    } catch (e) {
+      log('CODE-STEP inputs on page:', JSON.stringify(await describeInputs(page)));
+      throw new Error('2FA code field not found.');
+    }
+    await codeField.fill(code);
+    await clickFirst(page, ['button[type="submit"]', 'button:has-text("Verify")', 'button:has-text("Submit")', 'button:has-text("Continue")', 'button:has-text("Next")']);
+    await page.waitForTimeout(2500);
   }
 
   await page.goto(CFG.availabilityUrl, { waitUntil: 'domcontentloaded' });
   if (!(await isLoggedIn(page))) {
     if (await hasCaptcha(page)) throw new BlockedError('CAPTCHA after code — manual close required.');
+    log('POST-LOGIN inputs on page:', JSON.stringify(await describeInputs(page)));
     throw new Error('Login did not stick (check credentials / selectors).');
   }
   log('Logged in.');
+}
+
+// Click the first selector that exists — resilient to label/DOM variations.
+async function clickFirst(page, selectors) {
+  for (const sel of selectors) {
+    const el = page.locator(sel).first();
+    if (await el.count().catch(() => 0)) {
+      await el.click().catch(() => {});
+      return true;
+    }
+  }
+  return false;
+}
+
+// Dump every input's identifying attributes — logged on any login-step failure
+// so the exact selector can be fixed from one run, no guessing.
+async function describeInputs(page) {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll('input')).map(i => ({
+      type: i.type, name: i.name || null, id: i.id || null,
+      placeholder: i.placeholder || null, autocomplete: i.autocomplete || null,
+      visible: !!(i.offsetWidth || i.offsetHeight)
+    }))
+  ).catch(() => []);
 }
 
 async function isLoggedIn(page) {
