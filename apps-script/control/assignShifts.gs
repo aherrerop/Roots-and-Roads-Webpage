@@ -93,11 +93,11 @@ function makeSchedule() {
   const endDate = endOfScheduleRange_();          // Sunday of next full week
   const weekNames = weekTabsToSchedule_(guideSS); // this week's tab + next week's tab
 
-  // Private slots live in Weekly_Schedule as language "Private" so the
+  // Private slots live in Weekly_Schedule flagged Private (col I) so the
   // availability tab shows their times (e.g. 10:00) and guides can tick them.
   // They must NOT generate empty regular tours, so regular shift-building skips
   // them; private shifts are built from actual private bookings below.
-  const regularRules = weeklySchedule.filter(r => String(r.language).toLowerCase() !== 'private');
+  const regularRules = weeklySchedule.filter(r => !r.isPrivate);
 
   // Availability index across the scheduled weeks, keyed "dateText|time", so a
   // private booking can be staffed at ITS OWN time even with no regular slot.
@@ -282,26 +282,35 @@ function updateWeeklyScheduleToCurrentOffer() {
   const sh = ss.getSheetByName('Weekly_Schedule');
   if (!sh) throw new Error('Weekly_Schedule tab not found');
 
-  // Preserve rows for languages this function does not manage (German, Italian,
-  // French …), KEEPING their Guide (col G) and "Hide from availability" (col H),
-  // and normalising the Time cell whether it is a string or a coerced Date.
+  // This function OWNS only the regular English/Spanish offer. Every other row is
+  // preserved: other languages (German, Italian, French …) AND every private row
+  // (any language). We keep Guide (col G), Hide from availability (col H) and
+  // Private (col I), normalise the Time cell (string or coerced Date), and MIGRATE
+  // the legacy model where "Private" was written into Language: blank that label
+  // and set Private = yes, so an Italian private tour keeps Italian.
   const preserved = [];
   if (sh.getLastRow() > 1) {
-    const raw = sh.getRange(2, 1, sh.getLastRow() - 1, 8).getValues();
-    const dv = sh.getRange(2, 1, sh.getLastRow() - 1, 8).getDisplayValues();
+    const raw = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
+    const dv = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getDisplayValues();
     raw.forEach((r, i) => {
-      const lang = String(dv[i][2] || r[2] || '').trim();
-      if (!lang || ['english', 'spanish', 'private'].indexOf(lang.toLowerCase()) !== -1) return;
+      const langRaw = String(dv[i][2] || r[2] || '').trim();
+      const isPriv = /^(1|true|yes|y|x)$/i.test(String(dv[i][8] || '').trim())
+                     || /^private$/i.test(langRaw);
+      // Regular English/Spanish are regenerated below — drop them here.
+      if (!isPriv && ['english', 'spanish'].indexOf(langRaw.toLowerCase()) !== -1) return;
+      if (!langRaw && !isPriv) return;                       // truly empty row
       const time = normalizeTime_(dv[i][1]) || timeFromCellValue_(r[1]);
+      const lang = /^private$/i.test(langRaw) ? '' : langRaw; // strip legacy "Private" label
       preserved.push([
         String(dv[i][0] || r[0] || '').trim(),
         time || String(dv[i][1] || ''),
         lang,
-        Number(r[3]) || 1,
+        Number(r[3]) || (isPriv ? 0 : 1),
         r[4] || '',
         r[5] || '',
-        String(dv[i][6] || '').trim(),   // Guide (col G)
-        String(dv[i][7] || '').trim()    // Hide from availability (col H)
+        String(dv[i][6] || '').trim(),                       // Guide (col G)
+        String(dv[i][7] || '').trim(),                       // Hide from availability (col H)
+        isPriv ? 'yes' : String(dv[i][8] || '').trim()       // Private (col I)
       ]);
     });
   }
@@ -311,9 +320,9 @@ function updateWeeklyScheduleToCurrentOffer() {
   // EVERY availability week. (Stamping today's date here made the offer look
   // like it started on the run date, hiding tours such as 11:00 from earlier
   // weeks and — on any mid-week re-run — from the current week's early days.)
-  // 8 columns: Day, Time, Language, Guides needed, Active from, Active until,
-  // Guide (col G), Hide from availability (col H). Managed rows leave G/H blank.
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '']));
+  // 9 columns: Day, Time, Language, Guides needed, Active from, Active until,
+  // Guide (G), Hide from availability (H), Private (I). Managed rows leave G/H/I blank.
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '', '']));
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
 
   add(MTThF, '11:00', 'English');
@@ -322,25 +331,15 @@ function updateWeeklyScheduleToCurrentOffer() {
   add(['Wednesday'], '17:00', 'English');
   add(['Saturday'], '17:00', 'English');
 
-  // PRIVATE tours (any language) — availability slots only, never staffed as a
-  // tour (Guides needed = 0), so they add tick columns but create no shift. Match
-  // the GYG/Viator private product: Mon–Fri 10:00 & 17:00, Sat 17:00. When private
-  // is reactivated at 10:30, change the '10:00' below to '10:30'.
-  const MTWThF = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-  const addPriv = (days, time) => days.forEach(d => rows.push([d, time, 'Private', 0, '', '', '', '']));
-  addPriv(MTWThF, '10:00');
-  addPriv(MTWThF, '17:00');
-  addPriv(['Saturday'], '17:00');
-
-  const all = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability']]
+  const all = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability', 'Private']]
     .concat(rows)
     .concat(preserved);
 
   sh.clear();
   // Time column as TEXT before writing: "11:00" can never again become a Date.
   sh.getRange(1, 2, all.length, 1).setNumberFormat('@');
-  sh.getRange(1, 1, all.length, 8).setValues(all);
-  sh.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+  sh.getRange(1, 1, all.length, 9).setValues(all);
+  sh.getRange(1, 1, 1, 9).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
   sh.setFrozenRows(1);
   Logger.log('Weekly_Schedule updated: ' + rows.length + ' offer rows + ' +
              preserved.length + ' preserved rows (German etc., times repaired).');
@@ -747,13 +746,16 @@ function setupWeeklySchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('Weekly_Schedule') || ss.insertSheet('Weekly_Schedule');
 
-  const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability']];
+  const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability', 'Private']];
   // Blank "Active from" = always active (see updateWeeklyScheduleToCurrentOffer).
   // Blank "Guide" (col G) = no recurring default; fill it to auto-assign a guide
   // to that weekly slot every week (a manager can still override a single date).
   // Blank "Hide from availability" (col H) = shows in the availability sheet; set
   // TRUE/yes/x to keep the tour on the website + portal but off that sheet.
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '']));
+  // "Private" (col I) = yes/x marks a private slot (any language, or blank Language
+  // for language-agnostic): shows on the availability sheet, never staged as a
+  // group tour, never sent to the website.
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '', '']));
 
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
   add(MTThF, '11:00', 'English');
@@ -765,18 +767,19 @@ function setupWeeklySchedule() {
   add(['Saturday'], '17:00', 'English');
   add(['Saturday'], '17:00', 'Spanish');
 
-  // PRIVATE tours (any language) — availability slots only, never staffed
-  // (Guides needed = 0). Match the GYG/Viator private product: Mon–Fri 10:00 &
-  // 17:00, Sat 17:00. Keep in sync with updateWeeklyScheduleToCurrentOffer.
+  // PRIVATE availability slots (language-agnostic) — availability columns only,
+  // never staffed (Guides needed = 0), flagged Private = yes. Mon–Fri 10:00 &
+  // 17:00, Sat 17:00. To offer a private tour in a specific language, add a row
+  // with that Language and Private = yes.
   const MTWThF = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-  const addPriv = (days, time) => days.forEach(d => rows.push([d, time, 'Private', 0, '', '', '', '']));
+  const addPriv = (days, time) => days.forEach(d => rows.push([d, time, '', 0, '', '', '', '', 'yes']));
   addPriv(MTWThF, '10:00');
   addPriv(MTWThF, '17:00');
   addPriv(['Saturday'], '17:00');
 
   sh.clear();
-  sh.getRange(1, 1, rows.length, 8).setValues(rows);
-  sh.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+  sh.getRange(1, 1, rows.length, 9).setValues(rows);
+  sh.getRange(1, 1, 1, 9).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
   sh.setFrozenRows(1);
 }
 
@@ -1100,9 +1103,15 @@ function readWeeklySchedule_(ss) {
     // availability slots stage no tour), so never collapse 0 to 1 here.
     const gnStr = String(displayRow[3] || "").trim();
     const guidesNeeded = gnStr === "" ? 1 : (Number.isFinite(Number(gnStr)) ? Number(gnStr) : 1);
-    if (!day || !time || !language) continue;
+    // "Private" (col I): a yes/x/TRUE flag, OR the legacy literal "Private" in the
+    // Language cell. A private slot keeps its REAL language (Italian, German, …)
+    // or may be language-agnostic (blank), so private rows are allowed through
+    // even with no Language.
+    const isPrivate = /^(1|true|yes|y|x)$/i.test(String(displayRow[8] || "").trim())
+                      || /^private$/i.test(language);
+    if (!day || !time || (!language && !isPrivate)) continue;
     rules.push({
-      day, time, language, guidesNeeded,
+      day, time, language, guidesNeeded, isPrivate,
       activeFrom: rawRow[4] ? dateOnly_(new Date(rawRow[4])) : null,
       activeUntil: rawRow[5] ? dateOnly_(new Date(rawRow[5])) : null,
       // Optional recurring default guide (col G): who runs this weekly slot unless

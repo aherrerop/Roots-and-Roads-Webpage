@@ -131,16 +131,20 @@ function websiteReadWeeklyScheduleIntoMap_(control, slots) {
   const sh = control.getSheetByName(WEBSITE_CONTROL_WEEKLY_TAB);
   if (!sh || sh.getLastRow() < 2) return;
 
-  const values = sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues();
-  const display = sh.getRange(2, 1, sh.getLastRow() - 1, 6).getDisplayValues();
+  const values = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
+  const display = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getDisplayValues();
 
   values.forEach((row, i) => {
     const day = websiteClean_(display[i][0]);
     const time = websiteNormalizeTime_(display[i][1]);
-    // "Private" rows are guide-availability slots, not bookable group tours, and
-    // must never reach the website. (websiteNormalizeLanguage_ would otherwise
-    // default the unknown label "Private" to English, inventing phantom slots.)
-    if (/^private$/i.test(websiteClean_(display[i][2]))) return;
+    // Private rows are guide-availability slots, not bookable group tours, and
+    // must never reach the website — even when they carry a real language (an
+    // Italian private tour). Skip on the Private flag (col I) OR the legacy
+    // "Private" label in Language. (A private row with a blank Language would also
+    // slip through as English, since websiteNormalizeLanguage_ defaults to it.)
+    const isPrivate = /^(1|true|yes|y|x)$/i.test(websiteClean_(display[i][8]))
+                      || /^private$/i.test(websiteClean_(display[i][2]));
+    if (isPrivate) return;
     const language = websiteNormalizeLanguage_(display[i][2]);
 
     if (!day || !time || !language) return;

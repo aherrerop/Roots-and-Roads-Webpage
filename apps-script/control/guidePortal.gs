@@ -960,7 +960,7 @@ function appendWeeklyScheduleShifts_(schedule) {
     const day = dayNameFromKey_(dateKey);
     rules.forEach(rule => {
       if (rule.day !== day) return;
-      if (/^private$/i.test(rule.language)) return;
+      if (rule.isPrivate) return;
       if (rule.activeFrom && dateKey < toDateKey_(rule.activeFrom)) return;
       if (rule.activeUntil && dateKey > toDateKey_(rule.activeUntil)) return;
       const time = normTime24_(rule.time);
@@ -2324,7 +2324,7 @@ function weeklyDefaultGuide_(dateKey, time, language) {
   const langL = String(language || '').toLowerCase();
   for (const r of rules) {
     if (!r.guide) continue;
-    if (/^private$/i.test(r.language)) continue;                 // defaults are for regular slots
+    if (r.isPrivate) continue;                 // defaults are for regular slots
     if (String(r.day).toLowerCase() !== day) continue;
     if (String(r.language).toLowerCase() !== langL) continue;
     if (timeToMinutes_(normTime24_(r.time)) !== minutes) continue;

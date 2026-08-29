@@ -29,41 +29,46 @@ check('17:00 keeps Albert availability',
 /* --- BUG 2: Weekly_Schedule Date-coerced times (12/30/1899) still parse --- */
 console.log('--- readWeeklySchedule_: coerced Date times ---');
 const ws=control.insertSheet('Weekly_Schedule');
-ws.getRange(1,1,4,6).setValues([
- ['Day','Time','Language','Guides needed','Active from','Active until'],
- ['Monday','11:00','English',1,'',''],
- ['Monday',new Date(1899,11,30,10,0),'German',1,'',''],      // corrupted cell
- ['Wednesday',new Date(1899,11,30,17,0),'German',1,'','']]);
+ws.getRange(1,1,6,9).setValues([
+ ['Day','Time','Language','Guides needed','Active from','Active until','Guide','Hide from availability','Private'],
+ ['Monday','11:00','English',1,'','','','',''],
+ ['Monday',new Date(1899,11,30,10,0),'German',1,'','','','',''],      // corrupted cell
+ ['Wednesday',new Date(1899,11,30,17,0),'German',1,'','','','',''],
+ ['Monday','10:00','Private',0,'','','','',''],           // LEGACY: private-as-language
+ ['Saturday','14:00','Italian',0,'','','','','yes']]);     // NEW: real language + Private flag
 const parsed=readWeeklySchedule_(control);
 check('string time rule parsed', parsed.some(r=>r.time==='11:00'&&r.language==='English'), parsed);
 check('Date-coerced 10:00 German rule RECOVERED', parsed.some(r=>r.time==='10:00'&&r.language==='German'), parsed.map(r=>r.time+'/'+r.language));
 check('Date-coerced 17:00 German rule RECOVERED', parsed.some(r=>r.time==='17:00'&&r.language==='German'), null);
+check('legacy "Private" language parses as isPrivate', parsed.some(r=>r.time==='10:00'&&r.isPrivate&&r.language==='Private'), parsed);
+check('Private-flag row parses as isPrivate KEEPING its real language',
+  parsed.some(r=>r.language==='Italian'&&r.time==='14:00'&&r.isPrivate===true), parsed);
 
-/* --- offer writer: repairs corrupted German rows, writes the Private slots --- */
+/* --- offer writer: repairs German, regenerates English/Spanish, PRESERVES +
+      migrates private (blanks the legacy "Private" label, keeps real languages) --- */
 console.log('--- updateWeeklyScheduleToCurrentOffer ---');
 updateWeeklyScheduleToCurrentOffer();
-const after=ws.getRange(1,1,ws.getLastRow(),6).getDisplayValues();
+const after=ws.getRange(1,1,ws.getLastRow(),9).getDisplayValues();
 check('German preserved with REPAIRED time (10:00, not 12/30/1899)',
   after.some(r=>r[2]==='German'&&r[1]==='10:00'), after.filter(r=>r[2]==='German').map(r=>r[1]));
 check('English 11:00 Mon-Tue-Thu-Fri present',
   after.filter(r=>r[2]==='English'&&r[1]==='11:00').length===4, null);
 check('Spanish 10:30 present', after.filter(r=>r[2]==='Spanish'&&r[1]==='10:30').length===4, null);
-const reparsed=readWeeklySchedule_(control);
-check('round-trip: all repaired rules parse', reparsed.length===after.length-1, {rules:reparsed.length, rows:after.length-1});
 
-/* --- Private availability slots: now real Weekly_Schedule rows (not hardcoded) --- */
-// Management owns every availability column. The Private slots (10:00 that no
-// regular tour uses, plus 17:00) are written into Weekly_Schedule as language
-// "Private" with Guides needed = 0 — availability columns that stage no tour.
-const privRows=after.filter(r=>r[2]==='Private');
-check('Private slots written to Weekly_Schedule (Mon 10:00+17:00)',
-  privRows.filter(r=>r[0]==='Monday').map(r=>r[1]).sort().join()==='10:00,17:00', privRows.filter(r=>r[0]==='Monday'));
-check('Saturday only 17:00 Private slot',
-  privRows.filter(r=>r[0]==='Saturday').map(r=>r[1]).join()==='17:00', privRows.filter(r=>r[0]==='Saturday'));
-check('Sunday has no Private slot', privRows.every(r=>r[0]!=='Sunday'), privRows.filter(r=>r[0]==='Sunday'));
-const privParsed=reparsed.filter(r=>r.language==='Private');
-check('Private rows parse back with guidesNeeded 0 (no tour staged)',
-  privParsed.length>0 && privParsed.every(r=>Number(r.guidesNeeded)===0), privParsed);
+// Private rows are PRESERVED (not regenerated), and the legacy "Private" label
+// is migrated off the Language column into the Private flag.
+check('no legacy "Private" left in the Language column', !after.some(r=>/^private$/i.test(r[2])), after.map(r=>r[2]));
+const legacyMig=after.find(r=>r[0]==='Monday'&&r[1]==='10:00'&&/^yes$/i.test(r[8]||''));
+check('legacy private 10:00 migrated -> blank Language + Private=yes', !!legacyMig&&legacyMig[2]==='', legacyMig);
+const italPriv=after.find(r=>r[0]==='Saturday'&&r[1]==='14:00');
+check('Italian private preserved -> Italian language + Private=yes',
+  !!italPriv&&italPriv[2]==='Italian'&&/^yes$/i.test(italPriv[8]||''), italPriv);
+const reparsed=readWeeklySchedule_(control);
+check('round-trip: all rows parse', reparsed.length===after.length-1, {rules:reparsed.length, rows:after.length-1});
+const privParsed=reparsed.filter(r=>r.isPrivate);
+check('exactly the two private rows survive as isPrivate', privParsed.length===2, privParsed);
+check('private rows keep guidesNeeded 0 (stage no group tour)',
+  privParsed.every(r=>Number(r.guidesNeeded)===0), privParsed);
 
 /* --- "Hide from availability" (col H): keep the tour on web + portal, off the
       availability sheet (e.g. 4pm Italian) --- */
