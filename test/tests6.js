@@ -149,9 +149,11 @@ check('time header written as text "10:00" (not a Date)', hdr[0]==='10:00' && !(
 check('second time header text too', hdr[1]==='17:00' && !(hdr[1] instanceof Date), hdr);
 
 console.log('--- Availability is IDENTICAL week to week (no vanishing 10:00) ---');
-// Weekly_Schedule holds only real tours; private slots come from ASSIGN_CFG.
-const offer=[{day:'Monday',time:'11:00',language:'English',guidesNeeded:1,activeFrom:null,activeUntil:null}];
-const allRules=offer.concat(privateAvailabilityRules_());
+// Private slots are now real Weekly_Schedule "Private" rows (Guides needed 0),
+// so — with no date window — they render every week like any other rule.
+const allRules=[{day:'Monday',time:'11:00',language:'English',guidesNeeded:1,activeFrom:null,activeUntil:null},
+                {day:'Monday',time:'10:00',language:'Private',guidesNeeded:0,activeFrom:null,activeUntil:null},
+                {day:'Monday',time:'17:00',language:'Private',guidesNeeded:0,activeFrom:null,activeUntil:null}];
 const mkWeek=(name,mondayOffset)=>{
   const d=day(mondayOffset); const sh=gss.insertSheet(name);
   rebuildAvailabilityWeekSheet_(sh,[{dateKey:key(d),dateObj:d,dayName:'Monday',shortLabel:shortDateLabel_(d)}],
@@ -164,8 +166,8 @@ check('Monday offers 10:00 in week B TOO (was disappearing)', wB.indexOf('10:00'
 check('Monday offers 10:00 in week C as well', wC.indexOf('10:00')!==-1, wC);
 check('same weekday = identical columns across all three weeks',
   wA.join()===wB.join() && wB.join()===wC.join(), {wA,wB,wC});
-check('private slots present without any Weekly_Schedule "Private" row',
-  wA.indexOf('10:30')!==-1 && wA.indexOf('17:00')!==-1, wA);
+check('private slots present from Weekly_Schedule "Private" rows',
+  wA.indexOf('10:00')!==-1 && wA.indexOf('17:00')!==-1, wA);
 
 console.log('--- Ledger: free-tour commission is per-person, per-platform ---');
 const rates={paid:10, free:6, privatePay:75,

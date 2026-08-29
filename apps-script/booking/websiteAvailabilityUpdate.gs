@@ -137,6 +137,10 @@ function websiteReadWeeklyScheduleIntoMap_(control, slots) {
   values.forEach((row, i) => {
     const day = websiteClean_(display[i][0]);
     const time = websiteNormalizeTime_(display[i][1]);
+    // "Private" rows are guide-availability slots, not bookable group tours, and
+    // must never reach the website. (websiteNormalizeLanguage_ would otherwise
+    // default the unknown label "Private" to English, inventing phantom slots.)
+    if (/^private$/i.test(websiteClean_(display[i][2]))) return;
     const language = websiteNormalizeLanguage_(display[i][2]);
 
     if (!day || !time || !language) return;

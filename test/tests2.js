@@ -39,11 +39,10 @@ check('string time rule parsed', parsed.some(r=>r.time==='11:00'&&r.language==='
 check('Date-coerced 10:00 German rule RECOVERED', parsed.some(r=>r.time==='10:00'&&r.language==='German'), parsed.map(r=>r.time+'/'+r.language));
 check('Date-coerced 17:00 German rule RECOVERED', parsed.some(r=>r.time==='17:00'&&r.language==='German'), null);
 
-/* --- offer writer: repairs corrupted German rows, adds no Private rows --- */
+/* --- offer writer: repairs corrupted German rows, writes the Private slots --- */
 console.log('--- updateWeeklyScheduleToCurrentOffer ---');
 updateWeeklyScheduleToCurrentOffer();
 const after=ws.getRange(1,1,ws.getLastRow(),6).getDisplayValues();
-check('no Private language rows written', !after.some(r=>/private/i.test(r[2])), after.map(r=>r[2]));
 check('German preserved with REPAIRED time (10:00, not 12/30/1899)',
   after.some(r=>r[2]==='German'&&r[1]==='10:00'), after.filter(r=>r[2]==='German').map(r=>r[1]));
 check('English 11:00 Mon-Tue-Thu-Fri present',
@@ -52,17 +51,44 @@ check('Spanish 10:30 present', after.filter(r=>r[2]==='Spanish'&&r[1]==='10:30')
 const reparsed=readWeeklySchedule_(control);
 check('round-trip: all repaired rules parse', reparsed.length===after.length-1, {rules:reparsed.length, rows:after.length-1});
 
-/* --- private availability pseudo-rules --- */
-const priv=privateAvailabilityRules_();
-// 10:00 is a private slot (no regular tour runs then). It MUST come from
-// ASSIGN_CFG.PRIVATE_AVAILABILITY, never from a Weekly_Schedule "Private" row —
-// those get wiped by updateWeeklyScheduleToCurrentOffer, which is what made
-// 10:00 vanish from later week tabs.
-check('private slots exposed for availability (Mon 10:00+10:30+17:00)',
-  priv.filter(r=>r.day==='Monday').map(r=>r.time).sort().join()==='10:00,10:30,17:00', priv.filter(r=>r.day==='Monday'));
-check('private slots carry no date window (identical every week)',
-  priv.every(r=>r.activeFrom===null && r.activeUntil===null), priv.filter(r=>r.activeFrom||r.activeUntil));
-check('Saturday only 17:00 private slot', priv.filter(r=>r.day==='Saturday').map(r=>r.time).join()==='17:00', null);
+/* --- Private availability slots: now real Weekly_Schedule rows (not hardcoded) --- */
+// Management owns every availability column. The Private slots (10:00 that no
+// regular tour uses, plus 17:00) are written into Weekly_Schedule as language
+// "Private" with Guides needed = 0 — availability columns that stage no tour.
+const privRows=after.filter(r=>r[2]==='Private');
+check('Private slots written to Weekly_Schedule (Mon 10:00+17:00)',
+  privRows.filter(r=>r[0]==='Monday').map(r=>r[1]).sort().join()==='10:00,17:00', privRows.filter(r=>r[0]==='Monday'));
+check('Saturday only 17:00 Private slot',
+  privRows.filter(r=>r[0]==='Saturday').map(r=>r[1]).join()==='17:00', privRows.filter(r=>r[0]==='Saturday'));
+check('Sunday has no Private slot', privRows.every(r=>r[0]!=='Sunday'), privRows.filter(r=>r[0]==='Sunday'));
+const privParsed=reparsed.filter(r=>r.language==='Private');
+check('Private rows parse back with guidesNeeded 0 (no tour staged)',
+  privParsed.length>0 && privParsed.every(r=>Number(r.guidesNeeded)===0), privParsed);
+
+/* --- "Hide from availability" (col H): keep the tour on web + portal, off the
+      availability sheet (e.g. 4pm Italian) --- */
+console.log('--- hideFromAvailability column ---');
+ws.clear();   // reuse the real Weekly_Schedule tab readWeeklySchedule_ reads
+ws.getRange(1,1,4,8).setValues([
+ ['Day','Time','Language','Guides needed','Active from','Active until','Guide','Hide from availability'],
+ ['Monday','11:00','English',1,'','','',''],
+ ['Monday','16:00','Italian',1,'','','','yes'],     // hidden from availability
+ ['Tuesday','16:00','Italian',1,'','','','']]);      // shown as normal
+const hideRules=readWeeklySchedule_(control);
+const ital=hideRules.filter(r=>r.language==='Italian');
+check('flagged Italian row parses hideFromAvailability=true',
+  ital.some(r=>r.day==='Monday'&&r.hideFromAvailability===true), ital);
+check('unflagged Italian row stays visible (hideFromAvailability=false)',
+  ital.some(r=>r.day==='Tuesday'&&r.hideFromAvailability===false), ital);
+// The availability sheet builds from the FILTERED list; the portal/website use
+// the full list, so the hidden tour still exists everywhere else.
+const availVisible=hideRules.filter(r=>!r.hideFromAvailability);
+check('availability sheet omits the hidden Mon 16:00 Italian',
+  !availVisible.some(r=>r.day==='Monday'&&r.time==='16:00'&&r.language==='Italian'), availVisible.map(r=>r.day+r.time+r.language));
+check('portal/website still see the hidden Mon 16:00 Italian',
+  hideRules.some(r=>r.day==='Monday'&&r.time==='16:00'&&r.language==='Italian'), null);
+check('English default (blank col H) is not hidden',
+  hideRules.find(r=>r.language==='English').hideFromAvailability===false, null);
 
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');

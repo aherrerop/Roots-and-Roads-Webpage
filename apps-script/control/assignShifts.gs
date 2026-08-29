@@ -69,42 +69,9 @@ const ASSIGN_CFG = {
   PAID_SOURCES: ["Viator", "GetYourGuide", "Airbnb"],
 
   // Where schedule problems (lock conflicts, missing eligibility) are logged.
-  ERRORS_TAB: "Errors",
-
-  // Availability slots for PRIVATE tours, per weekday. These only add tick
-  // columns to the availability sheet — they never create tours ("Private"
-  // is NOT a language and never appears in Weekly_Schedule). Actual private
-  // shifts are booking-driven at the booking's real time, in the booking's
-  // language.
-  // THE single source of the private availability columns. These have no date
-  // window, so every week tab must show exactly these slots. 10:00 belongs here
-  // (it has no regular tour): it used to come from "Private" rows written into
-  // Weekly_Schedule by setupWeeklySchedule, which updateWeeklyScheduleToCurrentOffer
-  // then deleted — so 10:00 survived in week tabs built before that refresh and
-  // vanished from every week tab rebuilt after it.
-  PRIVATE_AVAILABILITY: {
-    Monday:    ['10:00', '10:30', '17:00'],
-    Tuesday:   ['10:00', '10:30', '17:00'],
-    Wednesday: ['10:00', '10:30', '17:00'],
-    Thursday:  ['10:00', '10:30', '17:00'],
-    Friday:    ['10:00', '10:30', '17:00'],
-    Saturday:  ['17:00'],
-    Sunday:    []
-  }
+  ERRORS_TAB: "Errors"
 };
 
-/** Pseudo-rules that expose the private availability slots as columns in the
- *  Week tabs. Shaped like Weekly_Schedule rules so the sync code can just
- *  concat them. */
-function privateAvailabilityRules_() {
-  const out = [];
-  Object.keys(ASSIGN_CFG.PRIVATE_AVAILABILITY).forEach(day => {
-    ASSIGN_CFG.PRIVATE_AVAILABILITY[day].forEach(time => {
-      out.push({ day, time, language: 'Private', guidesNeeded: 0, activeFrom: null, activeUntil: null });
-    });
-  });
-  return out;
-}
 
 // Back-compat aliases (used across this file).
 const TOUR_DURATION_HOURS = ASSIGN_CFG.MIN_SEPARATION_HOURS;
@@ -304,9 +271,9 @@ function makeSchedule() {
  *   Mon/Tue/Thu/Fri: English 11:00 + 17:00 · Spanish 10:30
  *   Wednesday:       English 17:00
  *   Saturday:        English 17:00
- * Weekly_Schedule holds ONLY real tour languages. Private availability slots
- * live in ASSIGN_CFG.PRIVATE_AVAILABILITY (they are not tours and private is
- * not a language). German rows are preserved exactly as you maintain them —
+ * Weekly_Schedule is the ONLY source of availability columns — whatever
+ * Management puts here is exactly what the availability sheet shows (no hardcoded
+ * slots). German rows are preserved exactly as you maintain them —
  * including repairing any time cell Sheets had corrupted into 12/30/1899.
  * The Time column is text-formatted so the corruption cannot come back.
  */
@@ -315,12 +282,13 @@ function updateWeeklyScheduleToCurrentOffer() {
   const sh = ss.getSheetByName('Weekly_Schedule');
   if (!sh) throw new Error('Weekly_Schedule tab not found');
 
-  // Preserve rows for languages this function does not manage (e.g. German),
-  // normalising the Time cell whether it is a string or a coerced Date.
+  // Preserve rows for languages this function does not manage (German, Italian,
+  // French …), KEEPING their Guide (col G) and "Hide from availability" (col H),
+  // and normalising the Time cell whether it is a string or a coerced Date.
   const preserved = [];
   if (sh.getLastRow() > 1) {
-    const raw = sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues();
-    const dv = sh.getRange(2, 1, sh.getLastRow() - 1, 6).getDisplayValues();
+    const raw = sh.getRange(2, 1, sh.getLastRow() - 1, 8).getValues();
+    const dv = sh.getRange(2, 1, sh.getLastRow() - 1, 8).getDisplayValues();
     raw.forEach((r, i) => {
       const lang = String(dv[i][2] || r[2] || '').trim();
       if (!lang || ['english', 'spanish', 'private'].indexOf(lang.toLowerCase()) !== -1) return;
@@ -331,7 +299,9 @@ function updateWeeklyScheduleToCurrentOffer() {
         lang,
         Number(r[3]) || 1,
         r[4] || '',
-        r[5] || ''
+        r[5] || '',
+        String(dv[i][6] || '').trim(),   // Guide (col G)
+        String(dv[i][7] || '').trim()    // Hide from availability (col H)
       ]);
     });
   }
@@ -341,7 +311,9 @@ function updateWeeklyScheduleToCurrentOffer() {
   // EVERY availability week. (Stamping today's date here made the offer look
   // like it started on the run date, hiding tours such as 11:00 from earlier
   // weeks and — on any mid-week re-run — from the current week's early days.)
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '']));
+  // 8 columns: Day, Time, Language, Guides needed, Active from, Active until,
+  // Guide (col G), Hide from availability (col H). Managed rows leave G/H blank.
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '']));
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
 
   add(MTThF, '11:00', 'English');
@@ -350,15 +322,25 @@ function updateWeeklyScheduleToCurrentOffer() {
   add(['Wednesday'], '17:00', 'English');
   add(['Saturday'], '17:00', 'English');
 
-  const all = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until']]
+  // PRIVATE tours (any language) — availability slots only, never staffed as a
+  // tour (Guides needed = 0), so they add tick columns but create no shift. Match
+  // the GYG/Viator private product: Mon–Fri 10:00 & 17:00, Sat 17:00. When private
+  // is reactivated at 10:30, change the '10:00' below to '10:30'.
+  const MTWThF = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+  const addPriv = (days, time) => days.forEach(d => rows.push([d, time, 'Private', 0, '', '', '', '']));
+  addPriv(MTWThF, '10:00');
+  addPriv(MTWThF, '17:00');
+  addPriv(['Saturday'], '17:00');
+
+  const all = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability']]
     .concat(rows)
     .concat(preserved);
 
   sh.clear();
   // Time column as TEXT before writing: "11:00" can never again become a Date.
   sh.getRange(1, 2, all.length, 1).setNumberFormat('@');
-  sh.getRange(1, 1, all.length, 6).setValues(all);
-  sh.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+  sh.getRange(1, 1, all.length, 8).setValues(all);
+  sh.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
   sh.setFrozenRows(1);
   Logger.log('Weekly_Schedule updated: ' + rows.length + ' offer rows + ' +
              preserved.length + ' preserved rows (German etc., times repaired).');
@@ -703,7 +685,11 @@ function syncAvailabilityFile() {
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
 
   const guideNames = readActiveGuideNames_(controlSS);
-  const scheduleRules = readWeeklySchedule_(controlSS).concat(privateAvailabilityRules_());
+  // Availability columns come ONLY from the Weekly_Schedule that Management edits —
+  // no hardcoded slots. Add a time here by adding its row to Weekly_Schedule.
+  // Rows flagged "Hide from availability" (col H) still run on the website and
+  // portal but get NO tick column here (e.g. 4pm Italian).
+  const scheduleRules = readWeeklySchedule_(controlSS).filter(r => !r.hideFromAvailability);
 
   guideSS.getSheets().forEach(sheet => {
     if (!sheet.getName().startsWith("Week ")) return;
@@ -754,17 +740,20 @@ function runWeeklyScheduling() {
 
 /**
  * RUN ONCE (from the editor) to fill Weekly_Schedule with the current offer.
- * Overwrites the tab. Private tours are booking-driven, so they are NOT rows here.
+ * Overwrites the tab (wipes German too — normally you run
+ * updateWeeklyScheduleToCurrentOffer instead, which preserves it).
  */
 function setupWeeklySchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('Weekly_Schedule') || ss.insertSheet('Weekly_Schedule');
 
-  const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide']];
+  const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability']];
   // Blank "Active from" = always active (see updateWeeklyScheduleToCurrentOffer).
   // Blank "Guide" (col G) = no recurring default; fill it to auto-assign a guide
   // to that weekly slot every week (a manager can still override a single date).
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '']));
+  // Blank "Hide from availability" (col H) = shows in the availability sheet; set
+  // TRUE/yes/x to keep the tour on the website + portal but off that sheet.
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '']));
 
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
   add(MTThF, '11:00', 'English');
@@ -776,15 +765,18 @@ function setupWeeklySchedule() {
   add(['Saturday'], '17:00', 'English');
   add(['Saturday'], '17:00', 'Spanish');
 
-  // NO "Private" rows here. Private availability slots (10:00 / 10:30 / 17:00)
-  // live in ASSIGN_CFG.PRIVATE_AVAILABILITY and are added by
-  // privateAvailabilityRules_ for every week. Writing them into Weekly_Schedule
-  // was the bug: updateWeeklyScheduleToCurrentOffer deletes every "private" row,
-  // so those slots disappeared from any week tab rebuilt afterwards.
+  // PRIVATE tours (any language) — availability slots only, never staffed
+  // (Guides needed = 0). Match the GYG/Viator private product: Mon–Fri 10:00 &
+  // 17:00, Sat 17:00. Keep in sync with updateWeeklyScheduleToCurrentOffer.
+  const MTWThF = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+  const addPriv = (days, time) => days.forEach(d => rows.push([d, time, 'Private', 0, '', '', '', '']));
+  addPriv(MTWThF, '10:00');
+  addPriv(MTWThF, '17:00');
+  addPriv(['Saturday'], '17:00');
 
   sh.clear();
-  sh.getRange(1, 1, rows.length, 6).setValues(rows);
-  sh.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+  sh.getRange(1, 1, rows.length, 8).setValues(rows);
+  sh.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
   sh.setFrozenRows(1);
 }
 
@@ -835,7 +827,11 @@ function ensureWeekTabs_() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
   const guideNames = readActiveGuideNames_(controlSS);
-  const scheduleRules = readWeeklySchedule_(controlSS).concat(privateAvailabilityRules_());
+  // Availability columns come ONLY from the Weekly_Schedule that Management edits —
+  // no hardcoded slots. Add a time here by adding its row to Weekly_Schedule.
+  // Rows flagged "Hide from availability" (col H) still run on the website and
+  // portal but get NO tick column here (e.g. 4pm Italian).
+  const scheduleRules = readWeeklySchedule_(controlSS).filter(r => !r.hideFromAvailability);
 
   const today = dateOnly_(new Date());
   const dow = (today.getDay() + 6) % 7;
@@ -1100,7 +1096,10 @@ function readWeeklySchedule_(ss) {
     // survives instead of silently disappearing.
     const time = normalizeTime_(displayRow[1]) || timeFromCellValue_(rawRow[1]);
     const language = String(displayRow[2] || "").trim();
-    const guidesNeeded = Number(rawRow[3]) || 1;
+    // Blank "Guides needed" defaults to 1; an explicit 0 is kept (Private
+    // availability slots stage no tour), so never collapse 0 to 1 here.
+    const gnStr = String(displayRow[3] || "").trim();
+    const guidesNeeded = gnStr === "" ? 1 : (Number.isFinite(Number(gnStr)) ? Number(gnStr) : 1);
     if (!day || !time || !language) continue;
     rules.push({
       day, time, language, guidesNeeded,
@@ -1108,7 +1107,11 @@ function readWeeklySchedule_(ss) {
       activeUntil: rawRow[5] ? dateOnly_(new Date(rawRow[5])) : null,
       // Optional recurring default guide (col G): who runs this weekly slot unless
       // a manager overrides that specific date. Read by the portal.
-      guide: String(displayRow[6] || "").trim()
+      guide: String(displayRow[6] || "").trim(),
+      // "Hide from availability" (col H): TRUE/yes/x hides this slot's column from
+      // the guide-availability sheet ONLY. The tour still runs on the website and
+      // shows on the guide portal (buildShifts_ stages it regardless).
+      hideFromAvailability: /^(1|true|yes|y|x|hide)$/i.test(String(displayRow[7] || "").trim())
     });
   }
   return rules;
