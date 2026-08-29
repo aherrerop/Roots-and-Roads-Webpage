@@ -1,6 +1,7 @@
 # Node / npm
 node_modules/
 npm-debug.log*
+viator-autoclose/package-lock.json
 
 # clasp credentials — NEVER commit these (OAuth tokens for your Google account)
 .clasprc.json
