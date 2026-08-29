@@ -245,8 +245,12 @@ function viatorLatestLoginCode_() {
 function viatorSendAlert_(e) {
   const tours = String(e?.parameter?.tours || '').trim();
   const reason = String(e?.parameter?.reason || 'The Viator auto-close bot was blocked.');
-  const to = PropertiesService.getScriptProperties().getProperty(VIATOR_ALERT_PROP) ||
-    Session.getEffectiveUser().getEmail();
+  let to = PropertiesService.getScriptProperties().getProperty(VIATOR_ALERT_PROP);
+  if (!to) {
+    // getEffectiveUser needs the userinfo.email scope, which this web app may
+    // not have — never let a missing recipient crash the endpoint.
+    try { to = Session.getEffectiveUser().getEmail(); } catch (err) { to = ''; }
+  }
   if (!to) return false;
 
   const body =

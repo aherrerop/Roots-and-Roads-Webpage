@@ -21,7 +21,13 @@ const STATE = path.join(__dirname, 'state.json');
 
 (async () => {
   const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext();
+  // Match the CI bot's context so the captured session replays cleanly.
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    viewport: { width: 1366, height: 768 },
+    locale: 'en-US',
+    timezoneId: 'Europe/Madrid'
+  });
   const page = await context.newPage();
   await page.goto('https://supplier.viator.com/login');
 

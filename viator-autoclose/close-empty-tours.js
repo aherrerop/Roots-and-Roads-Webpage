@@ -71,8 +71,21 @@ async function main() {
   log(`closecheck ok. now=${nowIso} scanDates=${scanDates.join(',')} products=${Object.keys(productHours).join(',')}`);
 
   const { chromium } = require('playwright');
-  const browser = await chromium.launch({ headless: CFG.headless });
-  const context = await browser.newContext(await loadState());
+  const browser = await chromium.launch({
+    headless: CFG.headless,
+    args: ['--disable-blink-features=AutomationControlled']
+  });
+  // Present as a normal desktop Chrome so a legitimately-captured session is
+  // less likely to be re-challenged. (This does not defeat CAPTCHAs — a fresh
+  // login from a flagged IP will still be blocked; the saved session is what
+  // avoids the login page entirely.)
+  const context = await browser.newContext({
+    ...(await loadState()),
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    viewport: { width: 1366, height: 768 },
+    locale: 'en-US',
+    timezoneId: 'Europe/Madrid'
+  });
   const page = await context.newPage();
 
   const closed = [], wouldClose = [], skipped = [];
