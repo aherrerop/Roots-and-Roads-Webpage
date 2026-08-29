@@ -7,11 +7,18 @@ name: Viator auto-close empty tours
 
 on:
   # SCHEDULE DISABLED during setup to avoid spamming runs/alerts while we prove
-  # the saved-session path works from GitHub. Re-enable once a manual run reaches
+  # the saved-session path works from GitHub. UNCOMMENT once a manual run reaches
   # the availability page successfully.
+  #
+  # Tours run at 10:30, 16:00 (Italian) and 17:00 Madrid, so we only need to act
+  # ~10h before: ~00:30, 06:00, 07:00 Madrid. Cron is UTC and has no DST, so each
+  # target is covered for both CEST (UTC+2) and CET (UTC+1), with a little lead.
+  # NOTE: assumes ~10h close windows. If a product's window in the Control tab is
+  # much larger (e.g. private P5 at 24h), widen these so its departures are seen.
   # schedule:
-  #   - cron: '*/30 * * * *'   # every 30 min (UTC; delivery can lag a few min)
-  workflow_dispatch:          # manual "Run workflow" button
+  #   - cron: '0,30 22,23 * * *'   # 00:30 Madrid close of the 10:30 tour (±DST)
+  #   - cron: '0 4,5,6 * * *'      # 06:00/07:00 Madrid close of 16:00 & 17:00 (±DST)
+  workflow_dispatch:              # manual "Run workflow" button
 
 concurrency:
   group: viator-autoclose
