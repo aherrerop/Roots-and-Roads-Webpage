@@ -6,9 +6,12 @@ name: Viator auto-close empty tours
 # Variables) once you've confirmed a few dry runs look right.
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'   # every 30 min (UTC; delivery can lag a few min)
-  workflow_dispatch:          # manual "Run workflow" button for testing
+  # SCHEDULE DISABLED during setup to avoid spamming runs/alerts while we prove
+  # the saved-session path works from GitHub. Re-enable once a manual run reaches
+  # the availability page successfully.
+  # schedule:
+  #   - cron: '*/30 * * * *'   # every 30 min (UTC; delivery can lag a few min)
+  workflow_dispatch:          # manual "Run workflow" button
 
 concurrency:
   group: viator-autoclose
