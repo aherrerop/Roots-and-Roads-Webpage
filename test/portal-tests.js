@@ -97,7 +97,8 @@ check('renderAll restores the last tab (no jump back to My tours)', /function re
 console.log('--- Resilient loads: one miss must not show "Can\'t reach the server" ---');
 check('a single failed load is gated (banner only after 2 in a row)', /LOAD_FAILS\s*<\s*2/.test(html), null);
 check('a miss schedules a quiet auto-retry instead of an error', /RETRY_TIMER=setTimeout\(\(\)=>\{ RETRY_TIMER=null; loadTours\("retry"\)/.test(html), null);
-check('a cached screen is kept on failure (error UI only when nothing cached)', /if\(!store\.cache\) showLoadError/.test(html), null);
+check('a cached screen is kept on failure (error UI only when nothing cached)', /if\(!store\.cache\)\{ showLoadError/.test(html), null);
+check('a failed Load-more restores the cached view + falls back to its window', /MANAGER_DAYS\s*=\s*cachedWin;[\s\S]*renderAll\(store\.cache\)/.test(html), null);
 
 console.log('--- A queued (offline) check-in survives a reload on screen ---');
 check('a pending-check-in overlay exists and runs in renderAll', /function applyPendingCheckins\(r\)/.test(html) && /applyPendingCheckins\(r\);/.test(html), null);

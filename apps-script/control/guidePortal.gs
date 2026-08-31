@@ -445,6 +445,17 @@ function apiTours_(p) {
 
   const today = todayKey_();
 
+  // Who is asking, and how wide a window — computed BEFORE the build so we
+  // generate only the recurring offer slots actually shown. Managers load a small
+  // near window by default (MANAGER_WINDOW_DAYS) and widen it with "Load more";
+  // a regular guide keeps the full horizon (their far-out recurring assignments
+  // must not vanish). This is the offer/schedule windowing that keeps manager
+  // loads light and stops "Load more" timing out on phones.
+  const me = _t('me', function () { return findGuideByName_(name); });
+  const isManager = !!(me && me.manager);
+  const windowDays = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(p.days) || PORTAL.MANAGER_WINDOW_DAYS));
+  const offerHorizonDays = isManager ? windowDays : PORTAL.UPCOMING_DAYS;
+
   // These cross-file reads are identical for every guide for many seconds, so
   // they are cached (invalidated on any assign/move/note change). This is the
   // core fix for the 8-127s loads: the frequent poll stops re-opening the
@@ -476,7 +487,7 @@ function apiTours_(p) {
   if (hasFeed) {
     schedule = _t('assemble', function () {
       const s = buildScheduleFromFeed_(bookingsByKey);
-      appendWeeklyScheduleShifts_(s);   // recurring Weekly_Schedule offer slots (empty)
+      appendWeeklyScheduleShifts_(s, offerHorizonDays);   // recurring offer slots (empty), windowed
       applyWeeklyDefaults_(s);          // default guide on any still-unassigned slot
       sortSchedule_(s);
       return s;
@@ -485,17 +496,14 @@ function apiTours_(p) {
     schedule = _t('sched', function () { return cachedRead_('sched', PORTAL.CACHE_TTL, readSchedule_); });
     _t('assemble', function () {
       appendOrphanBookingShifts_(schedule, bookingsByKey);
-      appendWeeklyScheduleShifts_(schedule);
+      appendWeeklyScheduleShifts_(schedule, offerHorizonDays);
       applyWeeklyDefaults_(schedule);
       sortSchedule_(schedule);
       return 0;
     });
   }
 
-  // Who is asking — decides how much we load. A regular guide only needs their
-  // OWN check-ins (their My-tours); a manager needs everyone's (they watch all).
-  const me = _t('me', function () { return findGuideByName_(name); });
-  const isManager = !!(me && me.manager);
+  // (me / isManager computed above, before the windowed build.)
 
   // CHECK-INS: the FEED (M/N, read above) is the fast source, but the LEDGER is
   // the durable money record. We UNION them (a guest checked in on EITHER is
@@ -663,12 +671,14 @@ function apiTours_(p) {
   // The manager "All tours" list loads the near-term window first (today .. +N
   // days); "Load more" re-requests with a bigger `days`. This keeps the common
   // refresh light — a manager assigning this week does not pay to build next
-  // month's tours every 20 seconds.
-  const windowDays = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(p.days) || PORTAL.MANAGER_WINDOW_DAYS));
+  // month's tours every 20 seconds. (windowDays computed above with the build.)
   const managerHorizon = addDaysKey_(today, windowDays);
+  // Offer slots are now generated only to windowDays, so "there is more" simply
+  // means the window has not yet reached the full horizon — offer "Load more"
+  // until it does (a wider request regenerates further-out slots + bookings).
   let hasMore = false;
   if (isManager) _t('mgrTours', function () {
-    hasMore = schedule.some(s => s.dateKey > managerHorizon);
+    hasMore = windowDays < PORTAL.UPCOMING_DAYS;
     // Check-ins come from the targeted ledger read above, so a check-in shows no
     // matter which assigned guide on the tour tapped it.
     allTours = schedule.filter(s => s.dateKey <= managerHorizon).map(shift => {
@@ -947,12 +957,17 @@ function pruneEmptyGridColumnsAndRows_(sh) {
  * offered tours, so they are not surfaced here (a private tour appears only
  * when a private booking exists).
  */
-function appendWeeklyScheduleShifts_(schedule) {
+function appendWeeklyScheduleShifts_(schedule, maxDaysAhead) {
   const rules = weeklyRules_();                       // read once per load; shared with applyWeeklyDefaults_
   if (!rules || !rules.length) return;               // no Weekly_Schedule tab -> nothing to add
 
   const today = todayKey_();
-  const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
+  // Generate empty recurring offer slots only as far ahead as the caller shows.
+  // A manager's window is small by default (MANAGER_WINDOW_DAYS) and grows on
+  // "Load more"; generating the full UPCOMING_DAYS every time bloated each load
+  // and timed "Load more" out on phones. Falls back to the full window.
+  const days = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(maxDaysAhead) || PORTAL.UPCOMING_DAYS));
+  const maxKey = addDaysKey_(today, days);
   const have = new Set(schedule.filter(s => !s.private)
     .map(s => shiftKey_(s.dateKey, s.minutes, s.language)));
 

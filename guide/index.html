@@ -182,7 +182,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-23-guide-green-red";
+const PORTAL_VERSION = "2026-08-31-windowed-loadmore";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -526,7 +526,15 @@ function onLoadFailed(err){
     return;
   }
   setFresh("stale");                          // now it's a real problem — say so
-  if(!store.cache) showLoadError(err);        // only replace the screen when there's nothing cached to keep
+  if(!store.cache){ showLoadError(err); return; }  // nothing cached -> replace the screen
+  // We DO have a good cached view. Restore it so the UI isn't stuck — a "Load
+  // more" that failed on a slow phone otherwise left its button frozen on
+  // "Loading…". If this was a "Load more" (a wider window than the cached one),
+  // fall back to the cached window so we stop retrying a too-heavy request; the
+  // button reverts to tappable and the user can try again.
+  const cachedWin = Number(store.cache.windowDays)||0;
+  if(cachedWin>0 && MANAGER_DAYS>cachedWin) MANAGER_DAYS = cachedWin;
+  renderAll(store.cache);
 }
 /* ---- Pending assignments: the real fix for the "reverts to Albert" bug ----
    After you assign Carlos, Google's Sheets backend may still serve the very
