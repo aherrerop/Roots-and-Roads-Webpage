@@ -201,7 +201,8 @@ const RNR = {
     AIRBNB: 'Airbnb',
     GYG: 'GetYourGuide',
     GYG2: 'GYG',            // our SECOND GetYourGuide account (a different listing/password)
-    SF_EXT: 'GYG-SF',       // GetYourGuide "Sagrada Família Ultimate Exterior Tour" (prepaid ~8€, guide 3€/pax)
+    SF_EXT: 'GYG-SF',       // GetYourGuide "Sagrada Família Ultimate Exterior Tour" (prepaid ~8€, own guide rate)
+    SF_EXT_VIATOR: 'Viator-SF',  // the same Sagrada exterior product on Viator (coming later; own payout)
     FREETOUR: 'Free Tour'
   },
 
@@ -221,7 +222,8 @@ const RNR = {
     Airbnb: 'paid',
     GetYourGuide: 'paid',
     GYG: 'paid',            // second GetYourGuide account — same paid model
-    'GYG-SF': 'paid',       // Sagrada exterior prepaid tour — paid guests (own guide rate in the Ledger)
+    'GYG-SF': 'paid',       // Sagrada exterior prepaid tour (GYG) — paid guests (own guide rate in the Ledger)
+    'Viator-SF': 'paid',    // Sagrada exterior prepaid tour (Viator) — paid guests (own guide rate)
     Guruwalk: 'free',
     'Free Tour': 'free',
     Website: 'free'
@@ -3361,7 +3363,8 @@ function sameBooking_(a, b, opts) {
   // Viator and GetYourGuide ids are globally unique per booking, so an id
   // match alone is authoritative even if the name text differs slightly.
   if (sameId && (A.source === RNR.SOURCE.VIATOR || A.source === RNR.SOURCE.GYG ||
-                 A.source === RNR.SOURCE.GYG2 || A.source === RNR.SOURCE.SF_EXT)) return true;
+                 A.source === RNR.SOURCE.GYG2 || A.source === RNR.SOURCE.SF_EXT ||
+                 A.source === RNR.SOURCE.SF_EXT_VIATOR)) return true;
 
   // DIFFERENT ids => DIFFERENT bookings. Never merge two rows that both carry a
   // platform id when those ids differ, even if the name/phone/date/time line up
@@ -3540,7 +3543,10 @@ function parseViatorMessage_(msg, mode) {
     date: normalizeDate_(dateText),
     time: rawTime ? normalizeTime_(rawTime) : '',
     language: language,
-    source: RNR.SOURCE.VIATOR,
+    // The Viator Sagrada-exterior product gets its own source so the Ledger pays
+    // its own guide rate (Viator's net payout may differ from GYG's); it still
+    // lands in the same date/time/language slot as everything else.
+    source: viatorIsSfExt_(text) ? RNR.SOURCE.SF_EXT_VIATOR : RNR.SOURCE.VIATOR,
     income,
     bookingId,
     children: vp.children,
@@ -3981,6 +3987,18 @@ function parseGygMessage_(msg, mode) {
 function gygIsSfExt_(text) {
   const s = String(text || '');
   return /ultimate\s+exterior|sagrad[ae]?\s+fam[ií]lia\s+ultimate|\b2232675\b/i.test(s);
+}
+
+/**
+ * Is this Viator email the Sagrada Família EXTERIOR product (coming later)?
+ * TUNING POINT: the Viator listing does not exist yet, so this matches on the
+ * product-name concept ("Ultimate Exterior" / "Sagrada … exterior"). When it is
+ * created, pin this to the real Viator Product Code (like 5631527P3/P5) and
+ * verify against the first real email.
+ */
+function viatorIsSfExt_(text) {
+  const s = String(text || '');
+  return /ultimate\s+exterior|sagrad[ae]?\s+fam[ií]lia[^\n]*exterior/i.test(s);
 }
 
 function gygSourceFor_(msg) {

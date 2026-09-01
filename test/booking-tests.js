@@ -165,6 +165,9 @@ check('SF-ext lands with its real date/time/language (same slot as other booking
 check('the REGULAR "Ultimate Tour" is NOT mistaken for the exterior product',
   gygIsSfExt_('Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town')===false, null);
 check('the exterior title IS detected', gygIsSfExt_('Barcelona: Sagrada Família Ultimate Exterior Tour')===true, null);
+// Viator gets the same exterior product later, with its OWN source/payout.
+check('Viator exterior product detected -> Viator-SF', viatorIsSfExt_('Tour Grade: Sagrada Família Exterior Ultimate Exterior')===true, null);
+check('a regular Viator tour is NOT tagged Viator-SF', viatorIsSfExt_('Tour Grade: Italian Tour 16:00')===false, null);
 
 console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
 const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;

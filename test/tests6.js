@@ -183,16 +183,23 @@ check('Website 0 commission: R&R makes 6x2=12', Math.abs(web.rrMakes-12)<0.001, 
 const gyg=computeMoney_('GetYourGuide',2,false,27,rates);
 check('Paid tour unchanged: R&R makes income-weOwe = 27-20 = 7', Math.abs(gyg.rrMakes-7)<0.001, gyg);
 
-console.log('--- Ledger: Sagrada Família exterior tour pays its own per-person guide rate ---');
-const sfRates={paid:10, free:6, privatePay:75, sfExtPay:3,
-  freeCommissions:{website:0,'':0}, paidSources:['Viator','GetYourGuide','GYG','GYG-SF','Airbnb']};
+console.log('--- Ledger: SF exterior tour pays its own per-PLATFORM guide rate ---');
+// Guest pays 8€ gross; the platform commission is already taken out, so `income`
+// is NET (GYG keeps 25% -> 6€/pax net). Guide gets its per-platform rate; R&R
+// keeps net - guide. Viator's payout may differ, so it has its own rate.
+const sfRates={paid:10, free:6, privatePay:75,
+  sfPay:{'GYG-SF':3, 'Viator-SF':4},
+  freeCommissions:{website:0,'':0}, paidSources:['Viator','GetYourGuide','GYG','GYG-SF','Viator-SF','Airbnb']};
 PORTAL._paidSources=sfRates.paidSources;
-const sfm=computeMoney_('GYG-SF',4,false,32,sfRates);   // 4 pax, 8€ each prepaid = 32€ income
-check('SF-ext: guide gets 3/pax -> weOwe 12', sfm.weOwe===12, sfm);
-check('SF-ext: ledger type is "SF Exterior"', sfm.type==='SF Exterior', sfm);
-check('SF-ext: R&R keeps prepaid income - guide pay (32-12=20)', Math.abs(sfm.rrMakes-20)<0.001, sfm);
-check('SF-ext: guide owes nothing (not a free tour)', sfm.theyOwe===0, sfm);
-check('SF-ext: NOT paid at the standard 10/pax rate', sfm.weOwe!==40, sfm);
+const sfm=computeMoney_('GYG-SF',4,false,24,sfRates);   // 4 pax x 6€ net = 24€ net income
+check('GYG-SF: guide gets 3/pax -> weOwe 12', sfm.weOwe===12, sfm);
+check('GYG-SF: ledger type is "SF Exterior"', sfm.type==='SF Exterior', sfm);
+check('GYG-SF: R&R keeps net income - guide pay (24-12=12)', Math.abs(sfm.rrMakes-12)<0.001, sfm);
+check('GYG-SF: guide owes nothing (not a free tour)', sfm.theyOwe===0, sfm);
+check('GYG-SF: NOT paid at the standard 10/pax rate', sfm.weOwe!==40, sfm);
+const vsf=computeMoney_('Viator-SF',2,false,12,sfRates);   // Viator's own net + own guide rate
+check('Viator-SF uses its OWN rate (4/pax), independent of GYG-SF', vsf.weOwe===8, vsf);
+check('Viator-SF: R&R keeps net - guide (12-8=4)', Math.abs(vsf.rrMakes-4)<0.001, vsf);
 
 console.log('--- Assignment always works: grid grows (tab/column/row created) ---');
 const ac=new __mock.MockSS('control-assign'); SpreadsheetApp._active=ac;
