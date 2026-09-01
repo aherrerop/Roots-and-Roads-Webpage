@@ -2581,10 +2581,11 @@ function readRates_() {
       // Private flat pay: matches "Private tour — …" AND "Paid private — …"
       // (any label mentioning "private", never the paid/free/commission ones).
       else if (/priv/i.test(label)) privatePay = Number(r[1]) || privatePay;
-      // SF exterior guide pay, per platform. "SF exterior (viator) — …" sets just
-      // Viator-SF; "… (getyourguide)/(gyg) — …" sets GYG-SF; a generic "sf
-      // exterior tour — …" (no platform named) sets every SF source at once.
-      else if (/exterior|sagrada/i.test(label)) {
+      // SF exterior guide pay, per platform. Matches any SF-tour label — "SF
+      // exterior", "Sagrada …", or a plain "… SF tour …". "(viator)" sets just
+      // Viator-SF; "(getyourguide)/(gyg)" sets GYG-SF; no platform named sets
+      // every SF source at once.
+      else if (/exterior|sagrada|\bsf\b/i.test(label)) {
         const val = Number(r[1]);
         if (isFinite(val) && r[1] !== '' && r[1] != null) {
           if (/viator/i.test(label)) sfPay['Viator-SF'] = val;

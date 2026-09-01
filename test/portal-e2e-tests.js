@@ -233,6 +233,17 @@ console.log('--- Private tours: "Paid private" rate + private/regular kept separ
 const ratesSheet = ledgerSS_().getSheetByName('Rates');
 ratesSheet.getRange(ratesSheet.getLastRow() + 1, 1, 1, 2).setValues([['Paid private - we owe guide (€ per private tour)', 80]]);
 check('readRates_ reads the "Paid private" label (80)', readRates_().privatePay === 80, readRates_().privatePay);
+// The owner's live label style: "Paid SF tour - we owe guide (€ per checked-in
+// person)" (no platform named) must set EVERY SF source, even though it says
+// neither "exterior" nor "sagrada".
+ratesSheet.getRange(ratesSheet.getLastRow() + 1, 1, 1, 2).setValues([['Paid SF tour - we owe guide (€ per checked-in person)', 3]]);
+const sfR = readRates_();
+check('readRates_ reads a plain "Paid SF tour" label for GYG-SF', sfR.sfPay['GYG-SF'] === 3, sfR.sfPay);
+check('… and applies the same generic SF rate to Viator-SF', sfR.sfPay['Viator-SF'] === 3, sfR.sfPay);
+// A platform-specific row overrides just that platform.
+ratesSheet.getRange(ratesSheet.getLastRow() + 1, 1, 1, 2).setValues([['SF exterior (Viator) - we owe guide (€ per checked-in person)', 5]]);
+const sfR2 = readRates_();
+check('a "(Viator)" SF row overrides only Viator-SF', sfR2.sfPay['Viator-SF'] === 5 && sfR2.sfPay['GYG-SF'] === 3, sfR2.sfPay);
 // A private and a regular tour at the SAME slot must not wipe each other in the ledger.
 const lrow = (bid, type, we) => makeLedgerRow_({ dateKey: DATE, day: 'x', timeLabel: '4:00 PM', language: 'English',
   bookingName: bid, phone: '', source: 'GetYourGuide', guests: 1, children: 0, checkedIn: 1, weOwe: we, theyOwe: 0, rrMakes: 0, type: type, bookingId: bid, note: '' });
