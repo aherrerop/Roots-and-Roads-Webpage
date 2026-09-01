@@ -144,6 +144,28 @@ check('so the upcoming tour is NOT wrongly treated as completed',
   strayB && isCompleted_(strayB)===false, strayB && isCompleted_(strayB));
 check('it is still a valid, registerable booking', strayB && isValidBooking_(strayB), strayB);
 
+console.log('--- GYG: Sagrada Família exterior product is tagged SF_EXT (own guide rate) ---');
+// The prepaid ~8€ "Ultimate Exterior" product must be tagged GYG-SF so the ledger
+// pays its lower per-person guide rate, while still landing in the same date/time/
+// language tab as every other booking.
+const sfBody=[
+ '¡Hola! Buenas noticias.','Se ha reservado tu producto',
+ 'Barcelona: Sagrada Família Ultimate Exterior Tour','Tour en inglés',
+ 'Número de referencia GYGSFEXT01',
+ 'Fecha August 4, 2027 10:30 AM',
+ 'Número de participantes','2 x Adults (Edad 14 - 99)',
+ 'Cliente principal','Ext Guest Teléfono: +34600111222 Idioma: English',
+ 'Idioma del tour','Inglés (Live tour guide)'
+].join('\n');
+const sfB=parseGygMessage_(makeFakeMsg_('Booking - S800 - GYGSFEXT01', sfBody),'confirm');
+check('Sagrada exterior booking tagged source GYG-SF', sfB && sfB.source==='GYG-SF', sfB && sfB.source);
+check('SF-ext lands with its real date/time/language (same slot as other bookings)',
+  sfB && dateKey_(sfB.date)==='2027-08-04' && normalizeTime_(sfB.time)==='10:30 AM' && sfB.language==='English',
+  sfB && {d:sfB.date&&dateKey_(sfB.date), t:normalizeTime_(sfB.time), l:sfB.language});
+check('the REGULAR "Ultimate Tour" is NOT mistaken for the exterior product',
+  gygIsSfExt_('Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town')===false, null);
+check('the exterior title IS detected', gygIsSfExt_('Barcelona: Sagrada Família Ultimate Exterior Tour')===true, null);
+
 console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
 const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;
 const idEn=idSS.insertSheet('English Tours');

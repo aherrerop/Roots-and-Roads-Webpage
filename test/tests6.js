@@ -183,6 +183,17 @@ check('Website 0 commission: R&R makes 6x2=12', Math.abs(web.rrMakes-12)<0.001, 
 const gyg=computeMoney_('GetYourGuide',2,false,27,rates);
 check('Paid tour unchanged: R&R makes income-weOwe = 27-20 = 7', Math.abs(gyg.rrMakes-7)<0.001, gyg);
 
+console.log('--- Ledger: Sagrada Família exterior tour pays its own per-person guide rate ---');
+const sfRates={paid:10, free:6, privatePay:75, sfExtPay:3,
+  freeCommissions:{website:0,'':0}, paidSources:['Viator','GetYourGuide','GYG','GYG-SF','Airbnb']};
+PORTAL._paidSources=sfRates.paidSources;
+const sfm=computeMoney_('GYG-SF',4,false,32,sfRates);   // 4 pax, 8€ each prepaid = 32€ income
+check('SF-ext: guide gets 3/pax -> weOwe 12', sfm.weOwe===12, sfm);
+check('SF-ext: ledger type is "SF Exterior"', sfm.type==='SF Exterior', sfm);
+check('SF-ext: R&R keeps prepaid income - guide pay (32-12=20)', Math.abs(sfm.rrMakes-20)<0.001, sfm);
+check('SF-ext: guide owes nothing (not a free tour)', sfm.theyOwe===0, sfm);
+check('SF-ext: NOT paid at the standard 10/pax rate', sfm.weOwe!==40, sfm);
+
 console.log('--- Assignment always works: grid grows (tab/column/row created) ---');
 const ac=new __mock.MockSS('control-assign'); SpreadsheetApp._active=ac;
 const d1=key(day(2));

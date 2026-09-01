@@ -201,6 +201,7 @@ const RNR = {
     AIRBNB: 'Airbnb',
     GYG: 'GetYourGuide',
     GYG2: 'GYG',            // our SECOND GetYourGuide account (a different listing/password)
+    SF_EXT: 'GYG-SF',       // GetYourGuide "Sagrada Família Ultimate Exterior Tour" (prepaid ~8€, guide 3€/pax)
     FREETOUR: 'Free Tour'
   },
 
@@ -220,6 +221,7 @@ const RNR = {
     Airbnb: 'paid',
     GetYourGuide: 'paid',
     GYG: 'paid',            // second GetYourGuide account — same paid model
+    'GYG-SF': 'paid',       // Sagrada exterior prepaid tour — paid guests (own guide rate in the Ledger)
     Guruwalk: 'free',
     'Free Tour': 'free',
     Website: 'free'
@@ -3358,7 +3360,8 @@ function sameBooking_(a, b, opts) {
 
   // Viator and GetYourGuide ids are globally unique per booking, so an id
   // match alone is authoritative even if the name text differs slightly.
-  if (sameId && (A.source === RNR.SOURCE.VIATOR || A.source === RNR.SOURCE.GYG || A.source === RNR.SOURCE.GYG2)) return true;
+  if (sameId && (A.source === RNR.SOURCE.VIATOR || A.source === RNR.SOURCE.GYG ||
+                 A.source === RNR.SOURCE.GYG2 || A.source === RNR.SOURCE.SF_EXT)) return true;
 
   // DIFFERENT ids => DIFFERENT bookings. Never merge two rows that both carry a
   // platform id when those ids differ, even if the name/phone/date/time line up
@@ -3944,7 +3947,10 @@ function parseGygMessage_(msg, mode) {
     time,
     language: f.langRaw ? normalizeLanguage_(f.langRaw) : RNR.LANGUAGE.ENGLISH,
     languageUncertain: !languageRecognised_(f.langRaw),   // flag if it didn't match a language we run
-    source: gygSourceFor_(msg),   // "GYG" for the second account (forwarded), else "GetYourGuide"
+    // The Sagrada exterior product is tagged by its own source so the Ledger pays
+    // the guide its lower per-person rate; it still lands in the same tab (date +
+    // time + language) as every other booking. Otherwise the normal account tag.
+    source: gygIsSfExt_(text) ? RNR.SOURCE.SF_EXT : gygSourceFor_(msg),
     income,
     notes: composeNotes_(f.isPrivate, pp.children, pp.infants, ''),
     isCancellation: isCancel,
@@ -3963,6 +3969,20 @@ function parseGygMessage_(msg, mode) {
  * source "GYG" — otherwise the normal "GetYourGuide". Falls back to GetYourGuide if
  * the recipient can't be read (a mock message, or a Gmail quirk).
  */
+/**
+ * Is this GetYourGuide email the "Sagrada Família Ultimate Exterior Tour"
+ * (the prepaid ~8€ first-hour product)? Detected by the distinctive product
+ * title fragment or the option id, so its bookings can be tagged SF_EXT and paid
+ * at their own guide rate while still landing in the normal date/time/language
+ * tab. TUNING POINT: the tour is not published yet — confirm these markers
+ * against the FIRST real confirmation email (the customer copy may render the
+ * title slightly differently) and widen the pattern if needed.
+ */
+function gygIsSfExt_(text) {
+  const s = String(text || '');
+  return /ultimate\s+exterior|sagrad[ae]?\s+fam[ií]lia\s+ultimate|\b2232675\b/i.test(s);
+}
+
 function gygSourceFor_(msg) {
   try {
     if (!RNR.GYG_SECOND_EMAIL || !msg) return RNR.SOURCE.GYG;

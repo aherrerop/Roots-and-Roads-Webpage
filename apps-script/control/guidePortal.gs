@@ -55,12 +55,16 @@ const PORTAL = {
 
   // Which sources are "paid" (we owe the guide). Everything else is "free".
   // "GYG" is our second GetYourGuide account — same paid model as GetYourGuide.
-  PAID_SOURCES: ['Viator', 'GetYourGuide', 'GYG', 'Airbnb'],
+  // "GYG-SF" is the prepaid Sagrada Família exterior product (guests pay ~8€ to
+  // join the first hour): paid model, but its OWN per-person guide rate below.
+  PAID_SOURCES: ['Viator', 'GetYourGuide', 'GYG', 'GYG-SF', 'Airbnb'],
+  SF_EXT_SOURCE: 'GYG-SF',     // Sagrada Família exterior prepaid tour (see bookingList_v2 SOURCE.SF_EXT)
 
   // Default rates (€ per checked-in person). The Rates tab overrides these.
   DEFAULT_PAID_RATE: 10,       // paid tours: we owe the guide, € per checked-in person
   DEFAULT_FREE_RATE: 6,        // free tours: the guide owes us, € per checked-in person
   DEFAULT_PRIVATE_PAY: 75,     // private tours: flat € we owe the guide who runs it
+  DEFAULT_SF_EXT_PAY: 3,       // Sagrada Família exterior tour: € per checked-in person we owe the guide
 
   // Free-tour platform commission the platform charges US, € per CHECKED-IN
   // person (a cost to R&R). We charge the guide DEFAULT_FREE_RATE/person and
@@ -2527,7 +2531,8 @@ function seedRatesTab_(ss) {
     ['Setting', 'Value'],
     ['Paid tour — we owe guide (€ per checked-in person)', PORTAL.DEFAULT_PAID_RATE],
     ['Free tour — guide owes us (€ per checked-in person)', PORTAL.DEFAULT_FREE_RATE],
-    ['Private tour — we owe guide (flat € per tour)', PORTAL.DEFAULT_PRIVATE_PAY]
+    ['Private tour — we owe guide (flat € per tour)', PORTAL.DEFAULT_PRIVATE_PAY],
+    ['SF exterior tour — we owe guide (€ per checked-in person)', PORTAL.DEFAULT_SF_EXT_PAY]
   ];
   // One editable commission per free-tour platform (€ per checked-in person).
   Object.keys(PORTAL.DEFAULT_FREE_COMMISSIONS).forEach(k => {
@@ -2549,6 +2554,7 @@ function readRates_() {
   const sh = ss.getSheetByName('Rates');
   let paid = PORTAL.DEFAULT_PAID_RATE, free = PORTAL.DEFAULT_FREE_RATE;
   let privatePay = PORTAL.DEFAULT_PRIVATE_PAY;
+  let sfExtPay = PORTAL.DEFAULT_SF_EXT_PAY;
   let paidSources = PORTAL.PAID_SOURCES.slice();
   // Start from the defaults so a platform without a Rates row still resolves.
   const freeCommissions = {};
@@ -2569,18 +2575,22 @@ function readRates_() {
       // Private flat pay: matches "Private tour — …" AND "Paid private — …"
       // (any label mentioning "private", never the paid/free/commission ones).
       else if (/priv/i.test(label)) privatePay = Number(r[1]) || privatePay;
+      // Sagrada Família exterior tour — its own per-person guide pay.
+      else if (/exterior|sagrada/i.test(label)) sfExtPay = Number(r[1]) || sfExtPay;
       else if (label.indexOf('paid sources') === 0 && r[1]) {
         paidSources = String(r[1]).split(',').map(s => s.trim()).filter(Boolean);
       }
     });
   }
-  // "GYG" (our second GetYourGuide account) is paid whenever GetYourGuide is —
-  // even if the live Rates tab's paid-sources list was written before GYG existed.
-  if (paidSources.indexOf('GetYourGuide') !== -1 && paidSources.indexOf('GYG') === -1) {
-    paidSources = paidSources.concat('GYG');
+  // "GYG" (our second GetYourGuide account) and "GYG-SF" (the Sagrada exterior
+  // product) are paid whenever GetYourGuide is — even if the live Rates tab's
+  // paid-sources list was written before those existed.
+  if (paidSources.indexOf('GetYourGuide') !== -1) {
+    if (paidSources.indexOf('GYG') === -1) paidSources = paidSources.concat('GYG');
+    if (paidSources.indexOf(PORTAL.SF_EXT_SOURCE) === -1) paidSources = paidSources.concat(PORTAL.SF_EXT_SOURCE);
   }
   PORTAL._paidSources = paidSources; // cache for isPaidSource_
-  return { paid, free, privatePay, freeCommissions, paidSources };
+  return { paid, free, privatePay, sfExtPay, freeCommissions, paidSources };
 }
 
 /** Free-tour platform commission (€ per checked-in person) for a booking's
@@ -2854,6 +2864,12 @@ function computeMoney_(source, checkedIn, isPrivate, income, rates) {
   if (isPrivate) {
     const weOwe = Number(rates.privatePay || 0);
     return { weOwe, theyOwe: 0, rrMakes: round2_(inc - weOwe), type: 'Private' };
+  }
+  // Sagrada Família exterior tour: prepaid, but its OWN per-person guide rate
+  // (not the standard paid rate). R&R keeps the prepaid income minus that.
+  if (String(source) === PORTAL.SF_EXT_SOURCE) {
+    const weOwe = round2_(ppl * Number(rates.sfExtPay != null ? rates.sfExtPay : PORTAL.DEFAULT_SF_EXT_PAY));
+    return { weOwe, theyOwe: 0, rrMakes: round2_(inc - weOwe), type: 'SF Exterior' };
   }
   if (paid) {
     const weOwe = round2_(ppl * rates.paid);
