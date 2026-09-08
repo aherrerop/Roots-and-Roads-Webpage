@@ -491,12 +491,25 @@ function apiTours_(p) {
   // WITHOUT a feed (fallback): read the grid the old way.
   let schedule;
   if (hasFeed) {
+    // CACHE the assembled shift list. buildScheduleFromFeed_ + the recurring-offer
+    // expansion + weekly-default overlay + sort is PURE CPU over already-read data,
+    // and it re-ran on EVERY poll — 1.4s normally but spiking to 13s+ under Apps
+    // Script CPU throttling, which is what produced the multi-minute client
+    // timeouts. It depends only on the feed (its version) and the offer window, so
+    // cache it under those: a warm poll now returns the shifts with no rebuild.
+    // A check-in (feed version) or an assign/move/close (global version, appended
+    // by cachedRead_) invalidates it immediately, so it can never serve a stale
+    // assignment. Bookings + the check-in union are attached per-request below, so
+    // only the shift STRUCTURE is cached. If it ever exceeds the cache cap,
+    // cachedRead_ falls back to a live build — never wrong, just slower that once.
     schedule = _t('assemble', function () {
-      const s = buildScheduleFromFeed_(bookingsByKey);
-      appendWeeklyScheduleShifts_(s, offerHorizonDays);   // recurring offer slots (empty), windowed
-      applyWeeklyDefaults_(s);          // default guide on any still-unassigned slot
-      sortSchedule_(s);
-      return s;
+      return cachedRead_('asm:' + feedCacheVersion_() + ':' + offerHorizonDays, PORTAL.CACHE_TTL, function () {
+        const s = buildScheduleFromFeed_(bookingsByKey);
+        appendWeeklyScheduleShifts_(s, offerHorizonDays);   // recurring offer slots (empty), windowed
+        applyWeeklyDefaults_(s);          // default guide on any still-unassigned slot
+        sortSchedule_(s);
+        return s;
+      });
     });
   } else {
     schedule = _t('sched', function () { return cachedRead_('sched', PORTAL.CACHE_TTL, readSchedule_); });

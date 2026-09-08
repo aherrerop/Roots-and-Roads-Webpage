@@ -40,6 +40,27 @@ cachedRead_('led:' + feedCacheVersion_() + ':setA', 60, g2fn);
 cachedRead_('led:' + feedCacheVersion_() + ':setB', 60, g2fn);
 check('a changed guide set misses (reads fresh, not another set\'s check-ins)', g2 === 2, g2);
 
+console.log('--- the ASSEMBLE cache (asm:<feedVer>:<horizon>) skips the rebuild on a warm poll ---');
+// The assemble phase (buildScheduleFromFeed_ + weekly shifts + defaults + sort) was
+// pure CPU re-run on EVERY poll (1.4-13s), the cause of the multi-minute timeouts.
+// It is now cachedRead_ under the feed version + offer horizon. It MUST invalidate on
+// a check-in (feed) AND on an assign/move/close (global, added inside cachedRead_) so
+// it can never serve a stale assignment. Maxim: cannot miss an assignment.
+__mock.PROPS['PORTAL_CACHE_VER'] = '0';
+__mock.PROPS['PORTAL_FEED_VER'] = '0';
+let ab = 0; const abfn = () => { ab++; return { shifts: ab }; };
+const akey = (h) => 'asm:' + feedCacheVersion_() + ':' + h;
+cachedRead_(akey(90), 60, abfn); cachedRead_(akey(90), 60, abfn);
+check('a warm poll (same feed+horizon) skips the rebuild', ab === 1, ab);
+bumpCacheVersion_();                                      // an assign / move / close
+cachedRead_(akey(90), 60, abfn);
+check('an assign/move/close rebuilds the schedule (no stale assignment)', ab === 2, ab);
+bumpFeedCacheVersion_();                                  // a check-in
+cachedRead_(akey(90), 60, abfn);
+check('a check-in rebuilds the schedule (feed version in the key)', ab === 3, ab);
+cachedRead_(akey(30), 60, abfn);                          // guide window vs manager window
+check('a different offer horizon is a different key (guide vs manager window)', ab === 4, ab);
+
 __mock.removeRealCache();
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
