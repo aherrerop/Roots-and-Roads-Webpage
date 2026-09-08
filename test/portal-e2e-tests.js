@@ -152,14 +152,24 @@ const rOverride = apiTours_({ token: token, days: 45 });
 const oshift = (rOverride.allTours || []).filter(s => s.dateKey === DATE && s.time === '17:00' && s.language === 'English');
 check('a manual assignment overrides the weekly default (Albert wins that day)', oshift.length === 1 && (oshift[0].assigned || []).indexOf('Albert') !== -1 && (oshift[0].assigned || []).indexOf('Carlos') === -1, oshift[0] && oshift[0].assigned);
 
-console.log('--- Delete a tour: frees the guide (clears the grid cell) and prunes the empty column ---');
+console.log('--- Delete a tour: frees the guide (clears the grid cell); column prune is DEFERRED ---');
 const DEL = dayKey(6);   // an isolated slot nothing else touches
 apiAssign_({ token: token, dateKey: DEL, time: '19:00', language: 'English', guide: 'Carlos', force: '1' });
 let gEng = control.getSheetByName('Schedule_English').getDataRange().getDisplayValues();
-check('assigning created a 19:00 column', gEng[1].some(h => /(^|\D)19:00|7:00 PM/.test(String(h))), gEng[1]);
+const delColIdx = gEng[1].findIndex(h => /(^|\D)19:00|7:00 PM/.test(String(h)));
+check('assigning created a 19:00 column', delColIdx > -1, gEng[1]);
+// The date row for DEL, before the close: Carlos is in the 19:00 cell.
+const delRowIdx = gEng.findIndex((row, i) => i >= 2 && gridLabelToKey_(String(row[0] || '').trim(),
+  gridAnchor_(String(control.getSheetByName('Schedule_English').getRange(1, 1).getDisplayValue() || ''))) === DEL);
+check('the 19:00 cell held the assigned guide before close', delRowIdx > -1 && /Carlos/.test(String(gEng[delRowIdx][delColIdx] || '')), delRowIdx > -1 ? gEng[delRowIdx][delColIdx] : null);
 apiCloseShift_({ token: token, id: shiftKey_(DEL, 19 * 60, 'english') });
 gEng = control.getSheetByName('Schedule_English').getDataRange().getDisplayValues();
-check('after delete the empty 19:00 column is pruned', !gEng[1].some(h => /(^|\D)19:00|7:00 PM/.test(String(h))), gEng[1]);
+// The ESSENTIAL effect: the guide is cleared from the cell (freed). The empty
+// column is NOT pruned synchronously any more — that cosmetic housekeeping was
+// moved off closeShift's locked path (it cost ~20s and stalled the whole portal);
+// the weekly makeSchedule prunes + restyles instead. So we assert the CELL is
+// empty, not that the column is gone.
+check('after close the guide is cleared from the 19:00 cell (freed)', delRowIdx === -1 || String(gEng[delRowIdx][delColIdx] || '').trim() === '', delRowIdx > -1 ? gEng[delRowIdx][delColIdx] : '(row gone)');
 const rDel = apiTours_({ token: token, days: 45 });
 check('the deleted tour no longer appears (no bookings -> gone)', !(rDel.allTours || []).some(s => s.dateKey === DEL && s.time === '19:00' && s.language === 'English'), null);
 

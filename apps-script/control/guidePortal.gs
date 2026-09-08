@@ -1017,8 +1017,17 @@ function deleteShiftFromGrid_(id) {
   }
   if (colNum > -1 && rowNum > -1) sh.getRange(rowNum, colNum).clearContent();
 
-  pruneEmptyGridColumnsAndRows_(sh);
-  styleScheduleGrid_(sh);
+  // NOTE: the cell clear above is the essential action — it frees the guide in
+  // the grid (source of truth for the weekly makeSchedule and the guide grid-read
+  // path). We deliberately DO NOT prune empty columns/rows or re-style the grid
+  // here: those are cosmetic, cost 10-20s of one-at-a-time column/row deletes +
+  // a full restyle, and ran INSIDE closeShift's lock — so every close hogged the
+  // owner's single execution queue for 20s, threw "Server busy" at the next close,
+  // and throttled every guide's poll (the portal-wide "updating" stall). A leftover
+  // empty column is harmless (the manager view reads the feed; a guide grid-read of
+  // an empty cell yields no shift) and the weekly makeSchedule restyles + prunes the
+  // grid on its next run. Maxim: a manager action must be fast and must not block
+  // everyone else.
   return true;
 }
 
