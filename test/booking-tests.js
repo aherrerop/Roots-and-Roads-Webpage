@@ -592,6 +592,24 @@ ddEn2.getRange(1,1,3,9).setValues([
 dedupeActiveSheets_();
 const nd=ddEn2.getRange(2,1,2,9).getValues();
 check('a tab with no duplicates keeps every row (no destructive rewrite)', nd[0][7]==='GYGCCC' && nd[1][7]==='BR-4', nd.map(r=>r[7]));
+// MANUAL ENTRY PRESERVED: a hand-typed singleton (odd source, a note, no booking
+// id) must survive UNCHANGED even when the tab has duplicates elsewhere — the old
+// full-rewrite mangled these (the "Guru fake" line lost its name).
+const ddSS3=new __mock.MockSS('booking-dedup3'); SpreadsheetApp._active=ddSS3;
+const ddEn3=ddSS3.insertSheet('English Tours');
+ddEn3.getRange(1,1,5,9).setValues([
+ ['Name','Phone','Number of Guests','Tour date','Time','Source','Income','Booking ID','Notes'],
+ ['Eve','+9',2,'Fri, Sep 11','10:00 AM','GetYourGuide',30,'GYGEEE',''],
+ ['Eve','+9',2,'Fri, Sep 11','10:00 AM','GetYourGuide',30,'GYGEEE',''],          // duplicate -> collapses
+ ['Sara Manual','+39348',2,'Thu, Sep 17','10:30 AM','Guru fake',0,'','Reserved through Guru chat'],  // manual singleton
+ ['Ivan','+7',3,'Sat, Sep 12','5:00 PM','Viator',34,'BR-9','']]);
+dedupeActiveSheets_();
+const man=ddEn3.getRange(2,1,Math.max(1,ddEn3.getLastRow()-1),9).getValues();
+const manRow=man.find(r=>r[5]==='Guru fake');
+check('manual "Guru fake" row kept its NAME, note and odd source (untouched)',
+  manRow && manRow[0]==='Sara Manual' && manRow[8]==='Reserved through Guru chat', manRow);
+check('the duplicate elsewhere still collapsed, other rows intact',
+  man.filter(r=>r[7]==='GYGEEE').length===1 && man.some(r=>r[7]==='BR-9'), man.map(r=>r[7]||r[5]));
 
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');

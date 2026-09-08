@@ -166,6 +166,33 @@ check('cancelled booking is removed', !idsOnList()['GYGBBB011'], Object.keys(ids
 check('the other two remain', idsOnList()['GYGAAA010'] && idsOnList()['GYGCCC012'], null);
 check('invariants STILL hold after the cancellation (nothing cancelled-still-active)', checkInvariants_() === 0, checkInvariants_());
 
+console.log('--- Reconcile must NEVER resurrect a booking a modification superseded (ANY move) ---');
+// General case (walker "Nadia", not Sara): Guruwalk issues a NEW code on a move
+// and the OLD confirmation stays in Gmail. The audit/reconcile must not re-add the
+// old code and undo the move — this must hold for every future reservation.
+resetWorld();
+const gwConf = (code, name) => [
+  'Hi Roots & roads,', 'You have a new booking on a Tour',
+  'Confirmed booking on your guruwalk: Barcelona Highlights Free Tour',
+  'Walker: ' + name, 'Booking code: ' + code, 'Attendees: 2 adults',
+  'Language: English', 'Date: Tuesday, 8 Sep 2030', 'Time: 16:00'].join('\n');
+const gwMod = (newCode, oldCode, name) => [
+  'Hi, Roots & Roads', 'YOU HAVE A BOOKING MODIFICATION ON A TOUR', 'Walker: ' + name,
+  'Details of the new booking', 'Booking code: ' + newCode, 'Attendees: 2 adults',
+  'Language: English', 'Date: Wednesday, 9 Sep 2030', 'Time: 10:30',
+  'Details of the previous booking', 'Booking code: ' + oldCode, 'Attendees: 2 adults',
+  'Language: English', 'Date: Tuesday, 8 Sep 2030', 'Time: 16:00'].join('\n');
+__gmail.add([RNR.LABELS.GURUWALK_CONFIRM], __gmail.msg('Confirmed booking BAROLD111 on your tour', gwConf('BAROLD111','Nadia')));
+__gmail.add([RNR.LABELS.GURUWALK_MODIFY], __gmail.msg('you have a modification on booking BAROLD111 on a tour', gwMod('BARNEW222','BAROLD111','Nadia')));
+processModificationLabel_(RNR.LABELS.GURUWALK_MODIFY, RNR.SOURCE.GURUWALK);   // move OLD -> NEW
+RNR_SUPERSEDED_IDS_ = null;
+reconcileConfirmationsToBookingList_();                                        // the audit re-scan
+check('the NEW code is on the list (the move applied)', idsOnList()['BARNEW222'] === true, Object.keys(idsOnList()));
+check('the SUPERSEDED old code is NOT resurrected', idsOnList()['BAROLD111'] !== true, Object.keys(idsOnList()));
+// And the confirmation SWEEP (audit re-read) must not re-add it either.
+processConfirmationLabel_(RNR.LABELS.GURUWALK_CONFIRM, RNR.SOURCE.GURUWALK);
+check('the confirmation audit-sweep also refuses to resurrect the old code', idsOnList()['BAROLD111'] !== true, Object.keys(idsOnList()));
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -368,6 +368,7 @@ let RNR_CONFIRM_THREAD_INDEX_ = null;    // "source|id" -> Gmail thread
 let RNR_MODIFY_THREAD_INDEX_ = null;     // "source|id" -> Gmail thread
 let RNR_REINSTATED_IDS_ = null;          // Set of "source|id" rebooked this run
 let RNR_RESOLVED_SUBJECTS_ = null;       // subjects processed this run (to clear stale Errors rows)
+let RNR_SUPERSEDED_IDS_ = null;          // normalized ids a modification replaced (don't resurrect)
 
 // When true, getThreadsSafe_ skips threads already carrying the PROCESSED
 // label. Set true by the frequent run, false by the twice-daily audit.
@@ -385,6 +386,14 @@ function resetRunCaches_() {
   RNR_CONFIRM_THREAD_INDEX_ = null;
   RNR_MODIFY_THREAD_INDEX_ = null;
   RNR_REINSTATED_IDS_ = new Set();
+  RNR_SUPERSEDED_IDS_ = null;
+}
+
+/** Superseded booking ids (memoised once per run; scans Gmail, so computed lazily
+ *  and only when the audit/reconcile actually needs it). */
+function getSupersededIds_() {
+  if (RNR_SUPERSEDED_IDS_) return RNR_SUPERSEDED_IDS_;
+  return (RNR_SUPERSEDED_IDS_ = supersededBookingIds_());
 }
 
 
@@ -1335,6 +1344,11 @@ function processConfirmationLabel_(labelName, source) {
         if (!isValidBooking_(booking)) continue;
         if (isCompleted_(booking)) { registered++; continue; }            // already run -> handled
         if (isBookingCancelledByEmail_(booking)) { registered++; continue; } // cancelled -> handled
+        // Superseded by a modification (Guruwalk issues a new code): handled, so
+        // mark Processed but do NOT re-insert the stale code. Only the AUDIT
+        // re-reads Processed confirmations, so only it can resurrect one — the
+        // fast run never sees a superseded (already-Processed) confirmation.
+        if (!RNR_SKIP_PROCESSED_ && getSupersededIds_()[normalizeId_(booking.bookingId)]) { registered++; continue; }
         // Confirmations INSERT only. Once the row exists, management edits
         // are authoritative; audits re-reading this email will not revert
         // them. Changes flow in through modification emails only.
@@ -1397,6 +1411,7 @@ function activeBookingIdSet_() {
  */
 function reconcileConfirmationsToBookingList_() {
   const activeIds = activeBookingIdSet_();
+  const supersededIds = getSupersededIds_();   // codes a modification replaced
   let recovered = 0;
 
   sourceConfigs_().forEach(cfg => {
@@ -1420,6 +1435,7 @@ function reconcileConfirmationsToBookingList_() {
           if (isBookingCancelledByEmail_(nb)) return;    // legitimately cancelled — don't resurrect
           const id = normalizeId_(nb.bookingId);
           if (!id || activeIds[id]) return;              // already on the list
+          if (supersededIds[id]) return;                 // a modification replaced this code — don't resurrect (Sara Dervishi)
           upsertActiveBooking_(nb, false);
           activeIds[id] = true;
           recovered++;
@@ -1435,6 +1451,39 @@ function reconcileConfirmationsToBookingList_() {
 
   if (recovered) console.log('Reconcile recovered ' + recovered + ' missing booking(s).');
   return recovered;
+}
+
+/**
+ * Booking codes a MODIFICATION has SUPERSEDED. Guruwalk issues a NEW code when a
+ * walker moves their booking and references the OLD code as the "previous
+ * booking". That old confirmation email still sits in Gmail, so the reconcile
+ * would re-add the stale booking and UNDO the move — that is the Sara Dervishi
+ * duplicate. We collect the superseded (previous) codes from the modification
+ * emails so the reconcile skips them. Bounded scans of the Guruwalk Modifications
+ * label AND recent Done (a Guruwalk modification often threads into the original,
+ * now-completed, booking's conversation). GYG/Viator keep the SAME code on a
+ * modification, so they never appear here.
+ */
+function supersededBookingIds_() {
+  const superseded = {};
+  const scan = (labelName, source, limit) => {
+    if (!labelName) return;
+    let label; try { label = GmailApp.getUserLabelByName(labelName); } catch (e) { return; }
+    if (!label) return;
+    let threads; try { threads = label.getThreads(0, limit) || []; } catch (e) { return; }
+    threads.forEach(thread => {
+      if (!runHasTimeLeft_()) return;
+      thread.getMessages().forEach(msg => {
+        let parsed; try { parsed = parseModificationMessage_(msg, source); } catch (e) { return; }
+        const oldId = parsed && parsed.oldBooking ? normalizeId_(parsed.oldBooking.bookingId) : '';
+        const newId = parsed && parsed.newBooking ? normalizeId_(parsed.newBooking.bookingId) : '';
+        if (oldId && oldId !== newId) superseded[oldId] = true;
+      });
+    });
+  };
+  scan(RNR.LABELS.GURUWALK_MODIFY, RNR.SOURCE.GURUWALK, RNR.MAX_THREADS_AUDIT);
+  scan(RNR.LABELS.GURUWALK_DONE, RNR.SOURCE.GURUWALK, 80);
+  return superseded;
 }
 
 /**
@@ -3300,25 +3349,28 @@ function dedupeActiveSheets_() {
     sh.getRange('B:B').setNumberFormat('@');
 
     const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
-    const keep = [];
 
-    rows.forEach(row => {
+    // SURGICAL dedupe. The old code rebuilt the WHOLE tab from a parse->write
+    // round-trip, which (a) could wipe the tab if a transient "Service
+    // Spreadsheets failed" hit mid-rewrite (this emptied the English tab on
+    // 2026-09-03) and (b) MANGLED manually typed rows — a hand-entered name,
+    // note or odd source was reconstructed from the parse and lost.
+    // Now: leave every row that has NO duplicate EXACTLY as it is. Only rewrite a
+    // survivor whose fields actually changed by merging a duplicate into it, and
+    // only delete the redundant duplicate rows. A manual entry is never touched.
+    const survivors = [];             // { rowIndex, booking, merged }
+    const deleteRows = [];
+    rows.forEach((row, i) => {
       const b = rowToBooking_(row, sheetName);
-      const idx = keep.findIndex(existing => sameBooking_(existing, b));
-      if (idx === -1) keep.push(b);
-      else keep[idx] = chooseBetterBooking_(keep[idx], b);
+      const s = survivors.find(x => sameBooking_(x.booking, b));
+      if (!s) { survivors.push({ rowIndex: i + 2, booking: b, merged: false }); return; }
+      const better = chooseBetterBooking_(s.booking, b);
+      if (JSON.stringify(better) !== JSON.stringify(s.booking)) { s.booking = better; s.merged = true; }
+      deleteRows.push(i + 2);         // duplicates an earlier row -> remove this one
     });
 
-    // NEVER clear-then-write. The old code cleared the whole tab and then wrote
-    // the survivors back; a transient "Service Spreadsheets failed" BETWEEN the
-    // two left the tab EMPTY — this is what wiped the English tab (2026-09-03),
-    // recovered only by the twice-daily audit. Safe order: skip untouched tabs,
-    // then OVERWRITE the survivors in place and clear ONLY the surplus tail — so
-    // a failed write can never wipe the data (at worst a row keeps stale content).
-    if (keep.length === rows.length) return;      // no duplicates -> don't touch the tab
-    writeBookingRowsBulk_(sh, 2, keep);
-    const surplus = rows.length - keep.length;
-    if (surplus > 0) withRetry_(() => sh.getRange(2 + keep.length, 1, surplus, 9).clearContent());
+    survivors.forEach(s => { if (s.merged) writeBookingRow_(sh, s.rowIndex, s.booking); });
+    deleteRows.sort((a, b) => b - a).forEach(r => withRetry_(() => sh.deleteRow(r)));
   });
 }
 
@@ -3714,10 +3766,29 @@ function parseGuruwalkBlocks_(text) {
   while ((m = codeRe.exec(s))) starts.push(m.index);
   const blocks = starts.length
     ? starts.map((start, i) => {
-        const w = Math.max(s.lastIndexOf('Walker', start), s.lastIndexOf('Name', start));
-        return s.slice(w >= 0 ? w : start, i + 1 < starts.length ? starts[i + 1] : s.length);
+        // A MODIFICATION email has ONE "Walker:" line but TWO booking codes, each
+        // under its own "Details of the new/previous booking" header. Anchor each
+        // block to that header so the new and previous codes don't BOTH resolve to
+        // the first code — that left the previous booking un-removed and produced a
+        // duplicate on every Guruwalk move (e.g. Sara Dervishi). Confirmations /
+        // cancellations have no such header, so fall back to the nearest Walker/Name.
+        const header = s.lastIndexOf('Details of the', start);
+        let from;
+        if (header >= 0 && (i === 0 || header > starts[i - 1])) {
+          from = header;
+        } else {
+          const w = Math.max(s.lastIndexOf('Walker', start), s.lastIndexOf('Name', start));
+          from = w >= 0 ? w : start;
+        }
+        return s.slice(from, i + 1 < starts.length ? starts[i + 1] : s.length);
       })
     : [s];   // no "Booking code" label at all -> treat the whole email as one block
+
+  // A modification email carries ONE "Walker:" line (above the new/previous
+  // blocks), so a per-block name lookup misses it. Read it once from the whole
+  // email and use it as the fallback for every block, or the previous-booking
+  // block would be nameless -> dropped as invalid -> the old code never removed.
+  const globalName = valueAfterLabel_(s, [/^Walker\b/i, /^Name\b/i, /^Traveler\b/i, /^Traveller\b/i]);
 
   for (const block of blocks) {
     // valueAfterLabel_ reads a value whether it is on the same line ("X: v") or
@@ -3726,7 +3797,7 @@ function parseGuruwalkBlocks_(text) {
     const bookingId = (idVal.match(/[A-Z0-9-]{4,}/i) || block.match(/\b(BAR\d{5,})\b/i) || [])[0] || '';
     if (!bookingId) continue;
 
-    const name = valueAfterLabel_(block, [/^Walker\b/i, /^Name\b/i, /^Traveler\b/i, /^Traveller\b/i]);
+    const name = valueAfterLabel_(block, [/^Walker\b/i, /^Name\b/i, /^Traveler\b/i, /^Traveller\b/i]) || globalName;
     const rawPhone = valueAfterLabel_(block, [/^Phone\b/i, /^Mobile\b/i, /^Telephone\b/i]);
 
     // Attendees can break the party down — "1 adult, 1 child" — so parse each
