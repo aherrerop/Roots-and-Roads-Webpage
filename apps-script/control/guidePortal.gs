@@ -115,11 +115,13 @@ const PORTAL = {
   // those spreadsheets every time. Invalidated immediately on any assignment /
   // move / note change (bumpCacheVersion_), so a longer TTL is safe: the only
   // untracked change is a NEW booking (the feed already lags its 5-min rebuild)
-  // or a manual grid edit — both tolerate <=TTL. With the 20s poll, TTL=60 lets
-  // ~2-3 polls serve from cache instead of re-reading every grid every time.
+  // or a manual grid edit — both tolerate <=TTL. With the 20s poll, TTL=180 lets
+  // ~8-9 polls serve from cache instead of re-reading every grid every time, so a
+  // guide who just opened the portal — and every poll after — hits warm reads
+  // instead of paying a fresh 8s+ cold load (the loads that were timing out).
   // Check-ins are NEVER cached beyond the ledger safety-net key (which a check-in
   // bumps), so a guest ticked in shows on the next poll.
-  CACHE_TTL: 60,
+  CACHE_TTL: 180,
 
   // Longer TTL for CONFIG reads that change ONLY via a manager action (which bumps
   // the cache version immediately) or a rare direct sheet edit: the Guides tab,
@@ -181,6 +183,7 @@ function doGet(e) {
       case 'ping':   out = { ok: true, pong: true }; break;
       case 'clientlog': out = apiClientLog_(p); break;
       case 'health': out = apiHealth_(); break;
+      case 'timings': out = apiTimings_(p); break;
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
     }
   } catch (err) {
@@ -364,6 +367,27 @@ function portalTimingReport() {
   return stats;
 }
 
+/**
+ * action=timings -> read-only diagnostic. Returns the per-action aggregate
+ * (count/p50/p95/max/status) AND the newest raw Portal Log rows, so the portal's
+ * real speed can be checked on demand without opening the Apps Script editor.
+ * `n` (default 40, max 200) = how many newest raw rows to return. No PII: the
+ * detail column holds only phase timings and a tour's date/time/language.
+ */
+function apiTimings_(p) {
+  const ss = control_();
+  const log = ss.getSheetByName('Portal Log');
+  if (!log || log.getLastRow() < 2) return { ok: true, count: 0, stats: [], recent: [] };
+  const all = log.getRange(2, 1, log.getLastRow() - 1, 5).getValues();
+  const stats = summarisePortalTimings_(all, PORTAL.SLOW_MS);
+  const n = Math.max(1, Math.min(200, Number((p && p.n) || 40)));
+  const recent = all.slice(-n).map(function (r) {
+    return { when: String(r[0]), action: String(r[1]), ms: Number(r[2] || 0),
+             result: String(r[3]), detail: String(r[4] || '') };
+  });
+  return { ok: true, count: all.length, slowMs: PORTAL.SLOW_MS, stats: stats, recent: recent };
+}
+
 function jsonp_(callback, obj) {
   const json = JSON.stringify(obj);
   // If a callback name is supplied, wrap for JSONP; else return raw JSON.
@@ -504,10 +528,13 @@ function apiTours_(p) {
     // cachedRead_ falls back to a live build — never wrong, just slower that once.
     schedule = _t('assemble', function () {
       return cachedRead_('asm:' + feedCacheVersion_() + ':' + offerHorizonDays, PORTAL.CACHE_TTL, function () {
-        const s = buildScheduleFromFeed_(bookingsByKey);
-        appendWeeklyScheduleShifts_(s, offerHorizonDays);   // recurring offer slots (empty), windowed
-        applyWeeklyDefaults_(s);          // default guide on any still-unassigned slot
-        sortSchedule_(s);
+        // Sub-phase timings (only populated on a cold miss — a warm poll skips
+        // this whole function) so the Portal Log shows WHICH part of assemble is
+        // the cost, not just the total. Keys sort under `assemble` in the detail.
+        const s = _t('asm.build', function () { return buildScheduleFromFeed_(bookingsByKey); });
+        _t('asm.weekly', function () { appendWeeklyScheduleShifts_(s, offerHorizonDays); return 0; });
+        _t('asm.def', function () { applyWeeklyDefaults_(s); return 0; });
+        _t('asm.sort', function () { sortSchedule_(s); return 0; });
         return s;
       });
     });
@@ -1640,24 +1667,34 @@ function parseGuideRow_(row, cols) {
   };
 }
 
-function findGuideByEmail_(email) {
+/**
+ * Parse EVERY guide row ONCE per load and memoise it. findGuideByName_ used to
+ * re-parse all guide rows on every call, and applyWeeklyDefaults_ calls it per
+ * unassigned shift -> O(shifts x rules x guideRows) object-building on a cold
+ * load, the bulk of the `assemble` CPU. Parsing once turns every later lookup
+ * into a cheap map hit. Cleared with __RRX each request (see doGet).
+ */
+function guidesParsed_() {
+  if (__RRX.guidesParsed) return __RRX.guidesParsed;
   const { header, rows } = readGuidesRaw_();
   const cols = guideColumns_(header);
-  for (const row of rows) {
-    const g = parseGuideRow_(row, cols);
-    if (g.email && g.email === email) return g;
-  }
-  return null;
+  const list = rows.map(row => parseGuideRow_(row, cols));
+  const byName = {}, byEmail = {};
+  list.forEach(g => {
+    if (g.name) { const k = normName_(g.name); if (!(k in byName)) byName[k] = g; }
+    if (g.email && !(g.email in byEmail)) byEmail[g.email] = g;
+  });
+  return (__RRX.guidesParsed = { list, byName, byEmail });
+}
+
+function findGuideByEmail_(email) {
+  const e = String(email == null ? '' : email).trim().toLowerCase();
+  return guidesParsed_().byEmail[e] || null;
 }
 
 function findGuideByName_(guideName) {
-  const { header, rows } = readGuidesRaw_();
-  const cols = guideColumns_(header);
-  for (const row of rows) {
-    const g = parseGuideRow_(row, cols);
-    if (g.name && sameName_(g.name, guideName)) return g;
-  }
-  return null;
+  if (!guideName) return null;
+  return guidesParsed_().byName[normName_(guideName)] || null;
 }
 
 /**
@@ -3028,8 +3065,9 @@ function sfExtPayFor_(source, rates) {
   return Number(v != null ? v : PORTAL.DEFAULT_SF_EXT_PAY);
 }
 
+function normName_(a) { return String(a == null ? '' : a).trim().toLowerCase(); }
 function sameName_(a, b) {
-  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  return normName_(a) === normName_(b);
 }
 
 function shiftKey_(dateKey, minutes, language) {
