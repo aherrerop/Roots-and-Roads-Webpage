@@ -182,7 +182,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-08-31-windowed-loadmore";
+const PORTAL_VERSION = "2026-09-08-resilient-poll";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -221,18 +221,27 @@ function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 async function api(action, params){
   try{ return await apiCall(action, params); }
   catch(err){
-    if(err && err.kind==="auth") throw err;
+    // Retry ONCE for a genuine transient drop (a freshly-created deployment 404s
+    // for a minute; a request occasionally drops). Do NOT retry an auth error (a
+    // real config problem) or a TIMEOUT: a timeout means the server is overloaded,
+    // and an immediate retry just piles another heavy execution onto it. The next
+    // scheduled poll retries instead, giving the server room to drain.
+    if(err && (err.kind==="auth" || err.kind==="timeout")) throw err;
     await sleep(1000);
     return await apiCall(action, params);
   }
 }
 async function apiCall(action, params){
   const url = buildUrl(action, params);
+  let timedOut = false;
   try{
-    // Abort a hung request after 30s so the inflight guard is always released
-    // and the next poll can try again (a dead network shouldn't freeze the app).
+    // Abort a hung request after 60s. NOT 30s: a load can legitimately take ~35s
+    // when the owner-serialized server is CPU-throttled under load, and aborting
+    // early didn't stop that server execution — it just made the client re-hit an
+    // already-overloaded server (see the timeout handling below). 60s lets a
+    // slow-but-alive load finish on the FIRST try instead of multiplying the load.
     const ctrl = (typeof AbortController!=="undefined") ? new AbortController() : null;
-    const timer = ctrl ? setTimeout(()=>ctrl.abort(), 30000) : null;
+    const timer = ctrl ? setTimeout(()=>{ timedOut=true; ctrl.abort(); }, 60000) : null;
     let res, text;
     try{
       res = await fetch(url, {method:"GET", redirect:"follow", cache:"no-store", signal: ctrl?ctrl.signal:undefined});
@@ -246,6 +255,14 @@ async function apiCall(action, params){
     }
   }catch(err){
     if(err && (err.kind==="auth"||err.kind==="badresp")) throw err;
+    // A TIMEOUT means the server is alive but slow (overloaded). Do NOT fall back
+    // to a JSONP attempt — that spawns a SECOND server execution (which keeps
+    // running even though the client gave up on the first), making the overload
+    // worse. Surface it as a timeout; the next poll retries once the server drains.
+    if(timedOut || (err && (err.name==="AbortError" || err.kind==="timeout")))
+      throw mkErr("timeout","TIMEOUT");
+    // A genuine fetch/network/CORS failure (not a timeout): some environments block
+    // cross-origin fetch, so fall back to JSONP once.
     try{ return await apiJsonp(action, params); }
     catch(err2){ throw err2; }
   }
@@ -260,7 +277,7 @@ function apiJsonp(action, params){
     function cleanup(){ delete window[cb]; s.remove(); }
     s.onerror=()=>{ if(!done){cleanup(); reject(mkErr("network","NETWORK"));} };
     s.src=url; document.body.appendChild(s);
-    setTimeout(()=>{ if(!done){cleanup(); reject(mkErr("timeout","TIMEOUT"));} }, 30000);   // match the fetch timeout — don't declare a slow-but-alive server dead early
+    setTimeout(()=>{ if(!done){cleanup(); reject(mkErr("timeout","TIMEOUT"));} }, 60000);   // match the fetch timeout — don't declare a slow-but-alive server dead early
   });
 }
 function serverTestLink(){
@@ -465,11 +482,14 @@ function canAutoRefresh(){
 }
 function startAutoRefresh(){
   if(window._rrRefresh) return;
-  // Poll every 20s. Fast enough that a co-guide's check-in shows within seconds,
-  // but slow enough that loads never overlap (the inflight guard drops any that
-  // would). The old 8s poll fired faster than loads completed, so requests piled
-  // up and each got slower.
-  window._rrRefresh = setInterval(()=>{ ckFlush(); if(canAutoRefresh()) loadTours("poll"); }, 20000);
+  // Poll every 30s. Every request runs as the owner and Google serializes those
+  // executions, so N guides polling is the main source of the queue contention
+  // that throttles loads; a 30s poll (vs 20s) cuts that request rate by a third.
+  // A co-guide's check-in still shows within ~30s, and the person who MADE a change
+  // sees it immediately (optimistic overlay + post-action reconcile) — so the
+  // slower poll costs no freshness to the actor. The inflight guard still drops any
+  // poll that would overlap a running load.
+  window._rrRefresh = setInterval(()=>{ ckFlush(); if(canAutoRefresh()) loadTours("poll"); }, 30000);
   // Check for a newer deployed build every 2 min and when the tab regains focus.
   window._rrVerCheck = setInterval(checkForUpdate, 120000);
   document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours("focus"); } });
@@ -519,7 +539,11 @@ async function loadTours(nav){
 function onLoadFailed(err){
   LOAD_FAILS++;
   beacon(err && err.kind==="timeout" ? "timeout" : "error", Date.now()-LOAD_START, LOAD_NAV);
-  if(LOAD_FAILS < 2){
+  // A quiet 3s fast-retry is right for a one-off blip (network drop), but WRONG for
+  // a timeout: the server is overloaded, so re-hitting it in 3s makes it worse. On a
+  // timeout we keep the last good view ("stale") and simply wait for the next
+  // scheduled poll, which gives the server room to drain. Fast-retry non-timeouts.
+  if(LOAD_FAILS < 2 && !(err && err.kind==="timeout")){
     setFresh("loading");                      // still "Updating…" — we're quietly retrying
     if(RETRY_TIMER) clearTimeout(RETRY_TIMER);
     RETRY_TIMER=setTimeout(()=>{ RETRY_TIMER=null; loadTours("retry"); }, 3000);

@@ -116,7 +116,11 @@ check('an early reload mid-load reports an abort', /pagehide[\s\S]*beacon\("abor
 check('the initial load is tagged so completed-load times are measurable', /loadTours\("initial"\)/.test(html), null);
 
 console.log('--- Resilient writes: one quiet retry, and reconcile after any move ---');
-check('api() retries once on a non-auth failure', /async function api\(action, params\)\{[\s\S]*catch\(err\)\{[\s\S]*if\(err && err\.kind==="auth"\) throw err;[\s\S]*return await apiCall\(action, params\);/.test(html), null);
+check('api() retries once on a transient drop but NOT on auth or timeout', /async function api\(action, params\)\{[\s\S]*catch\(err\)\{[\s\S]*if\(err && \(err\.kind==="auth" \|\| err\.kind==="timeout"\)\) throw err;[\s\S]*return await apiCall\(action, params\);/.test(html), null);
+check('a timeout does NOT fall back to JSONP (no second server execution)', /if\(timedOut \|\| \(err && \(err\.name==="AbortError" \|\| err\.kind==="timeout"\)\)\)\s*throw mkErr\("timeout"/.test(html), null);
+check('a timeout skips the quiet fast-retry (waits for the next poll)', /LOAD_FAILS < 2 && !\(err && err\.kind==="timeout"\)/.test(html), null);
+check('the fetch + JSONP load timeout is 60s (a slow-but-alive load finishes)', /setTimeout\(\(\)=>\{ timedOut=true; ctrl\.abort\(\); \}, 60000\)/.test(html) && /reject\(mkErr\("timeout","TIMEOUT"\)\);\} \}, 60000\)/.test(html), null);
+check('the auto-refresh poll is 30s (fewer serialized executions)', /if\(canAutoRefresh\(\)\) loadTours\("poll"\); \}, 30000\)/.test(html), null);
 check('a move reconciles with loadTours whether it succeeds OR fails', /\.mvbox[\s\S]*?loadTours\(\);\s+\/\/ reconcile either way/.test(html), null);
 check('one Move applies BOTH language and time in a single call', /api\("move",\{[\s\S]*?toLanguage:toLanguage,[\s\S]*?toTime: timeChange/.test(html), null);
 check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime && \(!dateSel \|\| dateSel\.value===info\.fromDate\)\)/.test(html), null);
