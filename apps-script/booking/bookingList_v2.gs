@@ -510,9 +510,16 @@ function runBookingCore_(skipProcessed) {
     //    can't be wrongly cancelled.
     if (runHasTimeLeft_()) processCancellations_();
 
+    // 1b. AUDIT-only recovery, run BEFORE the heavy confirmation re-read so the
+    //     run's time budget can never starve them: apply modifications stuck under
+    //     Done (a move that threaded into the original booking — Anna Erb) and
+    //     drop any row a modification superseded (Sara Dervishi).
+    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) processStrayModifications_();
+
     // 2. Confirmations + modifications.
     if (runHasTimeLeft_()) processConfirmations_();
     if (runHasTimeLeft_()) processModifications_();
+    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) removeSupersededActiveBookings_();
 
     // 3. Consistency: relabel any Confirm/Modify thread whose booking id is
     //    now known-cancelled (and not reinstated this run) to Cancel, drop
@@ -1484,6 +1491,53 @@ function supersededBookingIds_() {
   scan(RNR.LABELS.GURUWALK_MODIFY, RNR.SOURCE.GURUWALK, RNR.MAX_THREADS_AUDIT);
   scan(RNR.LABELS.GURUWALK_DONE, RNR.SOURCE.GURUWALK, 80);
   return superseded;
+}
+
+/**
+ * Remove any ACTIVE row whose booking id a modification has superseded. The move
+ * itself removes the old code, but the still-in-Gmail old confirmation can have
+ * re-added it before this fix (Sara Dervishi). Idempotent, audit-only.
+ */
+function removeSupersededActiveBookings_() {
+  const superseded = getSupersededIds_();
+  if (!Object.keys(superseded).length) return 0;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let removed = 0;
+  activeSheetNames_().forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh || sh.getLastRow() < 2) return;
+    const ids = sh.getRange(2, 8, sh.getLastRow() - 1, 1).getValues();
+    const del = [];
+    ids.forEach((r, i) => { if (superseded[normalizeId_(r[0])]) del.push(i + 2); });
+    del.sort((a, b) => b - a).forEach(row => { withRetry_(() => sh.deleteRow(row)); removed++; });
+  });
+  if (removed) console.log('Removed ' + removed + ' superseded booking row(s).');
+  return removed;
+}
+
+/**
+ * Apply modifications that landed under the DONE label instead of Modifications.
+ * A Guruwalk/FreeTour move threads into the ORIGINAL booking's conversation; once
+ * that tour date passes the thread is archived to Done, so the normal modification
+ * pass (which reads only the Modifications label) never sees it and the move is
+ * lost (Anna Erb: rebooked to a FUTURE date but the system still had the old/past
+ * one). Re-run the modification handler over Done. processModificationThread_ is a
+ * no-op on a thread carrying no modification, and idempotent on one that does, so
+ * this is safe to run every audit. Audit-only (bounded).
+ */
+function processStrayModifications_() {
+  [RNR.SOURCE.GURUWALK, RNR.SOURCE.FREETOUR].forEach(source => {
+    const cfg = sourceConfigs_().find(c => c.source === source);
+    if (!cfg || !cfg.modify || !cfg.done || !runHasTimeLeft_()) return;
+    let label; try { label = GmailApp.getUserLabelByName(cfg.done); } catch (e) { return; }
+    if (!label) return;
+    let threads; try { threads = label.getThreads(0, 80) || []; } catch (e) { return; }
+    threads.forEach(thread => {
+      if (!runHasTimeLeft_()) return;
+      try { processModificationThread_(thread, source); }
+      catch (e) { logError_('processStrayModifications_ ' + source, e, cfg.done); }
+    });
+  });
 }
 
 /**

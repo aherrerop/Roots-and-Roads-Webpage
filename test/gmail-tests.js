@@ -193,6 +193,25 @@ check('the SUPERSEDED old code is NOT resurrected', idsOnList()['BAROLD111'] !==
 processConfirmationLabel_(RNR.LABELS.GURUWALK_CONFIRM, RNR.SOURCE.GURUWALK);
 check('the confirmation audit-sweep also refuses to resurrect the old code', idsOnList()['BAROLD111'] !== true, Object.keys(idsOnList()));
 
+console.log('--- removeSupersededActiveBookings_ drops an ALREADY-resurrected old row ---');
+resetWorld();
+SpreadsheetApp._active.getSheetByName('Italian Tours').getRange(2, 1, 2, 9).setValues([
+  ['Nadia', "'+1", 2, 'Tue, Sep 8', '4:00 PM', 'Guruwalk', 12, 'BAROLD111', ''],   // stale (resurrected)
+  ['Nadia', "'+1", 2, 'Wed, Sep 9', '10:30 AM', 'Guruwalk', 12, 'BARNEW222', '']]);
+__gmail.add([RNR.LABELS.GURUWALK_MODIFY], __gmail.msg('you have a modification on booking BAROLD111 on a tour', gwMod('BARNEW222', 'BAROLD111', 'Nadia')));
+RNR_SUPERSEDED_IDS_ = null;
+removeSupersededActiveBookings_();
+check('the stale superseded row is removed', idsOnList()['BAROLD111'] !== true, Object.keys(idsOnList()));
+check('the current (new) booking is untouched', idsOnList()['BARNEW222'] === true, Object.keys(idsOnList()));
+
+console.log('--- processStrayModifications_ applies a modification stuck under DONE (Anna Erb) ---');
+resetWorld();
+// The move threaded into the original (now past/Done) booking, so it only got the
+// Done label. The future NEW booking was never added by the normal modify pass.
+__gmail.add([RNR.LABELS.GURUWALK_DONE], __gmail.msg('you have a modification on booking BARPAST1 on a tour', gwMod('BARFUT2', 'BARPAST1', 'Erb')));
+processStrayModifications_();
+check('a Done-stuck modification IS applied — the new future booking lands', idsOnList()['BARFUT2'] === true, Object.keys(idsOnList()));
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
