@@ -3309,8 +3309,16 @@ function dedupeActiveSheets_() {
       else keep[idx] = chooseBetterBooking_(keep[idx], b);
     });
 
-    withRetry_(() => sh.getRange(2, 1, sh.getLastRow() - 1, 9).clearContent());
+    // NEVER clear-then-write. The old code cleared the whole tab and then wrote
+    // the survivors back; a transient "Service Spreadsheets failed" BETWEEN the
+    // two left the tab EMPTY — this is what wiped the English tab (2026-09-03),
+    // recovered only by the twice-daily audit. Safe order: skip untouched tabs,
+    // then OVERWRITE the survivors in place and clear ONLY the surplus tail — so
+    // a failed write can never wipe the data (at worst a row keeps stale content).
+    if (keep.length === rows.length) return;      // no duplicates -> don't touch the tab
     writeBookingRowsBulk_(sh, 2, keep);
+    const surplus = rows.length - keep.length;
+    if (surplus > 0) withRetry_(() => sh.getRange(2 + keep.length, 1, surplus, 9).clearContent());
   });
 }
 
@@ -3609,6 +3617,12 @@ function extractViatorGuestDelta_(text) {
 function extractViatorTime_(text) {
   const s = String(text || '');
   const candidates = [
+    // AMENDMENT: the NEW time is on the "to" side of "changed from … to …".
+    // Match it FIRST so an amendment never keeps the OLD time (the "from" side),
+    // e.g. "Tour grade changed from English Tour 10:00 (TG4~10:00) to English
+    // Tour 17:00 (TG4~17:00)" -> 17:00. These only match amendment bodies.
+    /changed\s+from[\s\S]*?\bto\b[\s\S]*?TG\d+\s*~\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
+    /changed\s+from[\s\S]*?\bto\b[\s\S]*?Tour\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
     /Tour Grade Code:\s*[A-Z0-9]+\s*~\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
     /TG\d+\s*~\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
     /Start Time:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,

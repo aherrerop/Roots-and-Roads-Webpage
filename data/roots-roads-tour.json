@@ -36,6 +36,10 @@
     "travellers who only want a food tour",
     "travellers who cannot walk for several hours or use public transport without assistance"
   ],
+  "included": [
+    "Local licensed guide for the full 3-hour route",
+    "Free digital local-recommendations e-guide, sent to every guest after the tour: handpicked restaurants, local food and drinks, museums and cultural spaces, and ideas for the rest of the trip (curated by local guides, not an automated list)"
+  ],
   "not_included": [
     "interior Sagrada Família ticket",
     "private transport"
@@ -57,5 +61,5 @@
     "Facebook": "https://www.facebook.com/profile.php?id=61586161017203",
     "Meetup": "https://www.meetup.com/roots-and-roads/"
   },
-  "date_modified": "2026-07-28"
+  "date_modified": "2026-09-02"
 }

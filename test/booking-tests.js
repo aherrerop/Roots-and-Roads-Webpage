@@ -553,6 +553,46 @@ check('Viator: "Tour Grade: Italian Tour" wins over "Tour Language: English"', v
 check('Viator: time still from Tour Grade Code TG8~16:00 (stored 12h)', vIt && vIt.time==='4:00 PM', vIt && vIt.time);
 check('Viator: no language in grade -> falls back to Tour Language', (function(){ const b=parseViatorMessage_(makeFakeMsg_('Confirmed Booking: Sun, Aug 23, 2026', 'Booking Reference: BR-1\nTravel Date: Sun, Aug 23, 2026\nLead Traveler Name: X\nTravelers: 1 Adult\nTour Grade Code: TG1~11:00\nTour Language: German - Guide'),'confirm'); return b && b.language==='German'; })(), null);
 
+console.log('--- Viator AMENDMENT takes the NEW time (the "to" side), not the old ---');
+// Jean Sarver, BR-1432194803: "Tour grade changed from English Tour 10:00
+// (TG4~10:00) to English Tour 17:00 (TG4~17:00)". The parser used to grab the
+// FIRST TG time (10:00 = old); it must take the time after "to" (17:00).
+const vAmendBody=[
+ 'No action is required. This booking has been amended.',
+ 'Booking Amended',
+ 'The following booking for Barcelona Walking Tour: Sagrada Familia, Gaudi and Gothic Quarter on Tue, Sep 08, 2026 has been amended. Here are the changes:',
+ 'Tour grade changed from English Tour 10:00 (TG4~10:00) to English Tour 17:00 (TG4~17:00).',
+ 'Booking Details','Booking Reference: #BR-1432194803','Travel Date: Tue, Sep 08, 2026',
+ 'Lead traveler name: Jean Sarver','Product Code: 5631527P3'
+].join('\n');
+const vAmend=parseViatorMessage_(makeFakeMsg_('Amended Booking: Tue, Sep 08, 2026 (#BR-1432194803)', vAmendBody),'modify');
+check('Viator amendment picks the NEW time 5:00 PM (17:00), not 10:00', vAmend && vAmend.time==='5:00 PM', vAmend && vAmend.time);
+check('Viator amendment keeps its booking id + explicit-time flag', vAmend && vAmend.bookingId==='BR-1432194803' && vAmend.hasExplicitTime===true, vAmend);
+check('a Viator CONFIRMATION is unaffected (grade time, no "changed from")', vIt && vIt.time==='4:00 PM', vIt && vIt.time);
+
+console.log('--- dedupeActiveSheets_ is WIPE-SAFE (never clear-then-write) ---');
+const ddSS=new __mock.MockSS('booking-dedup'); SpreadsheetApp._active=ddSS;
+const ddEn=ddSS.insertSheet('English Tours');
+ddEn.getRange(1,1,4,9).setValues([
+ ['Name','Phone','Number of Guests','Tour date','Time','Source','Income','Booking ID','Notes'],
+ ['Alice','+1',2,'Fri, Sep 11','10:00 AM','GetYourGuide',30,'GYGAAA',''],
+ ['Alice','+1',2,'Fri, Sep 11','10:00 AM','GetYourGuide',30,'GYGAAA',''],   // exact duplicate
+ ['Bob','+2',1,'Sat, Sep 12','5:00 PM','Viator',15,'BR-2','']]);
+dedupeActiveSheets_();
+const ddRows=ddEn.getRange(2,1,Math.max(1,ddEn.getLastRow()-1),9).getValues().filter(r=>String(r[7]||'').trim());
+check('duplicate GYGAAA collapsed to one; BR-2 kept', ddRows.length===2 && ddRows.some(r=>r[7]==='GYGAAA') && ddRows.some(r=>r[7]==='BR-2'), ddRows.map(r=>r[7]));
+// A tab with NO duplicates must be left completely untouched (the old code
+// cleared then rewrote every tab every run — the wipe risk). Guard against it.
+const ddSS2=new __mock.MockSS('booking-dedup2'); SpreadsheetApp._active=ddSS2;
+const ddEn2=ddSS2.insertSheet('English Tours');
+ddEn2.getRange(1,1,3,9).setValues([
+ ['Name','Phone','Number of Guests','Tour date','Time','Source','Income','Booking ID','Notes'],
+ ['Cara','+3',2,'Fri, Sep 11','10:00 AM','GetYourGuide',30,'GYGCCC',''],
+ ['Dan','+4',1,'Sat, Sep 12','5:00 PM','Viator',15,'BR-4','']]);
+dedupeActiveSheets_();
+const nd=ddEn2.getRange(2,1,2,9).getValues();
+check('a tab with no duplicates keeps every row (no destructive rewrite)', nd[0][7]==='GYGCCC' && nd[1][7]==='BR-4', nd.map(r=>r[7]));
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
