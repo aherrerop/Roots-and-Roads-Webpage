@@ -61,6 +61,23 @@ check('a check-in rebuilds the schedule (feed version in the key)', ab === 3, ab
 cachedRead_(akey(30), 60, abfn);                          // guide window vs manager window
 check('a different offer horizon is a different key (guide vs manager window)', ab === 4, ab);
 
+console.log('--- CONFIG reads (guides/closed) survive an assign burst, refresh on a config change ---');
+// Guides + Closed_Shifts don't change on an assign/move/check-in, so they are
+// keyed on the CONFIG version, not the global one. An assign burst must NOT throw
+// them away (that forced every watching guide into a cold load); only a close/
+// reopen or a password change (bumpConfigVersion_) refreshes them.
+__mock.PROPS['PORTAL_CACHE_VER'] = '0';
+__mock.PROPS['PORTAL_CONFIG_VER'] = '0';
+let cf = 0; const cffn = () => { cf++; return { g: cf }; };
+cachedReadConfig_('guides', 300, cffn); cachedReadConfig_('guides', 300, cffn);
+check('a repeat poll hits the config cache (guides read skipped)', cf === 1, cf);
+bumpCacheVersion_(); bumpCacheVersion_();                 // an assign burst
+cachedReadConfig_('guides', 300, cffn);
+check('an assign does NOT invalidate a config read (stays warm through the burst)', cf === 1, cf);
+bumpConfigVersion_();                                     // a close/reopen or password change
+cachedReadConfig_('guides', 300, cffn);
+check('a config change (bumpConfigVersion_) refreshes the config read', cf === 2, cf);
+
 __mock.removeRealCache();
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');

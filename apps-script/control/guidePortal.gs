@@ -290,6 +290,24 @@ function bumpFeedCacheVersion_() {
     p.setProperty('PORTAL_FEED_VER', String((Number(p.getProperty('PORTAL_FEED_VER')) || 0) + 1));
   } catch (e) { /* best-effort */ }
 }
+// A THIRD version, for CONFIG reads (the Guides tab, the Closed_Shifts tab) that
+// an assign / move / check-in NEVER changes. Those were keyed on the global
+// version, so every assignment during a manager's morning burst needlessly threw
+// away the guides + closed reads and forced every watching guide into a full cold
+// load. Keying them here means an assign burst only re-reads the feed; the config
+// reads stay warm and are refreshed only by a close/reopen, a password change, or
+// their TTL (a direct sheet edit tolerates <=CONFIG_TTL). This is the main lever
+// against the pileup that made the portal fail to load under load.
+function configVersion_() {
+  try { return PropertiesService.getScriptProperties().getProperty('PORTAL_CONFIG_VER') || '0'; }
+  catch (e) { return '0'; }
+}
+function bumpConfigVersion_() {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    p.setProperty('PORTAL_CONFIG_VER', String((Number(p.getProperty('PORTAL_CONFIG_VER')) || 0) + 1));
+  } catch (e) { /* best-effort */ }
+}
 function cachedRead_(name, ttlSeconds, fn) {
   let cache = null, key = '';
   try {
@@ -303,6 +321,31 @@ function cachedRead_(name, ttlSeconds, fn) {
     if (cache) {
       const s = JSON.stringify(val);
       if (s.length < 95000) cache.put(key, s, ttlSeconds || PORTAL.CACHE_TTL);   // 100KB cap
+    }
+  } catch (e) { /* value not cacheable this time; live read already returned */ }
+  return val;
+}
+
+/**
+ * Same as cachedRead_ but keyed on the CONFIG version, so an assign/move/check-in
+ * (which bumps only the global + feed versions) does NOT invalidate it. Used for
+ * the Guides + Closed_Shifts reads. A close/reopen and a password change bump the
+ * config version explicitly; anything else tolerates <=CONFIG_TTL. Fail-open,
+ * identical to cachedRead_.
+ */
+function cachedReadConfig_(name, ttlSeconds, fn) {
+  let cache = null, key = '';
+  try {
+    cache = CacheService.getScriptCache();
+    key = 'rdc:' + name + ':' + configVersion_();
+    const hit = cache.get(key);
+    if (hit) return JSON.parse(hit);
+  } catch (e) { cache = null; }
+  const val = fn();
+  try {
+    if (cache) {
+      const s = JSON.stringify(val);
+      if (s.length < 95000) cache.put(key, s, ttlSeconds || PORTAL.CONFIG_TTL);
     }
   } catch (e) { /* value not cacheable this time; live read already returned */ }
   return val;
@@ -425,6 +468,7 @@ function setGuidePassword(email, newPassword) {
     if (String(values[i][cols.emailCol] || '').trim().toLowerCase() === e) {
       sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(pw);
       bumpCacheVersion_();
+      bumpConfigVersion_();          // the Guides read (config-versioned) changed
       return 'Password set for ' + e + ' (readable in the Guides tab).';
     }
   }
@@ -856,7 +900,7 @@ function shiftDomId_(s) {
 function readClosedShifts_() {
   // Cached (config TTL) — the Closed_Shifts tab changes only on a close/reopen,
   // which bumps the cache version, so the read is skipped on the common poll.
-  return cachedRead_('closed', PORTAL.CONFIG_TTL, function () {
+  return cachedReadConfig_('closed', PORTAL.CONFIG_TTL, function () {
     const set = {};
     const sh = control_().getSheetByName(PORTAL.CLOSED_TAB);
     if (!sh || sh.getLastRow() < 2) return set;
@@ -905,6 +949,7 @@ function apiCloseShift_(p) {
     if (reopen) {
       if (row !== -1) sh.deleteRow(row);
       bumpCacheVersion_();
+      bumpConfigVersion_();          // the Closed_Shifts read (config-versioned) changed
       return { ok: true, id, closed: false };
     }
     if (row === -1) {
@@ -931,6 +976,7 @@ function apiCloseShift_(p) {
     SpreadsheetApp.flush();
     bumpCacheVersion_();
     bumpFeedCacheVersion_();
+    bumpConfigVersion_();            // the Closed_Shifts read (config-versioned) changed
     return { ok: true, id, closed: true };
   } finally {
     lock.releaseLock();
@@ -1621,7 +1667,7 @@ function readGuidesRaw_() {
   // Also cached ACROSS loads: the Guides tab changes rarely (and only via a
   // direct sheet edit, which tolerates <=TTL), so re-reading it on every cold
   // load was pure cost in the me / mgrGuides / weekly-default phases.
-  const raw = cachedRead_('guides', PORTAL.CONFIG_TTL, function () {
+  const raw = cachedReadConfig_('guides', PORTAL.CONFIG_TTL, function () {
     const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
     if (!sh) throw new Error('Guides tab not found');
     const values = sh.getDataRange().getValues();
