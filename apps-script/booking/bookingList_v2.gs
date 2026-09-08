@@ -5004,6 +5004,10 @@ function htmlToText_(html) {
     .replace(/<\/td>/gi, '\n')
     .replace(/<\/th>/gi, '\n')
     .replace(/<\/li>/gi, '\n')
+    .replace(/<\/h[1-6]>/gi, '\n')   // headings must break the line, or a heading like
+                                     // "You have a booking modification" runs straight
+                                     // into the next line ("Walker: …") and an anchored
+                                     // "^Walker" label read misses the name (Guruwalk).
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')

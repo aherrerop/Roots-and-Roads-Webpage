@@ -611,6 +611,26 @@ check('manual "Guru fake" row kept its NAME, note and odd source (untouched)',
 check('the duplicate elsewhere still collapsed, other rows intact',
   man.filter(r=>r[7]==='GYGEEE').length===1 && man.some(r=>r[7]==='BR-9'), man.map(r=>r[7]||r[5]));
 
+console.log('--- Guruwalk modification via HTML: the <h1> heading must not swallow the Walker name ---');
+// The REAL email renders the title as <h1> immediately before "Walker:". Without
+// a line break after </h1>, htmlToText_ joined them ("...modification Walker: Sara")
+// and the anchored ^Walker read returned "" -> name empty -> every block invalid ->
+// dropped -> the move never removed the old code (Sara Dervishi lived on).
+const gwField=(lbl,val,span)=>`<p class="x"><strong class="y">${lbl}</strong> ${span?`<span class="gw-diff">${val}</span>`:`<!-- -->${val}`}</p>`;
+const gwCard=(hdr,code,date,time)=>`<p class="sub">${hdr}</p>`+gwField('GuruWalk:','<a href="u">Barcelona Highlights Free Tour</a>')+gwField('Booking code:',code,true)+gwField('Attendees:','2 adults')+gwField('Language:','Italian')+gwField('Date:',date,true)+gwField('Time:',time,true);
+const gwModHtml='<html><body><div class="gw-desktop-only"><h1 class="t">You have a booking modification on a tour</h1>'
+  +gwField('Walker:','Sara Dervishi')+gwField('Phone:','+39 3484482294')
+  +gwCard('Details of the new booking','BAR12755275','Wednesday, 9 Sep 2026','10:30')
+  +gwCard('Details of the previous booking','BAR12719547','Tuesday, 8 Sep 2026','16:00')
+  +'</div></body></html>';
+const gwModMsg={getId:()=>'gwmod1',getSubject:()=>'Roots & Roads, you have a modification on booking 12719547 on a tour',getPlainBody:()=>'',getBody:()=>gwModHtml,getFrom:()=>'no-reply@guruwalk.com',getTo:()=>'',getCc:()=>''};
+const gwMM=parseModificationMessage_(gwModMsg, RNR.SOURCE.GURUWALK);
+check('the <h1> no longer swallows the name — NEW booking parsed WITH its name',
+  gwMM.newBooking && gwMM.newBooking.name==='Sara Dervishi' && gwMM.newBooking.bookingId==='BAR12755275', gwMM.newBooking);
+check('the PREVIOUS booking is parsed too (so the move can remove the old code)',
+  gwMM.oldBooking && gwMM.oldBooking.bookingId==='BAR12719547' && gwMM.oldBooking.name==='Sara Dervishi', gwMM.oldBooking);
+check('htmlToText_ breaks the line after a heading', /booking modification on a tour\nWalker:/.test(htmlToText_('<h1>You have a booking modification on a tour</h1><p>Walker: X</p>')), htmlToText_('<h1>a</h1><p>b</p>'));
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
