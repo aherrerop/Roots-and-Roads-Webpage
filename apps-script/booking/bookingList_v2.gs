@@ -510,16 +510,19 @@ function runBookingCore_(skipProcessed) {
     //    can't be wrongly cancelled.
     if (runHasTimeLeft_()) processCancellations_();
 
-    // 1b. AUDIT-only recovery, run BEFORE the heavy confirmation re-read so the
-    //     run's time budget can never starve them: apply modifications stuck under
-    //     Done (a move that threaded into the original booking — Anna Erb) and
-    //     drop any row a modification superseded (Sara Dervishi).
+    // 1b. AUDIT-only recovery, run BEFORE the heavy confirmation re-read. The
+    //     audit's time budget (MAX_RUN_MS = 180s) is consumed mostly by
+    //     processConfirmations_ re-reading every confirmation thread, so anything
+    //     placed AFTER it is silently skipped (this is why the superseded-row
+    //     removal never ran — Sara Dervishi stayed). Do the recovery FIRST:
+    //     drop any row a modification superseded (Sara), then apply modifications
+    //     stuck under Done (Anna Erb).
+    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) removeSupersededActiveBookings_();
     if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) processStrayModifications_();
 
     // 2. Confirmations + modifications.
     if (runHasTimeLeft_()) processConfirmations_();
     if (runHasTimeLeft_()) processModifications_();
-    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) removeSupersededActiveBookings_();
 
     // 3. Consistency: relabel any Confirm/Modify thread whose booking id is
     //    now known-cancelled (and not reinstated this run) to Cancel, drop
@@ -1545,6 +1548,24 @@ function processStrayModifications_() {
  * missing from the list, without waiting for the twice-daily audit. Reports how
  * many it recovered; details land in the Errors tab as "RECOVERED …".
  */
+/**
+ * RUN THIS NOW (from the editor) to clean up modification aftermath WITHOUT the
+ * heavy confirmation re-read (so it never runs out of time): removes any active
+ * row a modification superseded (the resurrected old Guruwalk code — Sara
+ * Dervishi) and applies any modification stuck under the Done label (a move that
+ * threaded into the original booking — Anna Erb). Idempotent; safe to re-run.
+ */
+function fixModificationsNow() {
+  RNR_RUN_STARTED_AT_ = Date.now();
+  resetRunCaches_();
+  RNR_SKIP_PROCESSED_ = false;
+  const removed = removeSupersededActiveBookings_();
+  processStrayModifications_();
+  const msg = 'Done. Removed ' + removed + ' superseded row(s) and applied any Done-stuck modifications.';
+  console.log(msg);
+  return msg;
+}
+
 function recoverMissingBookings() {
   RNR_RUN_STARTED_AT_ = Date.now();
   resetRunCaches_();
