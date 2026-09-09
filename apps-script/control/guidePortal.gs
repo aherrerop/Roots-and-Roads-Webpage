@@ -110,6 +110,20 @@ const PORTAL = {
   // not, to keep the auto-refresh cheap).
   SLOW_MS: 6000,
 
+  // ADAPTIVE BACKPRESSURE — detect an execution queue forming and drain it
+  // automatically. Every request runs as the owner and Google serialises those
+  // executions, so N guides polling is what builds a queue; when it does, load
+  // times climb. We keep a smoothed recent-load-time signal (EWMA) and, per band,
+  // tell clients how often to poll: busier -> poll less often -> fewer concurrent
+  // executions -> the queue drains -> back to fast. User actions stay immediate;
+  // only the passive auto-refresh backs off. Level changes are logged so a queue
+  // is never a surprise. (These are smoothed ms thresholds, not single loads.)
+  CONTENTION_BUSY_MS: 4000,
+  CONTENTION_OVER_MS: 9000,
+  POLL_NORMAL_SEC: 30,
+  POLL_BUSY_SEC: 60,
+  POLL_OVER_SEC: 120,
+
   // Seconds the slow, shared cross-file reads (schedule grids, BookingSheet,
   // Completed Log) are cached so the frequent auto-refresh does not re-open
   // those spreadsheets every time. Invalidated immediately on any assignment /
@@ -200,13 +214,24 @@ function doGet(e) {
     const wtim = (out && out.timings) ?
       ' | ' + Object.keys(out.timings).map(function (k) { return k + '=' + out.timings[k] + 'ms'; }).join(' ') : '';
     portalLog_(p.action, ms, !!(out && out.ok), detail + wtim);
-  } else if (p.action === 'tours' && ms > PORTAL.SLOW_MS) {
-    // Reads are not normally logged (the frequent poll would flood the log), but
-    // a SLOW load is exactly what we want to catch — with its per-phase breakdown
-    // (schedule vs booking list vs ledger) so we can see where the time went.
-    const tim = (out && out.timings) ?
-      ' | ' + Object.keys(out.timings).map(function (k) { return k + '=' + out.timings[k] + 'ms'; }).join(' ') : '';
-    portalLog_('tours (slow)', ms, !!(out && out.ok), 'load exceeded ' + PORTAL.SLOW_MS + 'ms' + tim);
+  } else if (p.action === 'tours') {
+    // ADAPTIVE BACKPRESSURE: fold every successful load into the contention signal
+    // and hand the client back how often it should poll (pollHint) + the level. A
+    // forming queue slows the passive refresh automatically; it speeds back up when
+    // load falls. A user action is never throttled (the client only applies the
+    // hint to its background poll).
+    if (out && out.ok) {
+      const sig = recordLoadSignal_(ms);
+      out.pollHint = sig.pollSec;
+      out.loadLevel = sig.level;
+    }
+    // A SLOW load is still logged with its per-phase breakdown so we can see where
+    // the time went (the frequent fast polls are not logged, to keep the log clean).
+    if (ms > PORTAL.SLOW_MS) {
+      const tim = (out && out.timings) ?
+        ' | ' + Object.keys(out.timings).map(function (k) { return k + '=' + out.timings[k] + 'ms'; }).join(' ') : '';
+      portalLog_('tours (slow)', ms, !!(out && out.ok), 'load exceeded ' + PORTAL.SLOW_MS + 'ms' + tim);
+    }
   }
 
   return jsonp_(callback, out);
@@ -351,6 +376,70 @@ function cachedReadConfig_(name, ttlSeconds, fn) {
   return val;
 }
 
+/******************************************************
+ * ADAPTIVE BACKPRESSURE — detect a forming execution queue and drain it.
+ *
+ * Every request runs as the owner, and Apps Script serialises those executions,
+ * so a burst of guides polling builds a queue and CPU-throttles each load (its
+ * time climbs). We keep a smoothed recent-load-time signal (EWMA) in the script
+ * cache and map it to a level + a poll interval. When it's busy we tell clients
+ * to poll LESS often — fewer concurrent executions, the queue drains, and the
+ * level falls back to normal on its own. Level changes are logged, so a queue is
+ * never a surprise. User actions are never throttled; only the passive refresh.
+ ******************************************************/
+
+/** Pure: smoothed load time -> {level, pollSec}. */
+function contentionLevelFor_(ewmaMs) {
+  const m = Number(ewmaMs || 0);
+  if (m >= PORTAL.CONTENTION_OVER_MS) return { level: 'overloaded', pollSec: PORTAL.POLL_OVER_SEC };
+  if (m >= PORTAL.CONTENTION_BUSY_MS) return { level: 'busy',       pollSec: PORTAL.POLL_BUSY_SEC };
+  return { level: 'normal', pollSec: PORTAL.POLL_NORMAL_SEC };
+}
+
+/** Read the current signal WITHOUT updating it (for health / timings views). */
+function readContention_() {
+  try {
+    const raw = CacheService.getScriptCache().get('portal:ewma');
+    if (raw) {
+      const parts = String(raw).split('|');
+      const ewma = Number(parts[0]) || 0;
+      const d = contentionLevelFor_(ewma);
+      return { level: d.level, pollSec: d.pollSec, ewmaMs: ewma };
+    }
+  } catch (e) { /* ignore */ }
+  const d = contentionLevelFor_(0);
+  return { level: d.level, pollSec: d.pollSec, ewmaMs: 0 };
+}
+
+/**
+ * Fold this request's total time into the EWMA, decide the level, and — when the
+ * level CHANGES — log it to the Portal Log so a forming/clearing queue is visible.
+ * Returns {level, pollSec}. Best-effort; a cache miss just treats this load alone.
+ */
+function recordLoadSignal_(ms) {
+  const now = Math.max(0, Number(ms) || 0);
+  let ewma = now, prevLevel = '';
+  try {
+    const cache = CacheService.getScriptCache();
+    const raw = cache.get('portal:ewma');
+    if (raw) {
+      const parts = String(raw).split('|');
+      const prev = Number(parts[0]) || now;
+      prevLevel = parts[1] || '';
+      // Alpha 0.4: responsive to a building queue, not twitchy on a single blip.
+      ewma = Math.round(0.4 * now + 0.6 * prev);
+    }
+    const decided = contentionLevelFor_(ewma);
+    cache.put('portal:ewma', ewma + '|' + decided.level, 600);   // 10-min memory
+    if (prevLevel && prevLevel !== decided.level) {
+      portalLog_('loadLevel', ewma, true, prevLevel + ' -> ' + decided.level + ' (poll ' + decided.pollSec + 's)');
+    }
+    return decided;
+  } catch (e) {
+    return contentionLevelFor_(ewma);
+  }
+}
+
 /** The p-th percentile (0-100) of a numeric array. Nearest-rank, no interpolation. */
 function percentile_(arr, p) {
   const a = (arr || []).filter(x => typeof x === 'number' && !isNaN(x)).slice().sort((x, y) => x - y);
@@ -428,7 +517,7 @@ function apiTimings_(p) {
     return { when: String(r[0]), action: String(r[1]), ms: Number(r[2] || 0),
              result: String(r[3]), detail: String(r[4] || '') };
   });
-  return { ok: true, count: all.length, slowMs: PORTAL.SLOW_MS, stats: stats, recent: recent };
+  return { ok: true, count: all.length, slowMs: PORTAL.SLOW_MS, contention: readContention_(), stats: stats, recent: recent };
 }
 
 function jsonp_(callback, obj) {
@@ -1661,6 +1750,10 @@ function apiHealth_() {
     out.timezoneOk = scriptTz === 'Europe/Madrid';
     if (!out.timezoneOk) { out.ok = false; out.error = 'Script timezone is ' + scriptTz + ', must be Europe/Madrid'; }
   } catch (e) { /* ignore */ }
+  // Live contention: level + smoothed load time + the poll interval clients are
+  // being told to use. 'busy'/'overloaded' means a queue is forming and the portal
+  // is auto-throttling polls to drain it.
+  out.contention = readContention_();
   return out;
 }
 

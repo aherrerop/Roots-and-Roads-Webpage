@@ -78,6 +78,18 @@ bumpConfigVersion_();                                     // a close/reopen or p
 cachedReadConfig_('guides', 300, cffn);
 check('a config change (bumpConfigVersion_) refreshes the config read', cf === 2, cf);
 
+console.log('--- Adaptive backpressure: contention level, EWMA escalation + recovery ---');
+check('fast loads -> normal / 30s poll', contentionLevelFor_(1000).level==='normal' && contentionLevelFor_(1000).pollSec===30, contentionLevelFor_(1000));
+check('at busy threshold -> busy / 60s poll', contentionLevelFor_(4000).level==='busy' && contentionLevelFor_(4000).pollSec===60, contentionLevelFor_(4000));
+check('at overloaded threshold -> overloaded / 120s poll', contentionLevelFor_(9000).level==='overloaded' && contentionLevelFor_(9000).pollSec===120, contentionLevelFor_(9000));
+// A sustained run of slow loads (a queue forming) escalates; then fast loads recover.
+let lvl; recordLoadSignal_(1000);
+for (let i = 0; i < 5; i++) lvl = recordLoadSignal_(20000);
+check('sustained slow loads escalate to overloaded (poll backs off automatically)', lvl.level === 'overloaded' && lvl.pollSec === 120, lvl);
+check('readContention_ reflects the live level', readContention_().level === 'overloaded', readContention_());
+for (let i = 0; i < 8; i++) lvl = recordLoadSignal_(500);
+check('when load falls the level returns to normal (auto-recovery)', lvl.level === 'normal' && lvl.pollSec === 30, lvl);
+
 __mock.removeRealCache();
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');

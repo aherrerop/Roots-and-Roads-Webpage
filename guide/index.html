@@ -143,6 +143,7 @@
   .fresh::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
   .fresh.loading::before{background:var(--amber)}
   .fresh.stale{color:var(--danger)} .fresh.stale::before{background:var(--danger)}
+  .fresh.busy{color:var(--amber)} .fresh.busy::before{background:var(--amber)}
   .loadmore{display:block;width:100%;padding:12px;margin:6px 0 20px;border:1px dashed #c3ccdb;border-radius:12px;background:#f4f7ff;color:#2547a0;font-weight:800;font-size:14px;cursor:pointer}
   .loadmore:disabled{opacity:.6;cursor:default}
 </style>
@@ -182,7 +183,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-08-resilient-poll";
+const PORTAL_VERSION = "2026-09-09-adaptive-backpressure";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -481,15 +482,22 @@ function canAutoRefresh(){
   return true;
 }
 function startAutoRefresh(){
-  if(window._rrRefresh) return;
-  // Poll every 30s. Every request runs as the owner and Google serializes those
-  // executions, so N guides polling is the main source of the queue contention
-  // that throttles loads; a 30s poll (vs 20s) cuts that request rate by a third.
-  // A co-guide's check-in still shows within ~30s, and the person who MADE a change
-  // sees it immediately (optimistic overlay + post-action reconcile) — so the
-  // slower poll costs no freshness to the actor. The inflight guard still drops any
-  // poll that would overlap a running load.
-  window._rrRefresh = setInterval(()=>{ ckFlush(); if(canAutoRefresh()) loadTours("poll"); }, 30000);
+  if(window._rrPollTimer || window._rrVerCheck) return;
+  // ADAPTIVE poll. Base 30s, but the SERVER tells us how often to poll via
+  // r.pollHint (30/60/120s) when it detects an execution queue forming — every
+  // request runs as the owner and Google serializes them, so N guides polling is
+  // what builds the queue. Backing the passive refresh off when it's busy drains
+  // the queue automatically, then it speeds back up. A co-guide's change still
+  // shows within one interval, and the person who MADE a change sees it instantly
+  // (optimistic overlay + post-action reconcile), so the actor loses no freshness.
+  // Self-rescheduling timeout (not setInterval) so the interval can change live;
+  // the inflight guard still drops any poll that would overlap a running load.
+  function scheduleNextPoll(){
+    if(window._rrPollTimer) clearTimeout(window._rrPollTimer);
+    window._rrPollTimer = setTimeout(()=>{ ckFlush(); if(canAutoRefresh()) loadTours("poll"); scheduleNextPoll(); }, POLL_MS);
+  }
+  scheduleNextPoll();
+  window._rrReschedulePoll = scheduleNextPoll;   // loadTours calls this when pollHint changes
   // Check for a newer deployed build every 2 min and when the tab regains focus.
   window._rrVerCheck = setInterval(checkForUpdate, 120000);
   document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours("focus"); } });
@@ -505,6 +513,8 @@ function startAutoRefresh(){
 // look like they "didn't stick, then kicked in later".
 let LOAD_SEQ = 0;
 let LOADING = false;   // one tours request at a time — never let polls pile up
+let POLL_MS = 30000;   // passive-refresh interval; the server adjusts it via r.pollHint under load
+let LOAD_LEVEL = "normal";  // server-reported contention level (normal/busy/overloaded)
 async function loadTours(nav){
   // A tours load can take several seconds. The 20s poll (and focus/visibility
   // events) must NOT start a second one while the first is still running, or
@@ -528,9 +538,33 @@ async function loadTours(nav){
   // see real completed-load times (vs the aborts/timeouts reported below).
   if(LOAD_FAILS>0 || LOAD_NAV==="initial") beacon("ok", took, LOAD_NAV);
   LOAD_FAILS=0;
+  // ADAPTIVE BACKPRESSURE: adopt the poll interval the server asked for. When it
+  // detects a queue forming it raises pollHint (60/120s); we back off, which drains
+  // the queue, and it drops back to 30s. Clamped so a bad value can't wedge us.
+  if(r.pollHint){
+    const next=Math.max(20000, Math.min(180000, Number(r.pollHint)*1000));
+    if(next!==POLL_MS){ POLL_MS=next; if(window._rrReschedulePoll) window._rrReschedulePoll(); }
+  }
+  if(r.loadLevel) LOAD_LEVEL=r.loadLevel;
   setFresh("ok", r.now);
+  reflectLoadLevel();          // after setFresh, which rewrites the line
   store.cache=r;
   renderAll(r);
+}
+/* A quiet, honest indicator when the server is under load and has slowed the
+   passive refresh — so a busy period is visible, never a silent mystery. It never
+   blocks anything; your own actions stay immediate. */
+function reflectLoadLevel(){
+  try{
+    const el=$("fresh"); if(!el) return;
+    if(LOAD_LEVEL!=="normal"){
+      el.classList.add("busy");
+      const note = LOAD_LEVEL==="overloaded" ? " · server busy — refreshing less often" : " · busier than usual";
+      if(!/·\s(server busy|busier)/.test(el.textContent)) el.textContent += note;
+    } else {
+      el.classList.remove("busy");
+    }
+  }catch(e){}
 }
 /* One miss shouldn't slap "Can't reach the server" over good data — a mobile
    blip or a single slow response is normal. Keep the last list, retry quietly in

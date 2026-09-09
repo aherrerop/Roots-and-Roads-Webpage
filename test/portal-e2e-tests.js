@@ -10,6 +10,23 @@
 let pass = 0, fail = 0;
 const check = (l, c, g) => { if (c) { pass++; console.log('PASS  ' + l); } else { fail++; console.log('FAIL  ' + l + '  (got: ' + JSON.stringify(g) + ')'); } };
 
+// DETERMINISTIC CLOCK: this suite seeds "today" tours (e.g. a 10:00 AM tour) and
+// checks they surface. Left to the real wall clock the suite passed in the morning
+// but FAILED every afternoon, because a 10:00 tour is legitimately "over" by then
+// and the portal correctly hides it. Freeze "now" to today at 08:00 so upcoming-
+// today tours are always upcoming — the suite is time-of-day independent. Only the
+// no-arg `new Date()`/`Date.now()` are frozen; every explicit date still parses.
+(function () {
+  const RealDate = Date;
+  const FIXED = (function () { const d = new RealDate(); d.setHours(8, 0, 0, 0); return d.getTime(); })();
+  function FakeDate(...a) { return a.length ? new RealDate(...a) : new RealDate(FIXED); }
+  FakeDate.now = () => FIXED;
+  FakeDate.parse = RealDate.parse; FakeDate.UTC = RealDate.UTC;
+  FakeDate.prototype = RealDate.prototype;
+  // eslint-disable-next-line no-global-assign
+  Date = FakeDate;
+})();
+
 const BOOK_ID = '1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw';
 const dayKey = o => { const d = new Date(); d.setDate(d.getDate() + o); return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd'); };
 

@@ -120,7 +120,11 @@ check('api() retries once on a transient drop but NOT on auth or timeout', /asyn
 check('a timeout does NOT fall back to JSONP (no second server execution)', /if\(timedOut \|\| \(err && \(err\.name==="AbortError" \|\| err\.kind==="timeout"\)\)\)\s*throw mkErr\("timeout"/.test(html), null);
 check('a timeout skips the quiet fast-retry (waits for the next poll)', /LOAD_FAILS < 2 && !\(err && err\.kind==="timeout"\)/.test(html), null);
 check('the fetch + JSONP load timeout is 60s (a slow-but-alive load finishes)', /setTimeout\(\(\)=>\{ timedOut=true; ctrl\.abort\(\); \}, 60000\)/.test(html) && /reject\(mkErr\("timeout","TIMEOUT"\)\);\} \}, 60000\)/.test(html), null);
-check('the auto-refresh poll is 30s (fewer serialized executions)', /if\(canAutoRefresh\(\)\) loadTours\("poll"\); \}, 30000\)/.test(html), null);
+check('the auto-refresh poll base is 30s (fewer serialized executions)', /POLL_MS = 30000;/.test(html), null);
+check('the passive poll is adaptive (self-rescheduling on POLL_MS)', /setTimeout\(\(\)=>\{ ckFlush\(\); if\(canAutoRefresh\(\)\) loadTours\("poll"\); scheduleNextPoll\(\); \}, POLL_MS\)/.test(html), null);
+check('the client adopts the server pollHint (backpressure) and reschedules', /if\(r\.pollHint\)\{[\s\S]*?POLL_MS=next; if\(window\._rrReschedulePoll\) window\._rrReschedulePoll\(\)/.test(html), null);
+check('pollHint is clamped so a bad value cannot wedge the poll', /Math\.max\(20000, Math\.min\(180000, Number\(r\.pollHint\)\*1000\)\)/.test(html), null);
+check('a busy server is shown honestly (load-level indicator)', /function reflectLoadLevel\(\)/.test(html) && /\.fresh\.busy/.test(html), null);
 check('a move reconciles with loadTours whether it succeeds OR fails', /\.mvbox[\s\S]*?loadTours\(\);\s+\/\/ reconcile either way/.test(html), null);
 check('one Move applies BOTH language and time in a single call', /api\("move",\{[\s\S]*?toLanguage:toLanguage,[\s\S]*?toTime: timeChange/.test(html), null);
 check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime && \(!dateSel \|\| dateSel\.value===info\.fromDate\)\)/.test(html), null);
