@@ -281,6 +281,24 @@ check('the private check-in does NOT wipe the regular one at the same slot',
   carLedger.some(r => String(r[LEDGER_BOOKINGID_COL]) === 'REG1') && carLedger.some(r => String(r[LEDGER_BOOKINGID_COL]) === 'PRIV1'),
   carLedger.map(r => r[LEDGER_BOOKINGID_COL]).filter(Boolean));
 
+console.log('--- Data retention (GDPR): clears OLD guest name+phone, keeps recent + counts ---');
+const drs = control.insertSheet('DR_Test');
+drs.getRange(1, 1, 3, 4).setValues([
+  ['Name', 'Phone', 'Guests', 'Tour date'],
+  ['Old Guest', '+34600000001', 2, '2023-01-15'],   // > 12 months ago -> should clear
+  ['Recent Guest', '+34600000002', 3, dayKey(-5)]]); // 5 days ago -> should keep
+const drCut = dataRetentionCutoffKey_();
+const drDry = purgeSheetPII_(drs, 3, [0, 1], drCut, true);
+check('dry run flags exactly the 1 old record', drDry === 1, drDry);
+check('dry run changes NOTHING (old name still present)', drs.getRange(2, 1).getValue() === 'Old Guest', drs.getRange(2, 1).getValue());
+const drPurge = purgeSheetPII_(drs, 3, [0, 1], drCut, false);
+check('purge clears exactly the 1 old record', drPurge === 1, drPurge);
+check('old guest NAME is cleared', drs.getRange(2, 1).getValue() === '', drs.getRange(2, 1).getValue());
+check('old guest PHONE is cleared', drs.getRange(2, 2).getValue() === '', drs.getRange(2, 2).getValue());
+check('old row KEEPS its anonymized count (2)', Number(drs.getRange(2, 3).getValue()) === 2, drs.getRange(2, 3).getValue());
+check('recent guest is UNTOUCHED', drs.getRange(3, 1).getValue() === 'Recent Guest', drs.getRange(3, 1).getValue());
+check('a second purge is a no-op (idempotent)', purgeSheetPII_(drs, 3, [0, 1], drCut, false) === 0, null);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

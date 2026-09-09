@@ -124,6 +124,14 @@ const PORTAL = {
   POLL_BUSY_SEC: 60,
   POLL_OVER_SEC: 120,
 
+  // DATA RETENTION (GDPR): after this many months, guest name + phone are blanked
+  // from the booking language tabs and the guide ledger — the row (and its
+  // anonymized counts/money) is KEPT, only the two personal fields are cleared.
+  // The Done tab already stores no name/phone. Run runDataRetentionDryRun() to see
+  // what WOULD be cleared; runDataRetentionPurge() to clear it. Nothing auto-runs
+  // until a manager installs the monthly trigger (installDataRetentionTrigger_()).
+  DATA_RETENTION_MONTHS: 12,
+
   // Seconds the slow, shared cross-file reads (schedule grids, BookingSheet,
   // Completed Log) are cached so the frequent auto-refresh does not re-open
   // those spreadsheets every time. Invalidated immediately on any assignment /
@@ -438,6 +446,133 @@ function recordLoadSignal_(ms) {
   } catch (e) {
     return contentionLevelFor_(ewma);
   }
+}
+
+/******************************************************
+ * DATA RETENTION (GDPR) — after PORTAL.DATA_RETENTION_MONTHS, clear guest NAME +
+ * PHONE from the booking language tabs and the guide ledger. The row and its
+ * anonymized data (counts, money, dates) are KEPT; only the two personal fields
+ * are blanked. The Done tab already stores no name/phone. Guest PII in Gmail is
+ * NOT touched here (a separate decision). Dry-run by default; nothing auto-runs
+ * until a manager installs the monthly trigger.
+ *   runDataRetentionDryRun()  -> report only, changes nothing
+ *   runDataRetentionPurge()   -> actually clears
+ *   installDataRetentionTrigger_() / removeDataRetentionTrigger_()
+ ******************************************************/
+
+/** "yyyy-MM-dd" this many months ago (records strictly older than this are cleared). */
+function dataRetentionCutoffKey_(months) {
+  const m = Number(months || PORTAL.DATA_RETENTION_MONTHS) || 12;
+  const d = new Date(); d.setMonth(d.getMonth() - m);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+/**
+ * Blank the given PII columns on rows whose date is older than the cutoff, keeping
+ * the row. Batched: one read + one write per PII column (only on a real purge).
+ * Returns how many rows had PII cleared (or would be, on a dry run).
+ */
+function purgeSheetPII_(sh, dateCol0, piiCols0, cutoffKey, dryRun) {
+  if (!sh || sh.getLastRow() < 2) return 0;
+  const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+  if (lastCol <= Math.max(dateCol0, Math.max.apply(null, piiCols0))) return 0;
+  const vals = sh.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const rows = [];
+  for (let i = 0; i < vals.length; i++) {
+    const dk = toDateKey_(vals[i][dateCol0]);
+    if (!dk || dk >= cutoffKey) continue;                                  // recent or unparseable -> keep
+    if (!piiCols0.some(c => String(vals[i][c] || '').trim() !== '')) continue;  // already anonymized
+    rows.push(i);
+  }
+  if (!dryRun && rows.length) {
+    piiCols0.forEach(c => {
+      const col = sh.getRange(2, c + 1, lastRow - 1, 1).getValues();
+      rows.forEach(i => { col[i][0] = ''; });
+      sh.getRange(2, c + 1, lastRow - 1, 1).setValues(col);
+    });
+  }
+  return rows.length;
+}
+
+function runDataRetentionDryRun() { return dataRetentionRun_(true); }
+function runDataRetentionPurge() { return dataRetentionRun_(false); }
+
+function dataRetentionRun_(dryRun) {
+  const cutoff = dataRetentionCutoffKey_();
+  const report = [];
+  let total = 0;
+
+  // 1) BookingSheet language tabs ("English Tours", …): Name(A)+Phone(B), Tour date(D).
+  //    These normally hold only UPCOMING tours (completed ones move to the
+  //    name/phone-free Done tab), so this mainly catches stale/stuck rows.
+  try {
+    bookingSS_().getSheets().forEach(sh => {
+      const name = sh.getName();
+      if (name.indexOf(PORTAL.BOOKING_TAB_SUFFIX) === -1 || /^done\b/i.test(name)) return;
+      const n = purgeSheetPII_(sh, 3, [0, 1], cutoff, dryRun);
+      if (n) { report.push('BookingSheet · ' + name + ': ' + n); total += n; }
+    });
+  } catch (e) { report.push('BookingSheet: read failed -> ' + e); }
+
+  // 2) Guide ledger tabs (one per guide): Booking-name(E)+Phone(F), Date(A). This
+  //    is the durable store of guest PII (check-in history kept for money records).
+  try {
+    const skip = { 'Rates': true, 'Unassigned': true };
+    try { Object.keys(QUEUE_TABS).forEach(k => { skip[QUEUE_TABS[k]] = true; }); } catch (e) {}
+    ledgerSS_().getSheets().forEach(sh => {
+      const name = sh.getName();
+      if (skip[name]) return;
+      const header = sh.getLastColumn() ? sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String) : [];
+      if (header[0] !== 'Date' || header[4] !== 'Booking' || header[5] !== 'Phone') return;   // not a guide ledger tab
+      const n = purgeSheetPII_(sh, 0, [4, 5], cutoff, dryRun);
+      if (n) { report.push('Ledger · ' + name + ': ' + n); total += n; }
+    });
+  } catch (e) { report.push('Ledger: read failed -> ' + e); }
+
+  writeDataRetentionReport_(dryRun, cutoff, total, report);
+  console.log('Data retention (' + (dryRun ? 'DRY RUN' : 'PURGE') + '): ' + (dryRun ? 'WOULD clear' : 'cleared') +
+    ' name+phone on ' + total + ' record(s) older than ' + cutoff + (report.length ? '\n  ' + report.join('\n  ') : ''));
+  return { ok: true, dryRun: dryRun, cutoffDate: cutoff, records: total, byTab: report };
+}
+
+/** Human-readable report on the control sheet's "Data Retention" tab. */
+function writeDataRetentionReport_(dryRun, cutoff, total, report) {
+  try {
+    const ss = control_();
+    const sh = ss.getSheetByName('Data Retention') || ss.insertSheet('Data Retention');
+    const rows = [
+      ['Last run', Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss')],
+      ['Mode', dryRun ? 'DRY RUN — nothing was changed' : 'PURGE — name + phone were cleared'],
+      ['Retention period', PORTAL.DATA_RETENTION_MONTHS + ' months'],
+      ['Cutoff (records older than this date are cleared)', cutoff],
+      ['Records ' + (dryRun ? 'that WOULD be cleared' : 'cleared'), String(total)],
+      ['By tab', report.length ? report.join('\n') : 'none'],
+      ['', ''],
+      ['How to use', 'runDataRetentionDryRun() shows what would be cleared (safe). ' +
+        'runDataRetentionPurge() clears guest name+phone on records older than the cutoff, keeping ' +
+        'counts + money. installDataRetentionTrigger_() turns on the monthly auto-purge; ' +
+        'removeDataRetentionTrigger_() turns it off. Gmail confirmation emails are NOT touched here.']
+    ];
+    sh.clear();
+    sh.getRange(1, 2, rows.length, 1).setNumberFormat('@');
+    sh.getRange(1, 1, rows.length, 2).setValues(rows);
+    sh.getRange(1, 1, rows.length, 1).setFontWeight('bold');
+    sh.setColumnWidth(1, 340); sh.setColumnWidth(2, 560);
+  } catch (e) { console.log('writeDataRetentionReport_: ' + e); }
+}
+
+/** Enable the monthly auto-purge (a manager runs this ONCE; nothing auto-runs otherwise). */
+function installDataRetentionTrigger_() {
+  removeDataRetentionTrigger_();
+  ScriptApp.newTrigger('runDataRetentionPurge').timeBased().onMonthDay(1).atHour(4).create();
+  return 'Data-retention monthly auto-purge INSTALLED (day 1, ~04:00 Madrid).';
+}
+function removeDataRetentionTrigger_() {
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'runDataRetentionPurge') { try { ScriptApp.deleteTrigger(t); n++; } catch (e) {} }
+  });
+  return 'Removed ' + n + ' data-retention trigger(s).';
 }
 
 /** The p-th percentile (0-100) of a numeric array. Nearest-rank, no interpolation. */
