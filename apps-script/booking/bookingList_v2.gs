@@ -4300,10 +4300,38 @@ function debugWhereIsBooking() {
  * Extract every GYG field from the (subject + body) text in one place, so the
  * confirmation parser and the modification handler stay in sync.
  */
+/**
+ * GYG booking reference, tolerant to a code-format change. First by SHAPE (the
+ * GYG… code), then whatever the "Reference number" label points at (so even a new
+ * code prefix still resolves), and only as a last resort the shared S-order number
+ * — which is NOT unique per booking, so it is used solely to avoid an empty id.
+ */
+function gygBookingId_(text) {
+  const byShape = extractFirst_(text, [/\b(GYG[A-Z0-9]{5,})\b/i]);
+  if (byShape) return byShape;
+  const labeled = valueAfterLabel_(text, [
+    /^N[uú]mero de referencia\b/i, /^Reference number\b/i, /^Booking reference\b/i,
+    /^Referenznummer\b/i, /^Numero di riferimento\b/i, /^Num[eé]ro de r[eé]f[eé]rence\b/i,
+    /^Referencia\b/i, /^Reference\b/i
+  ]);
+  const fromLabel = extractFirst_(labeled, [/\b([A-Z]{2,}[A-Z0-9]{3,})\b/, /\b([A-Z0-9][A-Z0-9-]{4,})\b/i]);
+  if (fromLabel) return fromLabel;
+  return extractFirst_(text, [/\b(S\d{5,})\b/i]);
+}
+
 function gygFields_(text) {
   return {
-    bookingId: extractFirst_(text, [/\b(GYG[A-Z0-9]{5,})\b/i, /\b(S\d{5,})\b/i]),
-    name: cleanPersonName_(valueAfterLabel_(text, [/^Cliente principal\b/i, /^Lead customer\b/i, /^Main customer\b/i])),
+    bookingId: gygBookingId_(text),
+    name: cleanPersonName_(valueAfterLabel_(text, [
+      // "Main customer" across the languages GYG may send in, plus safe generic
+      // variants. Order matters only for readability — valueAfterLabel_ takes the
+      // first that matches. A relabel in one language still resolves via another.
+      /^Cliente principal\b/i, /^Cliente principale\b/i, /^Client principal\b/i,
+      /^Lead customer\b/i, /^Main customer\b/i, /^Primary customer\b/i,
+      /^Hauptkunde\b/i, /^Hauptbucher\b/i, /^Hauptbucher:in\b/i,
+      /^Nombre del cliente\b/i, /^Customer name\b/i, /^Name des Kunden\b/i,
+      /^Nome del cliente\b/i, /^Nom du client\b/i
+    ])),
     phone: extractFirst_(text, [
       /Tel[eé]fono:\s*([+\d][+\d\s().-]*)/i,
       /Phone(?:\s*number)?:\s*([+\d][+\d\s().-]*)/i,

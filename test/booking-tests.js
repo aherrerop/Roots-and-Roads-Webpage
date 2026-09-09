@@ -118,6 +118,29 @@ if (typeof flagUnprocessedConfirmation_==='function'){
   check('unregisterable confirmation is marked UNREAD (the signal, not an email)', unread===true, unread);
 }
 
+console.log('--- Parser flexibility: id survives a code-format change; name via other labels ---');
+// If GYG changes the reference code prefix, the id still resolves via the
+// "Reference number" label (not just the GYG… shape).
+const gygNewCode=[
+  'Hi Supply Partner, great news! Your offer has been booked:',
+  'Barcelona Ultimate Tour English Tour',
+  'Reference number ZZ9Q7ABCD',
+  'Date September 10, 2026, 5:00 PM',
+  'Main customer', 'Kwan Chan', 'Phone: +34600000000', 'Language: English',
+  'Tour language English (Live tour guide)',
+  'Number of participants', '1 x Adult (Age 14 - 99)', 'Price € 18.00'
+].join('\n');
+const gnc=parseGygMessage_(makeFakeMsg_('Booking - S779080 - ZZ9Q7ABCD', gygNewCode),'confirm');
+check('id via "Reference number" label (code-format change tolerated)', gnc && gnc.bookingId==='ZZ9Q7ABCD', gnc && gnc.bookingId);
+check('booking still valid after a code-format change', gnc && isValidBooking_(gnc), gnc);
+// Name via a different label variant (localised template).
+const gygAltName=gygNewCode.replace('Main customer\nKwan Chan','Nombre del cliente\nMaria López');
+const gan=parseGygMessage_(makeFakeMsg_('Booking - S779080 - ZZ9Q7ABCE', gygAltName.replace('ZZ9Q7ABCD','ZZ9Q7ABCE')),'confirm');
+check('name via "Nombre del cliente" label', gan && gan.name==='Maria López', gan && gan.name);
+// Unit: gygBookingId_ prefers the GYG… shape, else the labelled reference.
+check('gygBookingId_ prefers the GYG… shape', gygBookingId_('foo Reference number ZZ9Q7ABCD bar GYGKBF5Q9ZB7')==='GYGKBF5Q9ZB7', null);
+check('gygBookingId_ falls back to the labelled reference', gygBookingId_('Reference number ZZ9Q7ABCD\nDate September 1, 2026 10:00 AM')==='ZZ9Q7ABCD', gygBookingId_('Reference number ZZ9Q7ABCD'));
+
 console.log('--- Website availability + capacity (Italian / French) ---');
 const controlSS=new __mock.MockSS(WEBSITE_CONTROL_SPREADSHEET_ID);
 __mock.SS_BY_ID[WEBSITE_CONTROL_SPREADSHEET_ID]=controlSS;
