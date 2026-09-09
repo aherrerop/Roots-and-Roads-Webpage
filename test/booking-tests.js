@@ -106,13 +106,16 @@ console.log('--- Email-format tolerance: minor GYG date drift must NOT break par
     b && isValidBooking_(b) && dateKey_(b.date)==='2026-09-10' && b.time==='5:00 PM',
     b && {date:b.date, time:b.time, valid:b&&isValidBooking_(b)});
 });
-// A confirmation the parser CANNOT handle is recorded for the throttled alert +
-// left unprocessed (never silently swallowed).
-if (typeof recordConfirmFailure_==='function'){
+// A confirmation the parser CANNOT handle is COUNTED and marked UNREAD (no email,
+// never silently swallowed). The unread email is the "what wasn't processed" signal.
+if (typeof flagUnprocessedConfirmation_==='function'){
   RNR_RUN_STATS_ = { processed:0, upserts:0, errors:0, confirmFailures:[] };
-  recordConfirmFailure_('Publishing Pages/GetYourGuide/Confirmations','Booking - S779080 - GYGBROKEN');
-  check('a failed confirmation is recorded for the real-time alert',
-    RNR_RUN_STATS_.confirmFailures.length===1, RNR_RUN_STATS_.confirmFailures);
+  let unread=false;
+  const fakeThread={ getFirstMessageSubject:()=>'Booking - S779080 - GYGBROKEN',
+                     markUnread:()=>{unread=true;}, markRead:()=>{unread=false;} };
+  flagUnprocessedConfirmation_(fakeThread,'Publishing Pages/GetYourGuide/Confirmations');
+  check('unregisterable confirmation is COUNTED (shown on Status tab)', RNR_RUN_STATS_.confirmFailures.length===1, RNR_RUN_STATS_.confirmFailures);
+  check('unregisterable confirmation is marked UNREAD (the signal, not an email)', unread===true, unread);
 }
 
 console.log('--- Website availability + capacity (Italian / French) ---');

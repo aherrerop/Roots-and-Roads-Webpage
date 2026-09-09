@@ -267,10 +267,10 @@ const RNR = {
 
   MAX_RUN_MS: 180000,
 
-  // Throttle for the real-time "a confirmation could not be registered" email
-  // alert, so a persistent parse break pings management once an hour, not every
-  // 5-minute run.
-  PARSE_ALERT_THROTTLE_MS: 3600000,
+  // When the fast run can't register a confirmation it escalates to the audit,
+  // but no more than once per this window (so a persistent parser gap doesn't
+  // launch an audit every 5 minutes). No emails are ever sent.
+  AUDIT_TRIGGER_THROTTLE_MS: 1800000,   // 30 min
 
   /* ============================================================
    * COMMISSIONS / INCOME MODEL  — edit these numbers only.
@@ -606,7 +606,13 @@ function runBookingCore_(skipProcessed) {
 
   } finally {
     pruneResolvedErrors_();   // drop Errors rows for emails we resolved this run
-    sendConfirmFailureAlert_();  // email management (throttled) if a confirmation could not be registered
+    // If the FAST run met confirmations it could not register, escalate to the
+    // fuller audit re-read (more permissive parse + reconcile) — soon, not inline,
+    // so it doesn't fight this run's lock. No email is ever sent: the signal is the
+    // UNREAD confirmation(s) left in the inbox + the count on the Status tab.
+    if (RNR_SKIP_PROCESSED_ && RNR_RUN_STATS_ && (RNR_RUN_STATS_.confirmFailures || []).length) {
+      triggerAuditSoon_();
+    }
     writeRunStatus_(skipProcessed ? 'fast (5-min)' : 'audit (full re-read)');
     lock.releaseLock();
   }
@@ -622,6 +628,7 @@ function writeRunStatus_(mode) {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     let sh = ss.getSheetByName('Status');
     if (!sh) sh = ss.insertSheet('Status');
+    const confFails = (RNR_RUN_STATS_.confirmFailures || []);
     const rows = [
       ['Last run finished', Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss')],
       ['Mode', mode],
@@ -629,11 +636,17 @@ function writeRunStatus_(mode) {
       ['Threads marked Processed this run', RNR_RUN_STATS_.processed],
       ['Booking rows written/updated this run', RNR_RUN_STATS_.upserts],
       ['Errors logged this run', RNR_RUN_STATS_.errors],
+      // The one number that means "a booking may be missing right now". >0 => go to
+      // the inbox: the offending confirmations are left UNREAD. Listed below too.
+      ['Confirmations NOT registered this run', confFails.length],
+      ['Which ones (left UNREAD in the inbox)', confFails.length ? confFails.join('  |  ') : '—'],
       ['', ''],
       ['How to read this', 'This tab refreshes after every run (every 5 min + audits). ' +
         'If "Last run finished" is more than ~10 minutes old, the trigger is not running: ' +
-        'open Apps Script > Triggers and > Executions. Error details: Errors tab. ' +
-        'Full diagnosis: run systemStatus() in the editor.']
+        'open Apps Script > Triggers and > Executions. ' +
+        'If "Confirmations NOT registered" is >0, those emails are UNREAD in the inbox and their ' +
+        'bookings are NOT on the sheet — a parser needs fixing; the audit is auto-triggered to retry. ' +
+        'Error details: Errors tab. Full diagnosis: run systemStatus() in the editor.']
     ];
     sh.clear();
     // Column B as TEXT first: otherwise Sheets turns the timestamp into a Date
@@ -1391,7 +1404,7 @@ function processConfirmationLabel_(labelName, source) {
         // parser is fixed. Maxim: cannot miss a booking.
         logError_('Confirmation parse failed (no booking found)',
           'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
-        recordConfirmFailure_(labelName, thread.getFirstMessageSubject());
+        flagUnprocessedConfirmation_(thread, labelName);   // count + mark UNREAD (no email)
         continue;
       }
 
@@ -1425,7 +1438,7 @@ function processConfirmationLabel_(labelName, source) {
         // label for hours. Maxim: cannot miss a booking.
         logError_('Confirmation NOT registered (no valid booking) — left unprocessed',
           'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
-        recordConfirmFailure_(labelName, thread.getFirstMessageSubject());
+        flagUnprocessedConfirmation_(thread, labelName);   // count + mark UNREAD (no email)
         continue;   // do NOT mark Processed — the label would be a lie
       }
 
@@ -5122,47 +5135,63 @@ function safeString_(v) {
 
 
 /**
- * Remember a confirmation that arrived but could not be turned into a booking
- * (parse failed, or parsed only invalid bookings — e.g. an OTA changed its email
- * format). Collected during the run; sendConfirmFailureAlert_ emails a throttled
- * summary at the end. This is the "you find out in minutes, not by accident"
- * guardrail — a booking that can't be registered is the most dangerous silent
- * failure (a slot looks empty, so a real reservation is invisible).
+ * A confirmation the processing code READ but could NOT turn into a booking
+ * (parse failed, or only invalid bookings — e.g. an OTA changed its email format).
+ * This is the most dangerous silent failure: the reservation is not on the sheet
+ * or in the portal, so a slot looks empty and a real booking is invisible.
+ *
+ * We do NOT email anyone. Instead:
+ *   1. COUNT it (RNR_RUN_STATS_.confirmFailures) -> shown on the Status tab.
+ *   2. Mark the email UNREAD, every run, so it stands out in the inbox until a
+ *      human fixes the parser. If someone reads it, the next run marks it unread
+ *      again (the thread is never Processed, so it is re-seen every run).
+ * The unread confirmations ARE the "what has not been processed" signal.
  */
-function recordConfirmFailure_(labelName, subject) {
+function flagUnprocessedConfirmation_(thread, labelName) {
   try {
-    if (!RNR_RUN_STATS_) return;
-    if (!RNR_RUN_STATS_.confirmFailures) RNR_RUN_STATS_.confirmFailures = [];
-    RNR_RUN_STATS_.confirmFailures.push(String(labelName || '') + ' — ' + String(subject || '(no subject)'));
-  } catch (e) { /* never let telemetry break the run */ }
+    if (RNR_RUN_STATS_) {
+      if (!RNR_RUN_STATS_.confirmFailures) RNR_RUN_STATS_.confirmFailures = [];
+      let subject = '';
+      try { subject = thread && thread.getFirstMessageSubject() ? thread.getFirstMessageSubject() : ''; } catch (e) {}
+      RNR_RUN_STATS_.confirmFailures.push(String(labelName || '') + ' — ' + (subject || '(no subject)'));
+    }
+    safeMarkUnread_(thread);   // the durable, no-email signal
+  } catch (e) { /* never let flagging break the run */ }
 }
 
 /**
- * Email management when confirmations could not be registered this run, throttled
- * to once per PARSE_ALERT_THROTTLE_MS so a persistent break pings ~hourly, not
- * every 5 minutes. Best-effort: an email hiccup must never break the run.
+ * Escalate to the audit soon (not inline — the current run holds the script lock)
+ * when the fast run couldn't register a confirmation, so the fuller, more
+ * permissive re-read gets an immediate chance instead of waiting for the next
+ * scheduled audit. Throttled, and old one-off triggers are cleared first so they
+ * can't pile up to Apps Script's trigger limit (one-off triggers don't self-delete).
  */
-function sendConfirmFailureAlert_() {
+function triggerAuditSoon_() {
   try {
-    const fails = (RNR_RUN_STATS_ && RNR_RUN_STATS_.confirmFailures) || [];
-    if (!fails.length) return;
     const props = PropertiesService.getScriptProperties();
-    const last = Number(props.getProperty('RNR_LAST_PARSE_ALERT') || 0);
-    if (Date.now() - last < RNR.PARSE_ALERT_THROTTLE_MS) return;   // throttled
+    const last = Number(props.getProperty('RNR_LAST_AUDIT_TRIGGER') || 0);
+    if (Date.now() - last < RNR.AUDIT_TRIGGER_THROTTLE_MS) return;
+    ScriptApp.getProjectTriggers().forEach(t => {
+      if (t.getHandlerFunction() === 'runBookingAuditOneShot_') {
+        try { ScriptApp.deleteTrigger(t); } catch (e) {}
+      }
+    });
+    ScriptApp.newTrigger('runBookingAuditOneShot_').timeBased().after(60 * 1000).create();
+    props.setProperty('RNR_LAST_AUDIT_TRIGGER', String(Date.now()));
+  } catch (e) { console.log('triggerAuditSoon_: ' + e); }
+}
 
-    const uniq = Array.from(new Set(fails));
-    const subject = '⚠️ Roots & Roads: ' + uniq.length + ' confirmation(s) could NOT be registered';
-    const body =
-      'The booking system received confirmation emails it could not turn into bookings.\n' +
-      'These reservations are NOT on the sheet or in the portal yet — a slot may look empty, so\n' +
-      'do not move/close a tour assuming it is alone until this is resolved.\n\n' +
-      'Most likely an OTA changed its email format (a parser needs updating).\n\n' +
-      'Affected (label — subject):\n  ' + uniq.join('\n  ') + '\n\n' +
-      'The emails are kept UNprocessed and retried every run, so they self-heal once the parser\n' +
-      'is fixed. Details: the Errors tab of the booking sheet. This alert is throttled to once/hour.';
-    MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject, body });
-    props.setProperty('RNR_LAST_PARSE_ALERT', String(Date.now()));
-  } catch (e) { console.log('sendConfirmFailureAlert_: ' + e); }
+/** Fired ~1 min after a fast run that hit an unregistered confirmation. Deletes
+ *  its own one-off trigger (they are not auto-removed), then runs the full audit. */
+function runBookingAuditOneShot_() {
+  try {
+    ScriptApp.getProjectTriggers().forEach(t => {
+      if (t.getHandlerFunction() === 'runBookingAuditOneShot_') {
+        try { ScriptApp.deleteTrigger(t); } catch (e) {}
+      }
+    });
+  } catch (e) { /* ignore */ }
+  runBookingAudit();
 }
 
 function logError_(type, err, rawData) {
