@@ -111,11 +111,15 @@ console.log('--- Email-format tolerance: minor GYG date drift must NOT break par
 if (typeof flagUnprocessedConfirmation_==='function'){
   RNR_RUN_STATS_ = { processed:0, upserts:0, errors:0, confirmFailures:[] };
   let unread=false;
+  const twoHoursAgo=new Date(Date.now()-2*3600000);
   const fakeThread={ getFirstMessageSubject:()=>'Booking - S779080 - GYGBROKEN',
+                     getLastMessageDate:()=>twoHoursAgo,
                      markUnread:()=>{unread=true;}, markRead:()=>{unread=false;} };
   flagUnprocessedConfirmation_(fakeThread,'Publishing Pages/GetYourGuide/Confirmations');
   check('unregisterable confirmation is COUNTED (shown on Status tab)', RNR_RUN_STATS_.confirmFailures.length===1, RNR_RUN_STATS_.confirmFailures);
   check('unregisterable confirmation is marked UNREAD (the signal, not an email)', unread===true, unread);
+  check('oldest-unprocessed age is tracked (backlog aging is visible)', RNR_RUN_STATS_.oldestUnprocessedMs===twoHoursAgo.getTime(), RNR_RUN_STATS_.oldestUnprocessedMs);
+  check('ageText_ renders hours+minutes', /^2 h \d+ min$/.test(ageText_(twoHoursAgo.getTime())), ageText_(twoHoursAgo.getTime()));
 }
 
 console.log('--- Parser flexibility: id survives a code-format change; name via other labels ---');

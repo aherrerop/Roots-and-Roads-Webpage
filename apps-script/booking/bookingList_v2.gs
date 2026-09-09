@@ -629,6 +629,23 @@ function writeRunStatus_(mode) {
     let sh = ss.getSheetByName('Status');
     if (!sh) sh = ss.insertSheet('Status');
     const confFails = (RNR_RUN_STATS_.confirmFailures || []);
+    const oldestAge = ageText_(RNR_RUN_STATS_.oldestUnprocessedMs);
+
+    // The AUDIT re-reads EVERY confirmation thread, so its failure count is the
+    // TRUE current backlog. Persist that snapshot so the number stays visible on
+    // every later (fast) run too — the backlog can't hide between audits.
+    const props = PropertiesService.getScriptProperties();
+    try {
+      if (!RNR_SKIP_PROCESSED_) {   // this is an audit run
+        props.setProperty('RNR_BACKLOG_COUNT', String(confFails.length));
+        props.setProperty('RNR_BACKLOG_OLDEST', oldestAge || '');
+        props.setProperty('RNR_BACKLOG_AT', Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm'));
+      }
+    } catch (e) { /* best-effort */ }
+    const backlogCount = props.getProperty('RNR_BACKLOG_COUNT') || '0';
+    const backlogOldest = props.getProperty('RNR_BACKLOG_OLDEST') || '';
+    const backlogAt = props.getProperty('RNR_BACKLOG_AT') || '(no audit yet)';
+
     const rows = [
       ['Last run finished', Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss')],
       ['Mode', mode],
@@ -639,14 +656,18 @@ function writeRunStatus_(mode) {
       // The one number that means "a booking may be missing right now". >0 => go to
       // the inbox: the offending confirmations are left UNREAD. Listed below too.
       ['Confirmations NOT registered this run', confFails.length],
+      ['Oldest not-registered (age)', oldestAge || '—'],
       ['Which ones (left UNREAD in the inbox)', confFails.length ? confFails.join('  |  ') : '—'],
+      // Trustworthy backlog: the last full audit's count, always shown so a stuck
+      // booking is never hidden just because the latest run was a quick fast pass.
+      ['Backlog at last audit', backlogCount + (Number(backlogCount) && backlogOldest ? '  (oldest ' + backlogOldest + ')' : '') + '  — as of ' + backlogAt],
       ['', ''],
       ['How to read this', 'This tab refreshes after every run (every 5 min + audits). ' +
         'If "Last run finished" is more than ~10 minutes old, the trigger is not running: ' +
         'open Apps Script > Triggers and > Executions. ' +
-        'If "Confirmations NOT registered" is >0, those emails are UNREAD in the inbox and their ' +
-        'bookings are NOT on the sheet — a parser needs fixing; the audit is auto-triggered to retry. ' +
-        'Error details: Errors tab. Full diagnosis: run systemStatus() in the editor.']
+        'If "Confirmations NOT registered" or "Backlog at last audit" is >0, those emails are ' +
+        'UNREAD in the inbox and their bookings are NOT on the sheet — a parser needs fixing; the ' +
+        'audit is auto-triggered to retry. Error details: Errors tab. Full diagnosis: run systemStatus().']
     ];
     sh.clear();
     // Column B as TEXT first: otherwise Sheets turns the timestamp into a Date
@@ -5182,9 +5203,26 @@ function flagUnprocessedConfirmation_(thread, labelName) {
       let subject = '';
       try { subject = thread && thread.getFirstMessageSubject() ? thread.getFirstMessageSubject() : ''; } catch (e) {}
       RNR_RUN_STATS_.confirmFailures.push(String(labelName || '') + ' — ' + (subject || '(no subject)'));
+      // Track the OLDEST stuck confirmation so the Status tab can show how long a
+      // booking has been missing — a backlog that keeps aging is the real alarm.
+      try {
+        const d = thread && thread.getLastMessageDate ? thread.getLastMessageDate() : null;
+        const ms = d ? d.getTime() : 0;
+        if (ms && (!RNR_RUN_STATS_.oldestUnprocessedMs || ms < RNR_RUN_STATS_.oldestUnprocessedMs)) {
+          RNR_RUN_STATS_.oldestUnprocessedMs = ms;
+        }
+      } catch (e) { /* age is best-effort */ }
     }
     safeMarkUnread_(thread);   // the durable, no-email signal
   } catch (e) { /* never let flagging break the run */ }
+}
+
+/** Human age like "3 h 12 min" / "8 min" from a past epoch ms, or '' if none. */
+function ageText_(ms) {
+  if (!ms) return '';
+  let mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  const h = Math.floor(mins / 60); mins -= h * 60;
+  return (h ? h + ' h ' : '') + mins + ' min';
 }
 
 /**
