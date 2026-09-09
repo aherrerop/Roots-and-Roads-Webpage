@@ -83,6 +83,38 @@ check('old no-comma format still extracts the time',    gygNoComma && gygNoComma
 check('gygDateTokens_ keeps the time through a comma',  /5:00/.test(gygDateTokens_('September 10, 2026, 5:00 PM')[0]||''), gygDateTokens_('September 10, 2026, 5:00 PM'));
 check('extractGygTime_ fallback reads the whole line',  extractGygTime_('September 10, 2026, 5:00 PM')==='5:00 PM', extractGygTime_('September 10, 2026, 5:00 PM'));
 
+console.log('--- Email-format tolerance: minor GYG date drift must NOT break parsing ---');
+// Generalise the comma fix: the parser must survive small punctuation/spacing
+// changes to the date line, so a future OTA tweak can't silently break bookings.
+[
+  ['comma before time',   'September 10, 2026, 5:00 PM'],
+  ['space before time',   'September 10, 2026 5:00 PM'],
+  ['no comma at all',     'September 10 2026 5:00 PM'],
+  ['extra spaces',        'September 10,  2026   5:00 PM']
+].forEach(([label, dateLine], i)=>{
+  const body=[
+    'Hi Supply Partner, great news! Your offer has been booked:',
+    'Barcelona Ultimate Tour English Tour',
+    'Reference number GYGTOL' + i,
+    'Date ' + dateLine,
+    'Number of participants', '1 x Adult (Age 14 - 99)',
+    'Main customer', 'Test Guest', 'Phone: +34600000000', 'Language: English',
+    'Tour language English (Live tour guide)', 'Price € 18.00'
+  ].join('\n');
+  const b=parseGygMessage_(makeFakeMsg_('Booking - S779080 - GYGTOL'+i, body),'confirm');
+  check('tolerant date ('+label+'): valid booking with date+time',
+    b && isValidBooking_(b) && dateKey_(b.date)==='2026-09-10' && b.time==='5:00 PM',
+    b && {date:b.date, time:b.time, valid:b&&isValidBooking_(b)});
+});
+// A confirmation the parser CANNOT handle is recorded for the throttled alert +
+// left unprocessed (never silently swallowed).
+if (typeof recordConfirmFailure_==='function'){
+  RNR_RUN_STATS_ = { processed:0, upserts:0, errors:0, confirmFailures:[] };
+  recordConfirmFailure_('Publishing Pages/GetYourGuide/Confirmations','Booking - S779080 - GYGBROKEN');
+  check('a failed confirmation is recorded for the real-time alert',
+    RNR_RUN_STATS_.confirmFailures.length===1, RNR_RUN_STATS_.confirmFailures);
+}
+
 console.log('--- Website availability + capacity (Italian / French) ---');
 const controlSS=new __mock.MockSS(WEBSITE_CONTROL_SPREADSHEET_ID);
 __mock.SS_BY_ID[WEBSITE_CONTROL_SPREADSHEET_ID]=controlSS;

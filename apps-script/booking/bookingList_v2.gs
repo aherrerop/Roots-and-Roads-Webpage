@@ -257,7 +257,20 @@ const RNR = {
   MAX_THREADS_FAST: 20,
   MAX_THREADS_AUDIT: 60,
 
+  // Fast-run reliability net: how many of the NEWEST threads to read straight
+  // from each CONFIRMATION label (by membership, not search) so a just-arrived
+  // confirmation is caught even if Gmail's search index hasn't indexed it yet.
+  // Small = cheap (one getThreads + a getLabels per thread, confirmations only);
+  // confirmations are the cannot-miss core. 3 covers a normal 5-minute arrival
+  // burst; the search catches the rest once indexed, and the audit backstops all.
+  RECENT_RELIABLE_FAST: 3,
+
   MAX_RUN_MS: 180000,
+
+  // Throttle for the real-time "a confirmation could not be registered" email
+  // alert, so a persistent parse break pings management once an hour, not every
+  // 5-minute run.
+  PARSE_ALERT_THROTTLE_MS: 3600000,
 
   /* ============================================================
    * COMMISSIONS / INCOME MODEL  — edit these numbers only.
@@ -358,7 +371,7 @@ function sourceConfigs_() {
  ******************************************************/
 
 let RNR_RUN_STARTED_AT_ = 0;
-let RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0 };
+let RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0, confirmFailures: [] };
 let RNR_LABEL_CACHE_ = null;     // labelName -> GmailLabel (1 lookup per run)
 let RNR_THREADS_CACHE_ = null;   // mode|labelName -> threads[] (1 fetch per run)
 let RNR_TEXT_CACHE_ = null;              // messageId -> best text
@@ -376,7 +389,7 @@ var RNR_SKIP_PROCESSED_ = false;
 
 
 function resetRunCaches_() {
-  RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0 };
+  RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0, confirmFailures: [] };
   RNR_RESOLVED_SUBJECTS_ = new Set();
   RNR_LABEL_CACHE_ = new Map();
   RNR_THREADS_CACHE_ = new Map();
@@ -593,6 +606,7 @@ function runBookingCore_(skipProcessed) {
 
   } finally {
     pruneResolvedErrors_();   // drop Errors rows for emails we resolved this run
+    sendConfirmFailureAlert_();  // email management (throttled) if a confirmation could not be registered
     writeRunStatus_(skipProcessed ? 'fast (5-min)' : 'audit (full re-read)');
     lock.releaseLock();
   }
@@ -880,6 +894,22 @@ function getThreadsSafe_(labelName) {
     if (RNR_SKIP_PROCESSED_) {
       const q = searchTokenForLabel_(labelName) + ' -' + searchTokenForLabel_(RNR.LABELS.PROCESSED);
       threads = GmailApp.search(q, 0, RNR.MAX_THREADS_FAST) || [];
+      // RELIABILITY NET (confirmation labels only): Gmail SEARCH can lag for a
+      // just-arrived email, but label MEMBERSHIP (getThreads) is always current.
+      // For the cannot-miss confirmation labels, also read the newest few threads
+      // straight from the label and add any not-yet-Processed one the search
+      // missed. Bounded + confirmations-only, so it stays cheap. This removes the
+      // fast run's dependence on search freshness — a new confirmation can never
+      // sit unprocessed until the next audit just because search hadn't caught up.
+      if (/\/Confirmations$/i.test(String(labelName))) {
+        const label = getLabel_(labelName);
+        const recent = label ? (label.getThreads(0, RNR.RECENT_RELIABLE_FAST) || []) : [];
+        const seen = {};
+        threads.forEach(t => { seen[t.getId()] = true; });
+        recent.forEach(t => {
+          if (!seen[t.getId()] && !threadHasProcessedLabel_(t)) { threads.push(t); seen[t.getId()] = true; }
+        });
+      }
     } else {
       const label = getLabel_(labelName);
       threads = label ? (label.getThreads(0, RNR.MAX_THREADS_AUDIT) || []) : [];
@@ -1361,6 +1391,7 @@ function processConfirmationLabel_(labelName, source) {
         // parser is fixed. Maxim: cannot miss a booking.
         logError_('Confirmation parse failed (no booking found)',
           'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
+        recordConfirmFailure_(labelName, thread.getFirstMessageSubject());
         continue;
       }
 
@@ -1394,6 +1425,7 @@ function processConfirmationLabel_(labelName, source) {
         // label for hours. Maxim: cannot miss a booking.
         logError_('Confirmation NOT registered (no valid booking) — left unprocessed',
           'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
+        recordConfirmFailure_(labelName, thread.getFirstMessageSubject());
         continue;   // do NOT mark Processed — the label would be a lie
       }
 
@@ -4307,7 +4339,12 @@ function gygDateTokens_(text) {
   // rejects it, and (on the fast run) it is silently skipped. `extractGygTime_`
   // still reads the time from the token; the callers also fall back to the whole
   // labelled Date line, so even a future format tweak can't drop the time.
-  const re = /([A-Z][a-z]+ \d{1,2}, \d{4}(?:,?\s*\d{1,2}:\d{2}\s*(?:AM|PM))?)|(\d{1,2}\s+de\s+[a-zà-ÿ]+\s+de\s+\d{4}(?:\s+a\s+las\s+\d{1,2}:\d{2})?)/gi;
+  // Tolerant on purpose: the day/year separator may be ", " or a bare space, and
+  // the time may follow after a space or a comma. So "September 10, 2026 5:00 PM",
+  // "September 10, 2026, 5:00 PM" and "September 10 2026 5:00 PM" all parse. Keeping
+  // punctuation optional is what stops a minor OTA template tweak from silently
+  // dropping the date or time.
+  const re = /([A-Z][a-z]+ \d{1,2},?\s+\d{4}(?:,?\s*\d{1,2}:\d{2}\s*(?:AM|PM))?)|(\d{1,2}\s+de\s+[a-zà-ÿ]+\s+de\s+\d{4}(?:\s+a\s+las\s+\d{1,2}:\d{2})?)/gi;
   const out = [];
   let m;
   while ((m = re.exec(s))) out.push((m[1] || m[2]).trim());
@@ -5083,6 +5120,50 @@ function safeString_(v) {
   return v === null || v === undefined ? '' : String(v);
 }
 
+
+/**
+ * Remember a confirmation that arrived but could not be turned into a booking
+ * (parse failed, or parsed only invalid bookings — e.g. an OTA changed its email
+ * format). Collected during the run; sendConfirmFailureAlert_ emails a throttled
+ * summary at the end. This is the "you find out in minutes, not by accident"
+ * guardrail — a booking that can't be registered is the most dangerous silent
+ * failure (a slot looks empty, so a real reservation is invisible).
+ */
+function recordConfirmFailure_(labelName, subject) {
+  try {
+    if (!RNR_RUN_STATS_) return;
+    if (!RNR_RUN_STATS_.confirmFailures) RNR_RUN_STATS_.confirmFailures = [];
+    RNR_RUN_STATS_.confirmFailures.push(String(labelName || '') + ' — ' + String(subject || '(no subject)'));
+  } catch (e) { /* never let telemetry break the run */ }
+}
+
+/**
+ * Email management when confirmations could not be registered this run, throttled
+ * to once per PARSE_ALERT_THROTTLE_MS so a persistent break pings ~hourly, not
+ * every 5 minutes. Best-effort: an email hiccup must never break the run.
+ */
+function sendConfirmFailureAlert_() {
+  try {
+    const fails = (RNR_RUN_STATS_ && RNR_RUN_STATS_.confirmFailures) || [];
+    if (!fails.length) return;
+    const props = PropertiesService.getScriptProperties();
+    const last = Number(props.getProperty('RNR_LAST_PARSE_ALERT') || 0);
+    if (Date.now() - last < RNR.PARSE_ALERT_THROTTLE_MS) return;   // throttled
+
+    const uniq = Array.from(new Set(fails));
+    const subject = '⚠️ Roots & Roads: ' + uniq.length + ' confirmation(s) could NOT be registered';
+    const body =
+      'The booking system received confirmation emails it could not turn into bookings.\n' +
+      'These reservations are NOT on the sheet or in the portal yet — a slot may look empty, so\n' +
+      'do not move/close a tour assuming it is alone until this is resolved.\n\n' +
+      'Most likely an OTA changed its email format (a parser needs updating).\n\n' +
+      'Affected (label — subject):\n  ' + uniq.join('\n  ') + '\n\n' +
+      'The emails are kept UNprocessed and retried every run, so they self-heal once the parser\n' +
+      'is fixed. Details: the Errors tab of the booking sheet. This alert is throttled to once/hour.';
+    MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject, body });
+    props.setProperty('RNR_LAST_PARSE_ALERT', String(Date.now()));
+  } catch (e) { console.log('sendConfirmFailureAlert_: ' + e); }
+}
 
 function logError_(type, err, rawData) {
   try {
