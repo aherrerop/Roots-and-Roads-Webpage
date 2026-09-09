@@ -53,6 +53,36 @@ check('email to the main inbox -> source "GetYourGuide"', gyg1 && gyg1.source===
 check('a message with no readable recipient -> "GetYourGuide" (safe default)', gygIt.source==='GetYourGuide', gygIt.source);
 check('"GYG" is a PAID source-model (we owe the guide)', RNR.MODEL[RNR.SOURCE.GYG2]==='paid', RNR.MODEL[RNR.SOURCE.GYG2]);
 
+console.log('--- REGRESSION (2026-09-09): GYG added a comma between year and time ---');
+// GYG changed "September 10, 2026 5:00 PM" -> "September 10, 2026, 5:00 PM" (a
+// comma after the year). gygDateTokens_ only allowed WHITESPACE before the time,
+// so the token lost its time -> the booking had no time -> isValidBooking_
+// rejected it -> the fast run SILENTLY skipped it (parse-fail logging was audit
+// only). Real, valid confirmations piled up unprocessed for hours, and slots
+// looked "empty" so a second booking was invisible. This locks the fix.
+const gygCommaBody=[
+  'Hi Supply Partner, great news! Your offer has been booked:',
+  'Barcelona Ultimate Tour: Sagrada Familia, Gaudí & Old Town English Tour',
+  'Reference number GYGKBF5Q9ZB7',
+  'Date September 10, 2026, 5:00 PM',
+  'Number of participants', '1 x Adult (Age 14 - 99)',
+  'Main customer', 'Kwan Chan',
+  'customer-jz7g2zioz3zmdjo6@reply.getyourguide.com',
+  'Phone: +447709536713', 'Language: English',
+  'Tour language English (Live tour guide)',
+  'Price € 18.00'
+].join('\n');
+const gygComma=parseGygMessage_(makeFakeMsg_('Booking - S779080 - GYGKBF5Q9ZB7', gygCommaBody),'confirm');
+check('comma date: parsed to a booking',                !!gygComma, gygComma);
+check('comma date: TIME survived (5:00 PM)',            gygComma && gygComma.time==='5:00 PM', gygComma && gygComma.time);
+check('comma date: DATE extracted (2026-09-10)',        gygComma && dateKey_(gygComma.date)==='2026-09-10', gygComma && gygComma.date);
+check('comma date: booking is VALID (not silently dropped)', isValidBooking_(gygComma), gygComma);
+const gygNoComma=parseGygMessage_(makeFakeMsg_('Booking - S779080 - GYGOLD01',
+  gygCommaBody.replace('2026, 5:00 PM','2026 5:00 PM').replace(/GYGKBF5Q9ZB7/g,'GYGOLD01')),'confirm');
+check('old no-comma format still extracts the time',    gygNoComma && gygNoComma.time==='5:00 PM', gygNoComma && gygNoComma.time);
+check('gygDateTokens_ keeps the time through a comma',  /5:00/.test(gygDateTokens_('September 10, 2026, 5:00 PM')[0]||''), gygDateTokens_('September 10, 2026, 5:00 PM'));
+check('extractGygTime_ fallback reads the whole line',  extractGygTime_('September 10, 2026, 5:00 PM')==='5:00 PM', extractGygTime_('September 10, 2026, 5:00 PM'));
+
 console.log('--- Website availability + capacity (Italian / French) ---');
 const controlSS=new __mock.MockSS(WEBSITE_CONTROL_SPREADSHEET_ID);
 __mock.SS_BY_ID[WEBSITE_CONTROL_SPREADSHEET_ID]=controlSS;

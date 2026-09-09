@@ -419,6 +419,23 @@ function runHasTimeLeft_() {
   return !RNR_RUN_STARTED_AT_ || (Date.now() - RNR_RUN_STARTED_AT_ < RNR.MAX_RUN_MS);
 }
 
+/**
+ * Run ONE pipeline phase in isolation: skip if out of time, and if it throws,
+ * log it and CARRY ON to the next phase. The whole pipeline used to sit in one
+ * try block, so an uncaught error in an early phase (e.g. cancellations) silently
+ * skipped every later phase — including confirmations — on every run, with no
+ * alert. That is the "confirmations stopped for hours" failure mode. Isolating
+ * each phase means a booking can never be missed because a *different* phase
+ * broke. Errors are deduped in the Errors tab and counted on the Status tab.
+ * `cond` (optional) gates audit-only phases without an extra `if` at the call.
+ */
+function runPhase_(name, fn, cond) {
+  if (cond === false) return;
+  if (!runHasTimeLeft_()) return;
+  try { return fn(); }
+  catch (e) { logError_('phase ' + name + ' failed', e, ''); }
+}
+
 
 /******************************************************
  * 3. MAIN FUNCTIONS
@@ -508,7 +525,10 @@ function runBookingCore_(skipProcessed) {
     //    matching Confirm/Modify threads yet — see step 4, which runs after
     //    modifications so a same-run GYG reinstatement is already known and
     //    can't be wrongly cancelled.
-    if (runHasTimeLeft_()) processCancellations_();
+    // Every phase runs in isolation (runPhase_): if one throws, it is logged and
+    // the rest STILL run, so a failure in (say) cancellations can never stop
+    // confirmations from being processed. Maxim: cannot miss a booking.
+    runPhase_('cancellations', processCancellations_);
 
     // 1b. AUDIT-only recovery, run BEFORE the heavy confirmation re-read. The
     //     audit's time budget (MAX_RUN_MS = 180s) is consumed mostly by
@@ -517,55 +537,54 @@ function runBookingCore_(skipProcessed) {
     //     removal never ran — Sara Dervishi stayed). Do the recovery FIRST:
     //     drop any row a modification superseded (Sara), then apply modifications
     //     stuck under Done (Anna Erb).
-    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) removeSupersededActiveBookings_();
-    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) processStrayModifications_();
+    runPhase_('removeSuperseded', removeSupersededActiveBookings_, !RNR_SKIP_PROCESSED_);
+    runPhase_('strayModifications', processStrayModifications_, !RNR_SKIP_PROCESSED_);
 
     // 2. Confirmations + modifications.
-    if (runHasTimeLeft_()) processConfirmations_();
-    if (runHasTimeLeft_()) processModifications_();
+    runPhase_('confirmations', processConfirmations_);
+    runPhase_('modifications', processModifications_);
 
     // 3. Consistency: relabel any Confirm/Modify thread whose booking id is
     //    now known-cancelled (and not reinstated this run) to Cancel, drop
     //    any active row that has a cancellation email, and run cancellations
     //    once more to catch anything newly exposed.
-    if (runHasTimeLeft_()) reconcileCancelledThreadLabels_();
-    if (runHasTimeLeft_()) removeActiveBookingsThatHaveCancellationEmails_();
-    if (runHasTimeLeft_()) processCancellations_();
+    runPhase_('reconcileCancelledLabels', reconcileCancelledThreadLabels_);
+    runPhase_('removeCancelledActive', removeActiveBookingsThatHaveCancellationEmails_);
+    runPhase_('cancellations2', processCancellations_);
     // Audit catch-up: guarantee no cancelled booking still has its confirmation
     // sitting in the inbox (covers confirmations that were Processed before the
     // cancellation arrived, which the frequent-run sweeps cannot see).
-    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) archiveAllCancelledConfirmations_();
+    runPhase_('archiveCancelledConfirmations', archiveAllCancelledConfirmations_, !RNR_SKIP_PROCESSED_);
 
     // 4. Finished tours -> Done. Sheet rows move every run (cheap, Sheets
     //    only). The Gmail side (archive + relabel to Done) runs every run too
     //    but only inspects the small "still in inbox" candidate set on fast
     //    runs (see getThreadsForCompletionSweep_).
-    let completedNow = [];
-    if (runHasTimeLeft_()) completedNow = moveCompletedBookingRowsToDone_() || [];
-    if (runHasTimeLeft_()) moveCompletedGmailThreadsToDone_(completedNow);
+    const completedNow = runPhase_('completeRows', moveCompletedBookingRowsToDone_) || [];
+    runPhase_('completeGmail', function () { moveCompletedGmailThreadsToDone_(completedNow); });
 
     // 4a2. SAFETY NET (audits only): re-read confirmation threads and recover
     //      any confirmed, upcoming booking missing from the list, so the
     //      "Processed" label can never hide a booking. Runs before the invariant
     //      checks so a just-recovered booking is counted as present.
-    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) reconcileConfirmationsToBookingList_();
+    runPhase_('reconcileConfirmations', reconcileConfirmationsToBookingList_, !RNR_SKIP_PROCESSED_);
 
     // 4b. INVARIANT CHECKS (audits only): duplicates, cancelled-still-active,
     //     completed-still-active, invalid rows. Findings land in Errors
     //     (deduped) — the daily self-test email surfaces them.
-    if (!RNR_SKIP_PROCESSED_ && runHasTimeLeft_()) checkInvariants_();
+    runPhase_('invariants', checkInvariants_, !RNR_SKIP_PROCESSED_);
 
     // 5. Tidy the sheets — a full rewrite of every tab, so only when
     //    something actually changed this run, or on audits.
     const dirty = RNR_RUN_STATS_.upserts > 0 || !RNR_SKIP_PROCESSED_;
-    if (dirty && runHasTimeLeft_()) dedupeActiveSheets_();
-    if (dirty && runHasTimeLeft_()) sortActiveSheets_();
-    if (dirty && runHasTimeLeft_()) sortDoneSheet_();
+    runPhase_('dedupe', dedupeActiveSheets_, dirty);
+    runPhase_('sortActive', sortActiveSheets_, dirty);
+    runPhase_('sortDone', sortDoneSheet_, dirty);
 
     // 6. Rebuild the guide portal's read-optimised feed EVERY run (even when
     //    nothing changed) so it tracks the rolling date window. One tab the
     //    portal can read instead of scanning six; check-ins are preserved.
-    if (runHasTimeLeft_()) safeRebuildPortalFeed_();
+    runPhase_('portalFeed', safeRebuildPortalFeed_);
 
   } catch (err) {
     // Errors are logged, never rethrown, so Google does not email failure alerts.
@@ -1332,14 +1351,16 @@ function processConfirmationLabel_(labelName, source) {
                                threadIsModifyOrCancel_(thread);
         if (ownedElsewhere) continue;
 
-        // Nothing parsed in ANY mode -> a genuine parser/misfile problem.
-        // Not marked Processed, so the audit keeps retrying it. Logged on
-        // audits only (a fast-run log would add a row every 5 minutes), and
-        // logError_ deduplicates repeats.
-        if (!RNR_SKIP_PROCESSED_) {
-          logError_('Confirmation parse failed (no booking found)',
-            'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
-        }
+        // Nothing parsed in ANY mode -> a genuine parser/misfile problem (e.g. an
+        // OTA changed its email template). Logged on EVERY run, fast included:
+        // logError_ deduplicates by type+subject within 24h (one row, bumped
+        // count), so this can't flood, and surfacing it on the 5-minute run turns
+        // a silent multi-hour gap — an unparsed confirmation nobody sees until the
+        // twice-daily audit — into an immediate signal on the Status/Errors tabs.
+        // Not marked Processed, so it keeps being retried and self-heals once the
+        // parser is fixed. Maxim: cannot miss a booking.
+        logError_('Confirmation parse failed (no booking found)',
+          'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
         continue;
       }
 
@@ -1367,10 +1388,12 @@ function processConfirmationLabel_(labelName, source) {
       }
 
       if (!registered) {
-        if (!RNR_SKIP_PROCESSED_) {
-          logError_('Confirmation NOT registered (no valid booking) — left unprocessed',
-            'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
-        }
+        // A thread that parsed only INVALID bookings (e.g. a missing time from a
+        // template change) is left UNprocessed and logged on EVERY run — same
+        // dedup as above — so a booking can never silently vanish behind a green
+        // label for hours. Maxim: cannot miss a booking.
+        logError_('Confirmation NOT registered (no valid booking) — left unprocessed',
+          'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
         continue;   // do NOT mark Processed — the label would be a lie
       }
 
@@ -2252,8 +2275,9 @@ function processGygModificationsLabel_() {
       // confirmation parser, so a stray earlier date can't be mistaken for the
       // tour date). Otherwise the email holds both new and old (struck) dates —
       // take the one that differs from the booking's current date, else first.
-      const labeledMod = gygDateTokens_(valueAfterLabel_(item.text,
-        [/^Fecha\b(?!\s+de\b)/i, /^Date\b(?!\s+of\b)/i, /^Tour date\b/i]))[0] || '';
+      const labeledDateVal = valueAfterLabel_(item.text,
+        [/^Fecha\b(?!\s+de\b)/i, /^Date\b(?!\s+of\b)/i, /^Tour date\b/i]);
+      const labeledMod = gygDateTokens_(labeledDateVal)[0] || '';
       let dateTok = labeledMod || f.dateTokens[0] || '';
       if (!labeledMod && base && f.dateTokens.length > 1) {
         const changed = f.dateTokens.find(t => dateKey_(normalizeDate_(t)) !== base.dateKey);
@@ -2261,7 +2285,9 @@ function processGygModificationsLabel_() {
       }
 
       const date = normalizeDate_(dateTok) || (base ? base.date : null);
-      const time = extractGygTime_(dateTok) || (base ? base.time : '');
+      // Token first, then the whole labelled Date line (survives a template change
+      // that truncates the token), then the existing booking's time.
+      const time = extractGygTime_(dateTok) || extractGygTime_(labeledDateVal) || (base ? base.time : '');
       const mpp = f.participants || null;
       const guests = (mpp && mpp.adults) ? mpp.adults : (f.guests || (base ? base.guests : 1));
       const children = (mpp && mpp.children) ? mpp.children : (base ? Number(base.children || 0) : 0);
@@ -4099,7 +4125,11 @@ function parseGygMessage_(msg, mode) {
   const labeledDate = valueAfterLabel_(text, [/^Fecha\b(?!\s+de\b)/i, /^Date\b(?!\s+of\b)/i, /^Tour date\b/i]);
   const dateTok = gygDateTokens_(labeledDate)[0] || f.dateTokens[0] ||
                   valueAfterLabel_(text, [/^Fecha\b/i, /^Date\b/i]);
-  const time = extractGygTime_(dateTok);
+  // Read the time from the token first, but fall back to the WHOLE labelled Date
+  // line: the token can be truncated by a template change (the Sept-2026 comma),
+  // whereas the line always carries the time. This keeps the time even if the
+  // date-token regex ever misses it again.
+  const time = extractGygTime_(dateTok) || extractGygTime_(labeledDate);
   const income = gygNetIncome_(f.price);
   const pp = f.participants || { adults: f.guests || 1, children: 0, infants: 0 };
 
@@ -4270,7 +4300,14 @@ function cleanPersonName_(raw) {
  */
 function gygDateTokens_(text) {
   const s = String(text || '');
-  const re = /([A-Z][a-z]+ \d{1,2}, \d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM))?)|(\d{1,2}\s+de\s+[a-zà-ÿ]+\s+de\s+\d{4}(?:\s+a\s+las\s+\d{1,2}:\d{2})?)/gi;
+  // The time may follow the year after a SPACE ("September 10, 2026 5:00 PM") or,
+  // since GYG's Sept-2026 template change, after a COMMA ("September 10, 2026,
+  // 5:00 PM"). Allow an optional comma and flexible whitespace before the time —
+  // otherwise the token loses its time, the booking has no time, isValidBooking_
+  // rejects it, and (on the fast run) it is silently skipped. `extractGygTime_`
+  // still reads the time from the token; the callers also fall back to the whole
+  // labelled Date line, so even a future format tweak can't drop the time.
+  const re = /([A-Z][a-z]+ \d{1,2}, \d{4}(?:,?\s*\d{1,2}:\d{2}\s*(?:AM|PM))?)|(\d{1,2}\s+de\s+[a-zà-ÿ]+\s+de\s+\d{4}(?:\s+a\s+las\s+\d{1,2}:\d{2})?)/gi;
   const out = [];
   let m;
   while ((m = re.exec(s))) out.push((m[1] || m[2]).trim());
