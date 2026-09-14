@@ -34,6 +34,7 @@
     constructor(msgs) { this._id = 't' + (++seq); this._msgs = msgs; this.labelSet = new Set(); this.inInbox = true; this.unread = false; ALL.push(this); }
     getId() { return this._id; }
     getMessages() { return this._msgs; }
+    getMessageCount() { return this._msgs.length; }
     getFirstMessageSubject() { return this._msgs[0] ? this._msgs[0].getSubject() : ''; }
     getLabels() { return [...this.labelSet].map(n => ({ getName: () => n })); }
     addLabel(l) { if (l && l.name) this.labelSet.add(l.name); return this; }
@@ -67,7 +68,9 @@
       const excl = (q.match(/-label:\S+/g) || []).map(x => x.slice(7));
       const req = (q.replace(/-label:\S+/g, '').match(/label:\S+/g) || []).map(x => x.slice(6));
       const needs = (q.match(/"([^"]+)"/g) || []).map(x => x.replace(/"/g, ''));
+      const wantsInbox = /\bin:inbox\b/.test(q);
       const res = ALL.filter(t => {
+        if (wantsInbox && !t.inInbox) return false;
         const ls = new Set([...t.labelSet].map(norm));
         if (!req.every(r => ls.has(norm(r)))) return false;
         if (excl.some(e => ls.has(norm(e)))) return false;

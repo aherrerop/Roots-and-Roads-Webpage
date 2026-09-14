@@ -212,6 +212,37 @@ __gmail.add([RNR.LABELS.GURUWALK_DONE], __gmail.msg('you have a modification on 
 processStrayModifications_();
 check('a Done-stuck modification IS applied — the new future booking lands', idsOnList()['BARFUT2'] === true, Object.keys(idsOnList()));
 
+console.log('--- REGRESSION (Olga Akhapkina): reconcile reads the WHOLE inbox, not a 60-cap ---');
+// The safety net used to read only the newest MAX_THREADS_AUDIT (60) confirmation
+// threads per label. A booking made months ahead (e.g. a group of 30) has an OLD
+// email but a FUTURE tour, so once >60 newer confirmations arrived it fell outside
+// the window — and if its row was ever removed it could NEVER be recovered. Seed
+// 61 in-inbox confirmations, none on the list; the fix must recover ALL 61.
+resetWorld();
+for (let i = 0; i < 61; i++) {
+  const id = 'GYGBULK' + String(i).padStart(3, '0');
+  __gmail.add([RNR.LABELS.GYG_CONFIRM],
+    __gmail.msg('Booking - S1 - ' + id, gygBody(id, 'Guest' + i, 'December 20, 2030 10:00 AM', 2, 'Inglés')));
+}
+reconcileConfirmationsToBookingList_();
+const bulk = Object.keys(idsOnList()).filter(k => k.indexOf('GYGBULK') === 0).length;
+check('reconcile recovers ALL 61 inbox confirmations (not capped at 60)', bulk === 61, bulk);
+check('...including the 61st, which a newest-60 cap silently dropped', idsOnList()['GYGBULK060'] === true, null);
+
+console.log('--- Reconcile pre-filter: skip present single-message confirmations, never miss others ---');
+check('confirmationIdFromSubject_ reads a GYG id', confirmationIdFromSubject_('Booking - S779080 - GYGFWV4Q65W4') === 'GYGFWV4Q65W4', null);
+check('confirmationIdFromSubject_ reads a Viator BR id', confirmationIdFromSubject_('New Booking for Tue (#BR-1445194423)') === 'BR-1445194423', null);
+check('confirmationIdFromSubject_ empty for a Guruwalk number subject (always parse)', confirmationIdFromSubject_('Confirmed booking 12779994 on your tour') === '', null);
+resetWorld();
+const cov = __gmail.add([RNR.LABELS.GYG_CONFIRM],
+  __gmail.msg('Booking - S1 - GYGCOV001', gygBody('GYGCOV001', 'X', 'December 1, 2030 10:00 AM', 2, 'Inglés')));
+check('present single-message confirmation is pre-filtered (body read skipped)', reconcileThreadAlreadyCovered_(cov, { 'GYGCOV001': true }) === true, null);
+check('an ABSENT id is NOT skipped (it will be parsed + recovered)', reconcileThreadAlreadyCovered_(cov, {}) === false, null);
+const multi = __gmail.add([RNR.LABELS.GYG_CONFIRM], [
+  __gmail.msg('Booking - S1 - GYGCOV002', gygBody('GYGCOV002', 'Y', 'December 1, 2030 10:00 AM', 2, 'Inglés')),
+  __gmail.msg('Booking detail change: - S1 - GYGCOV002', 'Fecha December 2, 2030 10:00 AM')]);
+check('a MULTI-message thread is ALWAYS parsed (never pre-filtered)', reconcileThreadAlreadyCovered_(multi, { 'GYGCOV002': true }) === false, null);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

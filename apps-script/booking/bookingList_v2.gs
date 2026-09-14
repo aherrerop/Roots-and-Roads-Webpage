@@ -257,6 +257,13 @@ const RNR = {
   MAX_THREADS_FAST: 20,
   MAX_THREADS_AUDIT: 60,
 
+  // The reconcile safety net reads EVERY confirmation still in the inbox (= every
+  // upcoming, not-yet-run booking), so its cap must cover the whole inbox, not a
+  // recent slice. A fixed newest-N cap (like 60) silently dropped bookings booked
+  // months ahead whose confirmation had aged past N newer ones. 500 is the Gmail
+  // search ceiling and far above the number of upcoming bookings we ever hold.
+  MAX_RECONCILE_THREADS: 500,
+
   // Fast-run reliability net: how many of the NEWEST threads to read straight
   // from each CONFIRMATION label (by membership, not search) so a just-arrived
   // confirmation is caught even if Gmail's search index hasn't indexed it yet.
@@ -1499,14 +1506,44 @@ function activeBookingIdSet_() {
   return set;
 }
 
+/** The booking id in a confirmation SUBJECT, when its shape is unambiguous
+ *  (GYG…, Viator BR-…). Empty for sources whose subject has no full id (Guruwalk
+ *  shows only a number) — those are always parsed, never pre-filtered. */
+function confirmationIdFromSubject_(subject) {
+  const s = String(subject || '');
+  let m = s.match(/\b(GYG[A-Z0-9]{5,})\b/i); if (m) return m[1];
+  m = s.match(/\b(BR-\d+)\b/i);              if (m) return m[1];
+  return '';
+}
+
+/** Cheap pre-filter for the reconcile: a SINGLE-message confirmation whose id is
+ *  already on the sheet is fully represented, so skip its body read. Anything with
+ *  more than one message (it might also carry a modification for a different code)
+ *  is always parsed — so the pre-filter can never miss a booking. */
+function reconcileThreadAlreadyCovered_(thread, activeIds) {
+  try {
+    if (thread.getMessageCount() !== 1) return false;
+    const id = normalizeId_(confirmationIdFromSubject_(thread.getFirstMessageSubject()));
+    return !!(id && activeIds[id]);
+  } catch (e) { return false; }
+}
+
 /**
- * SAFETY NET (audits only): guarantee the booking list holds EVERY confirmed,
- * upcoming, non-cancelled booking — so "Processed" can never hide a booking
- * that failed to land. Re-reads confirmation threads (including ones already
- * marked Processed) in permissive 'any' mode, which bypasses the confirm/modify
- * classification that can drop a confirmation sharing a thread with a
- * modification (the GYGN…/S779080 case). Any valid booking missing from the
- * list is re-inserted and logged as RECOVERED, so it appears in the portal.
+ * SAFETY NET (audits + recoverAllMissingBookings): guarantee the booking list
+ * holds EVERY confirmed, upcoming, non-cancelled booking — so "Processed" can
+ * never hide a booking that failed to land or was later removed.
+ *
+ * It reads confirmations straight from the INBOX. Confirmed bookings stay in the
+ * inbox until their tour is over (the inbox IS the live "upcoming tours" list), so
+ * this covers every upcoming booking regardless of how OLD its email is. The old
+ * version read only the newest MAX_THREADS_AUDIT (60) threads per label — a fixed
+ * count cap on the wrong dimension: a group booked months ahead (Olga Akhapkina,
+ * 30 pax) has an old email but a future tour, so once >60 newer confirmations
+ * arrived its email fell outside the window and, if its row was ever removed, the
+ * net could no longer see it to restore it. `in:inbox` is bounded by "tour not yet
+ * run", so no fixed cap can drop a live booking. Parses in permissive 'any' mode
+ * (bypasses the confirm/modify classification that can drop a confirmation sharing
+ * a thread with a modification). Missing valid bookings are re-inserted + logged.
  */
 function reconcileConfirmationsToBookingList_() {
   const activeIds = activeBookingIdSet_();
@@ -1515,16 +1552,16 @@ function reconcileConfirmationsToBookingList_() {
 
   sourceConfigs_().forEach(cfg => {
     if (!cfg.confirm || !runHasTimeLeft_()) return;
-    let label;
-    try { label = GmailApp.getUserLabelByName(cfg.confirm); } catch (e) { return; }
-    if (!label) return;
 
     let threads = [];
-    try { threads = label.getThreads(0, RNR.MAX_THREADS_AUDIT) || []; } catch (e) { return; }
+    try {
+      threads = GmailApp.search(searchTokenForLabel_(cfg.confirm) + ' in:inbox', 0, RNR.MAX_RECONCILE_THREADS) || [];
+    } catch (e) { return; }
 
     threads.forEach(thread => {
       if (!runHasTimeLeft_()) return;
       try {
+        if (reconcileThreadAlreadyCovered_(thread, activeIds)) return;   // present + single-message -> skip body read
         const bookings = uniqueBookings_(parseThread_(thread, cfg.source, 'any'));
         bookings.forEach(bk => {
           const nb = normalizeBooking_(bk);
@@ -1655,14 +1692,34 @@ function fixModificationsNow() {
   return msg;
 }
 
+/**
+ * ONE-CLICK FULL RECOVERY. Run from the editor to bring the whole sheet back in
+ * line with Gmail: re-inserts EVERY upcoming confirmed booking currently in the
+ * inbox that is missing from the language tabs, then dedupes, sorts and rebuilds
+ * the Portal Feed so the guide portal reflects it immediately. Uses the full time
+ * budget (only the reconcile runs, not the other audit phases), so a large backlog
+ * is cleared in one pass. Safe + idempotent: an already-present booking is skipped.
+ */
 function recoverMissingBookings() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) { const m = 'Another run is active — wait a moment and run again.'; console.log(m); return m; }
   RNR_RUN_STARTED_AT_ = Date.now();
   resetRunCaches_();
-  const n = reconcileConfirmationsToBookingList_();
-  const msg = n ? ('Recovered ' + n + ' missing booking(s) — see the Errors tab and your language tabs.')
-                : 'No missing bookings found — every confirmed upcoming booking is already on the list.';
-  console.log(msg);
-  return msg;
+  RNR_SKIP_PROCESSED_ = false;
+  try {
+    ensureSheets_();
+    const n = reconcileConfirmationsToBookingList_();
+    dedupeActiveSheets_();
+    sortActiveSheets_();
+    safeRebuildPortalFeed_();
+    const msg = n
+      ? ('Recovered ' + n + ' missing booking(s). Every upcoming confirmed booking is now on the language tabs and the portal.')
+      : 'No missing bookings — every confirmed upcoming booking is already on the list.';
+    console.log(msg);
+    return msg;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**
