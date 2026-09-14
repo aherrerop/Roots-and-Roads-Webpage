@@ -1559,7 +1559,7 @@ function reconcileThreadAlreadyCovered_(thread, activeIds) {
 function reconcileConfirmationsToBookingList_(includeDone) {
   const ctx = { activeIds: activeBookingIdSet_(), superseded: getSupersededIds_(), recovered: 0 };
 
-  sourceConfigs_().forEach(cfg => {
+  reconcileSourceConfigs_().forEach(cfg => {
     if (!cfg.confirm) return;
     const labelNames = [cfg.confirm];
     if (includeDone && cfg.done) labelNames.push(cfg.done);   // deep sweep: the Done label too
@@ -1573,6 +1573,24 @@ function reconcileConfirmationsToBookingList_(includeDone) {
 
   if (ctx.recovered) console.log('Reconcile recovered ' + ctx.recovered + ' missing booking(s).');
   return ctx.recovered;
+}
+
+/**
+ * Sources the reconcile safety-net sweeps: the OTA list PLUS the Website source.
+ * Website reservations are authored by the webhook (doPost), not by an OTA email,
+ * so they never pass through the OTA confirmation passes — and Website was the one
+ * source the reconcile could NOT recover if a row was ever lost. That blind spot
+ * dropped a real upcoming booking (Matt Brown, 2026-09-15 11:00) with no recovery.
+ * Website has no cancel/modify emails, so a confirm + done label is all reconcile
+ * needs. Kept separate from sourceConfigs_() so the 14 OTA-only call sites (cancel,
+ * modify, completion sweeps) are untouched — only the safety-net gains coverage.
+ */
+function reconcileSourceConfigs_() {
+  return sourceConfigs_().concat([{
+    source: RNR.SOURCE.WEBSITE,
+    confirm: RNR.LABELS.WEB_CONFIRM,
+    done: RNR.LABELS.WEB_DONE
+  }]);
 }
 
 /** Recover any missing, valid, UPCOMING booking from ONE confirmation/Done thread. */

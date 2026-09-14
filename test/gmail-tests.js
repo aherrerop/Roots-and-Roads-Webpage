@@ -273,6 +273,29 @@ __gmail.add([RNR.LABELS.GYG_DONE],
 reconcileConfirmationsToBookingList_(true);
 check('a past Done booking is NOT resurrected by the deep sweep', !idsOnList()['GYGDONE0002'], Object.keys(idsOnList()));
 
+console.log('--- Reconcile recovers a lost WEBSITE booking (the Matt Brown blind spot) ---');
+// A website reservation is authored by the webhook, then only its "NEW WEBSITE
+// RESERVATION" alert sits in Gmail. If the row is lost, reconcile must recover it
+// like any OTA booking — it could not before, because Website was absent from the
+// safety-net's source list.
+const webAlert = (id, name, dateText, dateKey) =>
+  __gmail.msg('NEW WEBSITE RESERVATION - Roots & Roads',
+    'A new website reservation has been received.\n\n' +
+    'Language: English\nName: ' + name + '\nEmail: x@y.com\nPhone: +447980312442\n' +
+    'Guests: 2\nTour date: ' + dateText + '\nTime: 11:00 AM' +
+    '\nSource: Website\nBooking ID: ' + id + '\nDateKey: ' + dateKey + '\nTime24: 11:00\n');
+resetWorld();
+__gmail.add([RNR.LABELS.WEB_CONFIRM], webAlert('WEB-MATT-0001', 'Matt Brown', 'Fri, 20 Dec 2030', '2030-12-20'));
+check('a website booking starts MISSING from the list', !idsOnList()['WEB-MATT-0001'], Object.keys(idsOnList()));
+reconcileConfirmationsToBookingList_();                          // shallow: Confirmations labels, incl. Website now
+check('reconcile RECOVERS the missing upcoming website booking', idsOnList()['WEB-MATT-0001'] === true, Object.keys(idsOnList()));
+
+console.log('--- Website reconcile still refuses a PAST website booking ---');
+resetWorld();
+__gmail.add([RNR.LABELS.WEB_CONFIRM], webAlert('WEB-OLD-0002', 'Old Guest', 'Sun, 5 Jan 2020', '2020-01-05'));
+reconcileConfirmationsToBookingList_(true);
+check('a past website booking is NOT resurrected', !idsOnList()['WEB-OLD-0002'], Object.keys(idsOnList()));
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
