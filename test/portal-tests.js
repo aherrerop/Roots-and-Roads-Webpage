@@ -28,6 +28,18 @@ delete A.pending()['2026-08-10|17:00|English|R']; LS['rr_pending'] = '{}';   // 
 console.log('--- The save payload carries children (so the ledger records them) ---');
 check('the save payload sends children in each booking', /children:\s*b\.children/.test(html), null);
 
+console.log('--- esc() escapes the single quote so an apostrophe name cannot break check-in ---');
+// A guest like O'Brien used to break the single-quoted data-mv attribute, so JSON.parse
+// threw in bindTours and the MANAGER's check-in buttons never got a handler ("click, no
+// reaction"). esc must escape ' so the attribute stays intact.
+const esc = eval('(' + html.split('const esc = ')[1].split(/;\r?\n/)[0] + ')');
+check("esc escapes the single quote (O'Brien -> O&#39;Brien)", esc("O'Brien") === "O&#39;Brien", esc("O'Brien"));
+check('an apostrophe name yields a data-mv payload with NO raw single quote', esc(JSON.stringify({ name: "O'Brien", bookingId: "X" })).indexOf("'") === -1, null);
+check('esc still escapes the other HTML-significant chars', esc('a<b>&"c') === 'a&lt;b&gt;&amp;&quot;c', esc('a<b>&"c'));
+// Defense in depth: even a malformed data attribute must not abort handler binding.
+check('the move-box JSON.parse is guarded (cannot kill check-in binding)', /let info; try\{ info=JSON\.parse\(box\.dataset\.mv\); \}catch\(e\)\{ return; \}/.test(html), null);
+check('the assign JSON.parse is guarded too', /let info; try\{ info=JSON\.parse\(sel\.dataset\.assign\); \}catch\(e\)\{ return; \}/.test(html), null);
+
 console.log('--- Freshness indicator + manager window controls exist ---');
 check('freshness element is in the page', /id="fresh"/.test(html), null);
 check('setFresh runs on load (loading/ok/stale states)', /setFresh\("loading"\)/.test(html) && /setFresh\("ok"/.test(html) && /setFresh\("stale"\)/.test(html), null);
