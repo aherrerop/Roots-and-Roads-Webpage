@@ -183,7 +183,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-09-adaptive-backpressure";
+const PORTAL_VERSION = "2026-09-14-portal-polish";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -447,6 +447,9 @@ function showDash(){
   $("loginView").classList.add("hidden"); $("dashView").classList.remove("hidden");
   $("who").textContent=store.name;
   const v=$("ver"); if(v) v.textContent="Portal "+PORTAL_VERSION;
+  restoreTab();                          // activate the remembered tab BEFORE first paint,
+                                         // so a cold-cache reload never flashes "My tours"
+                                         // over the tab (e.g. All tours) you were actually on
   const c=store.cache;
   if(c){ renderAll(c); }                 // instant render from the last load
   ckFlush();                              // push any check-ins queued offline last time
@@ -546,26 +549,14 @@ async function loadTours(nav){
     if(next!==POLL_MS){ POLL_MS=next; if(window._rrReschedulePoll) window._rrReschedulePoll(); }
   }
   if(r.loadLevel) LOAD_LEVEL=r.loadLevel;
-  setFresh("ok", r.now);
-  reflectLoadLevel();          // after setFresh, which rewrites the line
+  setFresh("ok", r.now);       // clean "Up to date · TIME" — the indicator stays simple
   store.cache=r;
   renderAll(r);
 }
-/* A quiet, honest indicator when the server is under load and has slowed the
-   passive refresh — so a busy period is visible, never a silent mystery. It never
-   blocks anything; your own actions stay immediate. */
-function reflectLoadLevel(){
-  try{
-    const el=$("fresh"); if(!el) return;
-    if(LOAD_LEVEL!=="normal"){
-      el.classList.add("busy");
-      const note = LOAD_LEVEL==="overloaded" ? " · server busy — refreshing less often" : " · busier than usual";
-      if(!/·\s(server busy|busier)/.test(el.textContent)) el.textContent += note;
-    } else {
-      el.classList.remove("busy");
-    }
-  }catch(e){}
-}
+/* Backpressure stays SILENT: when the server is busy it raises pollHint and we
+   poll less often (handled above), but the freshness line never changes wording —
+   the owner asked to keep the plain "Up to date / Updating…" indicator. LOAD_LEVEL
+   is still tracked for the timing analytics, just not shown. */
 /* One miss shouldn't slap "Can't reach the server" over good data — a mobile
    blip or a single slow response is normal. Keep the last list, retry quietly in
    a few seconds, and only show the banner after TWO misses in a row. Every miss
