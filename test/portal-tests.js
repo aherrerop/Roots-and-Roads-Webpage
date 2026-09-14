@@ -40,6 +40,20 @@ check('esc still escapes the other HTML-significant chars', esc('a<b>&"c') === '
 check('the move-box JSON.parse is guarded (cannot kill check-in binding)', /let info; try\{ info=JSON\.parse\(box\.dataset\.mv\); \}catch\(e\)\{ return; \}/.test(html), null);
 check('the assign JSON.parse is guarded too', /let info; try\{ info=JSON\.parse\(sel\.dataset\.assign\); \}catch\(e\)\{ return; \}/.test(html), null);
 
+console.log('--- A successful check-in is HELD so a stale read cannot flip it back (the check-in double-refresh) ---');
+// applyPendingCheckins calls ckQueueLoad (defined later in the file); pass a stub.
+const CK = (new Function('ckQueueLoad', block + '\n;return { setPendingCheckin, applyPendingCheckins, pendingCk: () => PENDING_CHECKIN };'))(() => []);
+CK.setPendingCheckin('GYG1', '2026-09-15', 3);
+const staleCk = { tours: [{ dateKey: '2026-09-15', bookings: [{ bookingId: 'GYG1', checked: false, checkedIn: 0 }] }], allTours: [] };
+CK.applyPendingCheckins(staleCk);
+check('a stale read showing NOT-checked is overridden to checked', staleCk.tours[0].bookings[0].checked === true, staleCk.tours[0].bookings[0]);
+check('the held check-in count is restored on the stale read', staleCk.tours[0].bookings[0].checkedIn === 3, staleCk.tours[0].bookings[0].checkedIn);
+const higherCk = { tours: [{ dateKey: '2026-09-15', bookings: [{ bookingId: 'GYG1', checked: true, checkedIn: 5 }] }], allTours: [] };
+CK.applyPendingCheckins(higherCk);
+check('a higher server count is NOT downgraded by the hold', higherCk.tours[0].bookings[0].checkedIn === 5, higherCk.tours[0].bookings[0].checkedIn);
+check('the check-in button records the hold (setPendingCheckin on tap)', /setPendingCheckin\(b\.bookingId, t\.dateKey, n\)/.test(html), null);
+check('a manager undo clears the hold (so undo is not fought)', /delete PENDING_CHECKIN\[b\.bookingId\+"\|"\+t\.dateKey\]/.test(html), null);
+
 console.log('--- Freshness indicator + manager window controls exist ---');
 check('freshness element is in the page', /id="fresh"/.test(html), null);
 check('setFresh runs on load (loading/ok/stale states)', /setFresh\("loading"\)/.test(html) && /setFresh\("ok"/.test(html) && /setFresh\("stale"\)/.test(html), null);
