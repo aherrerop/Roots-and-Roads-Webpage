@@ -93,6 +93,10 @@ const RNR = {
     FRENCH: 'French Tours',
     DONE: 'Done Tours',
     ERRORS: 'Errors',
+    // Integrity report: after every audit, the Gmail counts (confirmations /
+    // modifications / cancellations) reconciled against the sheet, so a manager can
+    // confirm at a glance that nothing is missing. verifyBookingIntegrity_ writes it.
+    VERIFICATION: 'Verification',
     // Read-optimised view for the guide portal: EVERY upcoming reservation across
     // all languages in ONE visible tab, so the portal reads one tab instead of
     // opening and scanning six. Rebuilt every run. Columns L,M (Checked-in,
@@ -590,9 +594,14 @@ function runBookingCore_(skipProcessed) {
     runPhase_('reconcileConfirmations', reconcileConfirmationsToBookingList_, !RNR_SKIP_PROCESSED_);
 
     // 4b. INVARIANT CHECKS (audits only): duplicates, cancelled-still-active,
-    //     completed-still-active, invalid rows. Findings land in Errors
-    //     (deduped) — the daily self-test email surfaces them.
+    //     completed-still-active, invalid rows — the sheet -> Gmail direction.
     runPhase_('invariants', checkInvariants_, !RNR_SKIP_PROCESSED_);
+
+    // 4c. INTEGRITY CHECK (audits only): the Gmail -> sheet direction — reconcile
+    //     the inbox confirmation / modification / cancellation counts against the
+    //     list and report anything still missing (should be 0 after reconcile).
+    //     Writes the Verification tab so a manager can confirm nothing is missing.
+    runPhase_('verify', verifyBookingIntegrity_, !RNR_SKIP_PROCESSED_);
 
     // 5. Tidy the sheets — a full rewrite of every tab, so only when
     //    something actually changed this run, or on audits.
@@ -1506,13 +1515,17 @@ function activeBookingIdSet_() {
   return set;
 }
 
-/** The booking id in a confirmation SUBJECT, when its shape is unambiguous
- *  (GYG…, Viator BR-…). Empty for sources whose subject has no full id (Guruwalk
- *  shows only a number) — those are always parsed, never pre-filtered. */
+/** The booking id in a confirmation / cancellation / modification SUBJECT, in the
+ *  same form the sheet stores it: GYG… (GetYourGuide), BR-… (Viator), BAR+number
+ *  (Guruwalk — its subjects show only the number: "Confirmed booking 12779994",
+ *  "has canceled booking 12779994", "a modification on booking 12779994"). Empty
+ *  when no id can be read; callers then fall back to a full parse, so a subject
+ *  format change can only cost speed, never a missed booking. */
 function confirmationIdFromSubject_(subject) {
   const s = String(subject || '');
-  let m = s.match(/\b(GYG[A-Z0-9]{5,})\b/i); if (m) return m[1];
-  m = s.match(/\b(BR-\d+)\b/i);              if (m) return m[1];
+  let m = s.match(/\b(GYG[A-Z0-9]{5,})\b/i);  if (m) return m[1].toUpperCase();
+  m = s.match(/\b(BR-\d+)\b/i);               if (m) return m[1].toUpperCase();
+  m = s.match(/\bbooking\s+(\d{5,})\b/i);      if (m) return 'BAR' + m[1];
   return '';
 }
 
@@ -1587,6 +1600,113 @@ function reconcileConfirmationsToBookingList_() {
 
   if (recovered) console.log('Reconcile recovered ' + recovered + ' missing booking(s).');
   return recovered;
+}
+
+/**
+ * INTEGRITY CHECK — the "prove nothing is missing" double-check. For every source
+ * it counts the Gmail confirmations / modifications / cancellations and reconciles
+ * them against the booking list: every confirmation still in the inbox is an
+ * upcoming booking that MUST be on the sheet (unless it is cancelled, superseded or
+ * already run). Anything valid + upcoming + not-cancelled + not-superseded that is
+ * NOT on the sheet is reported as MISSING. Runs on the AUDIT, right after reconcile
+ * (which heals missing rows), so a healthy system reports zero missing; a non-zero
+ * count is logged loudly and written to the Verification tab. Read-only itself — it
+ * never changes bookings, so it can never cause harm; it only tells the truth.
+ * `checkInvariants_` covers the other direction (cancelled / duplicate / completed
+ * rows that should NOT be on the sheet).
+ */
+function verifyBookingIntegrity_() {
+  const activeIds = activeBookingIdSet_();
+  const superseded = getSupersededIds_();
+  const per = [];
+  const missing = [];
+
+  const countInbox = (labelName) => {
+    if (!labelName) return 0;
+    try { return (GmailApp.search(searchTokenForLabel_(labelName) + ' in:inbox', 0, RNR.MAX_RECONCILE_THREADS) || []).length; }
+    catch (e) { return -1; }
+  };
+
+  sourceConfigs_().forEach(cfg => {
+    if (!cfg.confirm || !runHasTimeLeft_()) return;
+    let confThreads = [];
+    try { confThreads = GmailApp.search(searchTokenForLabel_(cfg.confirm) + ' in:inbox', 0, RNR.MAX_RECONCILE_THREADS) || []; } catch (e) {}
+    const s = { source: cfg.source, confirmations: confThreads.length,
+                modifications: countInbox(cfg.modify), cancellations: countInbox(cfg.cancel),
+                onSheet: 0, missing: 0 };
+
+    confThreads.forEach(t => {
+      if (!runHasTimeLeft_()) return;
+      try {
+        // Cheap path: a single-message confirmation whose id is on the sheet is fine.
+        const subjId = normalizeId_(confirmationIdFromSubject_(t.getFirstMessageSubject()));
+        if (subjId && activeIds[subjId]) { s.onSheet++; if (t.getMessageCount() === 1) return; }
+        uniqueBookings_(parseThread_(t, cfg.source, 'any')).forEach(bk => {
+          const nb = normalizeBooking_(bk);
+          if (!isValidBooking_(nb) || nb.isCancellation) return;
+          const id = normalizeId_(nb.bookingId);
+          if (!id) return;
+          if (activeIds[id]) return;                                  // present -> fine
+          if (superseded[id]) return;                                 // replaced by a modification
+          if (isCompleted_(nb) || isBookingCancelledByEmail_(nb)) return;  // legitimately absent
+          s.missing++;
+          missing.push(cfg.source + ' ' + nb.bookingId + '  ' + nb.name + '  ' +
+                       dateKey_(nb.date) + ' ' + normalizeTime_(nb.time));
+        });
+      } catch (e) { /* one thread can't break the report */ }
+    });
+    per.push(s);
+  });
+
+  writeVerificationReport_(per, missing, Object.keys(activeIds).length);
+  if (missing.length) {
+    logError_('INTEGRITY: ' + missing.length + ' confirmed upcoming booking(s) MISSING from the list',
+      missing.join('  |  '), '');
+  }
+  return { per: per, missing: missing.length };
+}
+
+/** Write the Verification tab: per-source Gmail counts reconciled against the sheet. */
+function writeVerificationReport_(per, missing, sheetTotal) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sh = ss.getSheetByName(RNR.SHEETS.VERIFICATION) || ss.insertSheet(RNR.SHEETS.VERIFICATION);
+    const rows = [];
+    rows.push(['Last verified', Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'), '', '', '']);
+    rows.push(['Result', missing.length ? ('⚠ ' + missing.length + ' MISSING — see below + Errors tab') : '✓ Nothing missing', '', '', '']);
+    rows.push(['Bookings on the list', String(sheetTotal), '', '', '']);
+    rows.push(['', '', '', '', '']);
+    rows.push(['Source', 'Inbox confirmations', 'On the list', 'Missing', 'Mods / Cancels (label)']);
+    per.forEach(s => rows.push([s.source, String(s.confirmations), String(s.onSheet), String(s.missing),
+                                s.modifications + ' / ' + s.cancellations]));
+    if (missing.length) {
+      rows.push(['', '', '', '', '']);
+      rows.push(['MISSING (source  id  name  date time)', '', '', '', '']);
+      missing.slice(0, 50).forEach(m => rows.push([m, '', '', '', '']));
+    }
+    rows.push(['', '', '', '', '']);
+    rows.push(['How to read this', 'Every confirmation still in the inbox is an upcoming booking that must be on a language tab. ' +
+      '"Missing" should always be 0 — the audit auto-recovers any gap and logs it. If it is >0, run recoverMissingBookings().', '', '', '']);
+    const w = Math.max.apply(null, rows.map(r => r.length));
+    sh.clear();
+    sh.getRange(1, 1, rows.length, w).setValues(rows.map(r => { while (r.length < w) r.push(''); return r; }));
+    sh.getRange(5, 1, 1, w).setFontWeight('bold');
+    sh.getRange(1, 1, 3, 1).setFontWeight('bold');
+    sh.setColumnWidth(1, 320);
+  } catch (e) { console.log('writeVerificationReport_: ' + e); }
+}
+
+/** Run the integrity check on demand (editor): prints + writes the Verification tab. */
+function verifyBookingsNow() {
+  RNR_RUN_STARTED_AT_ = Date.now();
+  resetRunCaches_();
+  RNR_SKIP_PROCESSED_ = false;
+  const r = verifyBookingIntegrity_();
+  const msg = r.missing
+    ? ('⚠ ' + r.missing + ' confirmed upcoming booking(s) MISSING — run recoverMissingBookings(). See the Verification + Errors tabs.')
+    : '✓ Verified: every confirmed upcoming booking is on the list. See the Verification tab for the counts.';
+  console.log(msg);
+  return msg;
 }
 
 /**

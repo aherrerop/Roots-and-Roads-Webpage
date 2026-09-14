@@ -232,7 +232,8 @@ check('...including the 61st, which a newest-60 cap silently dropped', idsOnList
 console.log('--- Reconcile pre-filter: skip present single-message confirmations, never miss others ---');
 check('confirmationIdFromSubject_ reads a GYG id', confirmationIdFromSubject_('Booking - S779080 - GYGFWV4Q65W4') === 'GYGFWV4Q65W4', null);
 check('confirmationIdFromSubject_ reads a Viator BR id', confirmationIdFromSubject_('New Booking for Tue (#BR-1445194423)') === 'BR-1445194423', null);
-check('confirmationIdFromSubject_ empty for a Guruwalk number subject (always parse)', confirmationIdFromSubject_('Confirmed booking 12779994 on your tour') === '', null);
+check('confirmationIdFromSubject_ maps a Guruwalk number to BAR+number', confirmationIdFromSubject_('Confirmed booking 12779994 on your tour') === 'BAR12779994', null);
+check('confirmationIdFromSubject_ maps a Guruwalk CANCEL subject too', confirmationIdFromSubject_('Roots & roads has canceled booking 12345678') === 'BAR12345678', null);
 resetWorld();
 const cov = __gmail.add([RNR.LABELS.GYG_CONFIRM],
   __gmail.msg('Booking - S1 - GYGCOV001', gygBody('GYGCOV001', 'X', 'December 1, 2030 10:00 AM', 2, 'Inglés')));
@@ -242,6 +243,26 @@ const multi = __gmail.add([RNR.LABELS.GYG_CONFIRM], [
   __gmail.msg('Booking - S1 - GYGCOV002', gygBody('GYGCOV002', 'Y', 'December 1, 2030 10:00 AM', 2, 'Inglés')),
   __gmail.msg('Booking detail change: - S1 - GYGCOV002', 'Fecha December 2, 2030 10:00 AM')]);
 check('a MULTI-message thread is ALWAYS parsed (never pre-filtered)', reconcileThreadAlreadyCovered_(multi, { 'GYGCOV002': true }) === false, null);
+
+console.log('--- Integrity check: counts + reconciles the inbox against the sheet ---');
+resetWorld();
+// One PRESENT (processed onto the list), one MISSING (in inbox, upcoming, not on
+// the list), one COMPLETED (past date -> legitimately absent).
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S1 - GYGPRESENT1', gygBody('GYGPRESENT1', 'Pia', 'December 20, 2030 10:00 AM', 2, 'Inglés')));
+processConfirmationLabel_(RNR.LABELS.GYG_CONFIRM, RNR.SOURCE.GYG);   // GYGPRESENT1 lands on the list
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S1 - GYGMISS0001', gygBody('GYGMISS0001', 'Quinn', 'December 21, 2030 10:00 AM', 2, 'Inglés')));  // upcoming, NOT on list
+__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S1 - GYGPAST0001', gygBody('GYGPAST0001', 'Rex', 'January 5, 2020 10:00 AM', 2, 'Inglés')));       // completed -> not missing
+const ig = verifyBookingIntegrity_();
+const gygStat = ig.per.find(p => p.source === RNR.SOURCE.GYG) || {};
+check('integrity counts inbox confirmations (3 GYG)', gygStat.confirmations === 3, gygStat.confirmations);
+check('integrity counts how many are on the list (1)', gygStat.onSheet === 1, gygStat.onSheet);
+check('integrity finds exactly 1 missing (the upcoming one)', ig.missing === 1, ig.missing);
+check('integrity does NOT flag the completed (past) booking as missing', gygStat.missing === 1, gygStat.missing);
+// After a reconcile heals it, the next verify is clean.
+reconcileConfirmationsToBookingList_();
+const ig2 = verifyBookingIntegrity_();
+check('after reconcile heals the gap, integrity reports ZERO missing', ig2.missing === 0, ig2.missing);
+check('a Verification tab is written', !!SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RNR.SHEETS.VERIFICATION), null);
 
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
