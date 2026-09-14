@@ -244,25 +244,34 @@ const multi = __gmail.add([RNR.LABELS.GYG_CONFIRM], [
   __gmail.msg('Booking detail change: - S1 - GYGCOV002', 'Fecha December 2, 2030 10:00 AM')]);
 check('a MULTI-message thread is ALWAYS parsed (never pre-filtered)', reconcileThreadAlreadyCovered_(multi, { 'GYGCOV002': true }) === false, null);
 
-console.log('--- Integrity check: counts + reconciles the inbox against the sheet ---');
+console.log('--- Reconcile recovers a booking ARCHIVED OUT of the inbox (not-in-inbox check) ---');
+// A still-upcoming booking whose confirmation was archived out of the inbox -> the
+// whole-label scan (not in:inbox) recovers it.
 resetWorld();
-// One PRESENT (processed onto the list), one MISSING (in inbox, upcoming, not on
-// the list), one COMPLETED (past date -> legitimately absent).
-__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S1 - GYGPRESENT1', gygBody('GYGPRESENT1', 'Pia', 'December 20, 2030 10:00 AM', 2, 'Inglés')));
-processConfirmationLabel_(RNR.LABELS.GYG_CONFIRM, RNR.SOURCE.GYG);   // GYGPRESENT1 lands on the list
-__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S1 - GYGMISS0001', gygBody('GYGMISS0001', 'Quinn', 'December 21, 2030 10:00 AM', 2, 'Inglés')));  // upcoming, NOT on list
-__gmail.add([RNR.LABELS.GYG_CONFIRM], __gmail.msg('Booking - S1 - GYGPAST0001', gygBody('GYGPAST0001', 'Rex', 'January 5, 2020 10:00 AM', 2, 'Inglés')));       // completed -> not missing
-const ig = verifyBookingIntegrity_();
-const gygStat = ig.per.find(p => p.source === RNR.SOURCE.GYG) || {};
-check('integrity counts inbox confirmations (3 GYG)', gygStat.confirmations === 3, gygStat.confirmations);
-check('integrity counts how many are on the list (1)', gygStat.onSheet === 1, gygStat.onSheet);
-check('integrity finds exactly 1 missing (the upcoming one)', ig.missing === 1, ig.missing);
-check('integrity does NOT flag the completed (past) booking as missing', gygStat.missing === 1, gygStat.missing);
-// After a reconcile heals it, the next verify is clean.
-reconcileConfirmationsToBookingList_();
-const ig2 = verifyBookingIntegrity_();
-check('after reconcile heals the gap, integrity reports ZERO missing', ig2.missing === 0, ig2.missing);
-check('a Verification tab is written', !!SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RNR.SHEETS.VERIFICATION), null);
+const arch = __gmail.add([RNR.LABELS.GYG_CONFIRM],
+  __gmail.msg('Booking - S1 - GYGARCH0001', gygBody('GYGARCH0001', 'Sol', 'December 20, 2030 10:00 AM', 2, 'Inglés')));
+arch.moveToArchive();                                            // out of the inbox, still Confirmations-labelled
+check('the archived confirmation is NOT in the inbox', arch.isInInbox() === false, null);
+reconcileConfirmationsToBookingList_();                          // shallow (Confirmations label, whole)
+check('reconcile recovers an upcoming booking archived out of the inbox', idsOnList()['GYGARCH0001'] === true, Object.keys(idsOnList()));
+
+console.log('--- Deep sweep recovers a booking wrongly moved to DONE while still upcoming ---');
+resetWorld();
+// Confirmation lives ONLY under the Done label (an earlier step wrongly archived it
+// as completed), but the tour is in the future.
+__gmail.add([RNR.LABELS.GYG_DONE],
+  __gmail.msg('Booking - S1 - GYGDONE0001', gygBody('GYGDONE0001', 'Teo', 'December 20, 2030 10:00 AM', 2, 'Inglés')));
+reconcileConfirmationsToBookingList_(false);                    // shallow: does NOT look in Done
+check('a shallow reconcile does NOT scan Done', !idsOnList()['GYGDONE0001'], Object.keys(idsOnList()));
+reconcileConfirmationsToBookingList_(true);                     // deep: scans Done too
+check('the DEEP reconcile recovers an upcoming booking hiding in Done', idsOnList()['GYGDONE0001'] === true, Object.keys(idsOnList()));
+
+console.log('--- Deep sweep still refuses to resurrect a COMPLETED (past) Done booking ---');
+resetWorld();
+__gmail.add([RNR.LABELS.GYG_DONE],
+  __gmail.msg('Booking - S1 - GYGDONE0002', gygBody('GYGDONE0002', 'Ugo', 'January 5, 2020 10:00 AM', 2, 'Inglés')));
+reconcileConfirmationsToBookingList_(true);
+check('a past Done booking is NOT resurrected by the deep sweep', !idsOnList()['GYGDONE0002'], Object.keys(idsOnList()));
 
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');

@@ -93,10 +93,6 @@ const RNR = {
     FRENCH: 'French Tours',
     DONE: 'Done Tours',
     ERRORS: 'Errors',
-    // Integrity report: after every audit, the Gmail counts (confirmations /
-    // modifications / cancellations) reconciled against the sheet, so a manager can
-    // confirm at a glance that nothing is missing. verifyBookingIntegrity_ writes it.
-    VERIFICATION: 'Verification',
     // Read-optimised view for the guide portal: EVERY upcoming reservation across
     // all languages in ONE visible tab, so the portal reads one tab instead of
     // opening and scanning six. Rebuilt every run. Columns L,M (Checked-in,
@@ -587,21 +583,19 @@ function runBookingCore_(skipProcessed) {
     const completedNow = runPhase_('completeRows', moveCompletedBookingRowsToDone_) || [];
     runPhase_('completeGmail', function () { moveCompletedGmailThreadsToDone_(completedNow); });
 
-    // 4a2. SAFETY NET (audits only): re-read confirmation threads and recover
-    //      any confirmed, upcoming booking missing from the list, so the
-    //      "Processed" label can never hide a booking. Runs before the invariant
-    //      checks so a just-recovered booking is counted as present.
-    runPhase_('reconcileConfirmations', reconcileConfirmationsToBookingList_, !RNR_SKIP_PROCESSED_);
+    // 4a2. SAFETY NET (audits only): re-read the confirmation threads and recover
+    //      any confirmed, upcoming booking missing from the list, so nothing can
+    //      hide a booking. Scans the whole Confirmations label every audit, and —
+    //      about once a day (deepReconcileDue_) — also the Done label, to catch a
+    //      still-upcoming booking that an earlier step wrongly archived. Runs before
+    //      the invariant checks so a just-recovered booking is counted as present.
+    runPhase_('reconcileConfirmations',
+      function () { return reconcileConfirmationsToBookingList_(deepReconcileDue_()); },
+      !RNR_SKIP_PROCESSED_);
 
     // 4b. INVARIANT CHECKS (audits only): duplicates, cancelled-still-active,
     //     completed-still-active, invalid rows — the sheet -> Gmail direction.
     runPhase_('invariants', checkInvariants_, !RNR_SKIP_PROCESSED_);
-
-    // 4c. INTEGRITY CHECK (audits only): the Gmail -> sheet direction — reconcile
-    //     the inbox confirmation / modification / cancellation counts against the
-    //     list and report anything still missing (should be 0 after reconcile).
-    //     Writes the Verification tab so a manager can confirm nothing is missing.
-    runPhase_('verify', verifyBookingIntegrity_, !RNR_SKIP_PROCESSED_);
 
     // 5. Tidy the sheets — a full rewrite of every tab, so only when
     //    something actually changed this run, or on audits.
@@ -1542,171 +1536,78 @@ function reconcileThreadAlreadyCovered_(thread, activeIds) {
 }
 
 /**
- * SAFETY NET (audits + recoverAllMissingBookings): guarantee the booking list
- * holds EVERY confirmed, upcoming, non-cancelled booking — so "Processed" can
- * never hide a booking that failed to land or was later removed.
+ * SAFETY NET — the booking list must always hold EVERY confirmed, upcoming,
+ * non-cancelled booking; this reads the confirmations straight from Gmail and
+ * re-inserts any that are missing. It runs on every audit (and in recoverMissing-
+ * Bookings), so a booking that never landed OR was later removed is put back
+ * automatically — the list self-heals.
  *
- * It reads confirmations straight from the INBOX. Confirmed bookings stay in the
- * inbox until their tour is over (the inbox IS the live "upcoming tours" list), so
- * this covers every upcoming booking regardless of how OLD its email is. The old
- * version read only the newest MAX_THREADS_AUDIT (60) threads per label — a fixed
- * count cap on the wrong dimension: a group booked months ahead (Olga Akhapkina,
- * 30 pax) has an old email but a future tour, so once >60 newer confirmations
- * arrived its email fell outside the window and, if its row was ever removed, the
- * net could no longer see it to restore it. `in:inbox` is bounded by "tour not yet
- * run", so no fixed cap can drop a live booking. Parses in permissive 'any' mode
- * (bypasses the confirm/modify classification that can drop a confirmation sharing
- * a thread with a modification). Missing valid bookings are re-inserted + logged.
+ * It scans the WHOLE Confirmations label, not just the inbox, so it also catches a
+ * confirmation that was somehow archived out of the inbox while its tour is still
+ * upcoming. With `includeDone` it ALSO scans the Done label — the last place a
+ * still-upcoming booking could hide if an earlier step wrongly archived it "as
+ * completed". Past tours are dropped by isCompleted_, cancelled/superseded by their
+ * own guards, so ONLY genuinely-missing upcoming bookings are recovered — it can
+ * never resurrect a tour that already ran or was cancelled.
+ *
+ * This replaced a newest-60 cap that lost bookings booked months ahead (Olga
+ * Akhapkina, 30 pax) — a count cap on the wrong dimension. A cheap pre-filter (an
+ * already-present single-message confirmation is skipped without a body read) plus
+ * per-thread time-gating keep it inside the run budget. Parses in permissive 'any'
+ * mode so a confirmation sharing a thread with a modification is not dropped.
  */
-function reconcileConfirmationsToBookingList_() {
-  const activeIds = activeBookingIdSet_();
-  const supersededIds = getSupersededIds_();   // codes a modification replaced
-  let recovered = 0;
+function reconcileConfirmationsToBookingList_(includeDone) {
+  const ctx = { activeIds: activeBookingIdSet_(), superseded: getSupersededIds_(), recovered: 0 };
 
   sourceConfigs_().forEach(cfg => {
-    if (!cfg.confirm || !runHasTimeLeft_()) return;
-
-    let threads = [];
-    try {
-      threads = GmailApp.search(searchTokenForLabel_(cfg.confirm) + ' in:inbox', 0, RNR.MAX_RECONCILE_THREADS) || [];
-    } catch (e) { return; }
-
-    threads.forEach(thread => {
+    if (!cfg.confirm) return;
+    const labelNames = [cfg.confirm];
+    if (includeDone && cfg.done) labelNames.push(cfg.done);   // deep sweep: the Done label too
+    labelNames.forEach(labelName => {
       if (!runHasTimeLeft_()) return;
-      try {
-        if (reconcileThreadAlreadyCovered_(thread, activeIds)) return;   // present + single-message -> skip body read
-        const bookings = uniqueBookings_(parseThread_(thread, cfg.source, 'any'));
-        bookings.forEach(bk => {
-          const nb = normalizeBooking_(bk);
-          if (!isValidBooking_(nb)) return;              // a modification line etc. — no full booking
-          if (nb.isCancellation) return;
-          if (isCompleted_(nb)) return;                  // already ran; lives in Done / Completed Log
-          if (isBookingCancelledByEmail_(nb)) return;    // legitimately cancelled — don't resurrect
-          const id = normalizeId_(nb.bookingId);
-          if (!id || activeIds[id]) return;              // already on the list
-          if (supersededIds[id]) return;                 // a modification replaced this code — don't resurrect (Sara Dervishi)
-          upsertActiveBooking_(nb, false);
-          activeIds[id] = true;
-          recovered++;
-          logError_('RECOVERED a confirmed booking that was missing from the list',
-            nb.bookingId + '  ' + nb.name + '  ' + dateKey_(nb.date) + ' ' + normalizeTime_(nb.time),
-            cfg.confirm);
-        });
-      } catch (e) {
-        logError_('reconcileConfirmationsToBookingList_ ' + cfg.source, e, cfg.confirm);
-      }
+      let threads = [];
+      try { threads = GmailApp.search(searchTokenForLabel_(labelName), 0, RNR.MAX_RECONCILE_THREADS) || []; } catch (e) { return; }
+      threads.forEach(thread => reconcileOneThread_(thread, cfg, ctx, labelName));
     });
   });
 
-  if (recovered) console.log('Reconcile recovered ' + recovered + ' missing booking(s).');
-  return recovered;
+  if (ctx.recovered) console.log('Reconcile recovered ' + ctx.recovered + ' missing booking(s).');
+  return ctx.recovered;
 }
 
-/**
- * INTEGRITY CHECK — the "prove nothing is missing" double-check. For every source
- * it counts the Gmail confirmations / modifications / cancellations and reconciles
- * them against the booking list: every confirmation still in the inbox is an
- * upcoming booking that MUST be on the sheet (unless it is cancelled, superseded or
- * already run). Anything valid + upcoming + not-cancelled + not-superseded that is
- * NOT on the sheet is reported as MISSING. Runs on the AUDIT, right after reconcile
- * (which heals missing rows), so a healthy system reports zero missing; a non-zero
- * count is logged loudly and written to the Verification tab. Read-only itself — it
- * never changes bookings, so it can never cause harm; it only tells the truth.
- * `checkInvariants_` covers the other direction (cancelled / duplicate / completed
- * rows that should NOT be on the sheet).
- */
-function verifyBookingIntegrity_() {
-  const activeIds = activeBookingIdSet_();
-  const superseded = getSupersededIds_();
-  const per = [];
-  const missing = [];
-
-  const countInbox = (labelName) => {
-    if (!labelName) return 0;
-    try { return (GmailApp.search(searchTokenForLabel_(labelName) + ' in:inbox', 0, RNR.MAX_RECONCILE_THREADS) || []).length; }
-    catch (e) { return -1; }
-  };
-
-  sourceConfigs_().forEach(cfg => {
-    if (!cfg.confirm || !runHasTimeLeft_()) return;
-    let confThreads = [];
-    try { confThreads = GmailApp.search(searchTokenForLabel_(cfg.confirm) + ' in:inbox', 0, RNR.MAX_RECONCILE_THREADS) || []; } catch (e) {}
-    const s = { source: cfg.source, confirmations: confThreads.length,
-                modifications: countInbox(cfg.modify), cancellations: countInbox(cfg.cancel),
-                onSheet: 0, missing: 0 };
-
-    confThreads.forEach(t => {
-      if (!runHasTimeLeft_()) return;
-      try {
-        // Cheap path: a single-message confirmation whose id is on the sheet is fine.
-        const subjId = normalizeId_(confirmationIdFromSubject_(t.getFirstMessageSubject()));
-        if (subjId && activeIds[subjId]) { s.onSheet++; if (t.getMessageCount() === 1) return; }
-        uniqueBookings_(parseThread_(t, cfg.source, 'any')).forEach(bk => {
-          const nb = normalizeBooking_(bk);
-          if (!isValidBooking_(nb) || nb.isCancellation) return;
-          const id = normalizeId_(nb.bookingId);
-          if (!id) return;
-          if (activeIds[id]) return;                                  // present -> fine
-          if (superseded[id]) return;                                 // replaced by a modification
-          if (isCompleted_(nb) || isBookingCancelledByEmail_(nb)) return;  // legitimately absent
-          s.missing++;
-          missing.push(cfg.source + ' ' + nb.bookingId + '  ' + nb.name + '  ' +
-                       dateKey_(nb.date) + ' ' + normalizeTime_(nb.time));
-        });
-      } catch (e) { /* one thread can't break the report */ }
-    });
-    per.push(s);
-  });
-
-  writeVerificationReport_(per, missing, Object.keys(activeIds).length);
-  if (missing.length) {
-    logError_('INTEGRITY: ' + missing.length + ' confirmed upcoming booking(s) MISSING from the list',
-      missing.join('  |  '), '');
-  }
-  return { per: per, missing: missing.length };
-}
-
-/** Write the Verification tab: per-source Gmail counts reconciled against the sheet. */
-function writeVerificationReport_(per, missing, sheetTotal) {
+/** Recover any missing, valid, UPCOMING booking from ONE confirmation/Done thread. */
+function reconcileOneThread_(thread, cfg, ctx, labelName) {
+  if (!runHasTimeLeft_()) return;
   try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sh = ss.getSheetByName(RNR.SHEETS.VERIFICATION) || ss.insertSheet(RNR.SHEETS.VERIFICATION);
-    const rows = [];
-    rows.push(['Last verified', Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'), '', '', '']);
-    rows.push(['Result', missing.length ? ('⚠ ' + missing.length + ' MISSING — see below + Errors tab') : '✓ Nothing missing', '', '', '']);
-    rows.push(['Bookings on the list', String(sheetTotal), '', '', '']);
-    rows.push(['', '', '', '', '']);
-    rows.push(['Source', 'Inbox confirmations', 'On the list', 'Missing', 'Mods / Cancels (label)']);
-    per.forEach(s => rows.push([s.source, String(s.confirmations), String(s.onSheet), String(s.missing),
-                                s.modifications + ' / ' + s.cancellations]));
-    if (missing.length) {
-      rows.push(['', '', '', '', '']);
-      rows.push(['MISSING (source  id  name  date time)', '', '', '', '']);
-      missing.slice(0, 50).forEach(m => rows.push([m, '', '', '', '']));
-    }
-    rows.push(['', '', '', '', '']);
-    rows.push(['How to read this', 'Every confirmation still in the inbox is an upcoming booking that must be on a language tab. ' +
-      '"Missing" should always be 0 — the audit auto-recovers any gap and logs it. If it is >0, run recoverMissingBookings().', '', '', '']);
-    const w = Math.max.apply(null, rows.map(r => r.length));
-    sh.clear();
-    sh.getRange(1, 1, rows.length, w).setValues(rows.map(r => { while (r.length < w) r.push(''); return r; }));
-    sh.getRange(5, 1, 1, w).setFontWeight('bold');
-    sh.getRange(1, 1, 3, 1).setFontWeight('bold');
-    sh.setColumnWidth(1, 320);
-  } catch (e) { console.log('writeVerificationReport_: ' + e); }
+    if (reconcileThreadAlreadyCovered_(thread, ctx.activeIds)) return;   // present single-message -> skip body read
+    uniqueBookings_(parseThread_(thread, cfg.source, 'any')).forEach(bk => {
+      const nb = normalizeBooking_(bk);
+      if (!isValidBooking_(nb) || nb.isCancellation) return;   // not a full booking, or a cancellation line
+      if (isCompleted_(nb)) return;                            // already ran -> Done, correctly absent
+      if (isBookingCancelledByEmail_(nb)) return;              // legitimately cancelled -> don't resurrect
+      const id = normalizeId_(nb.bookingId);
+      if (!id || ctx.activeIds[id] || ctx.superseded[id]) return;   // already present, or a modification replaced this code
+      upsertActiveBooking_(nb, false);
+      ctx.activeIds[id] = true;
+      ctx.recovered++;
+      logError_('RECOVERED a confirmed booking that was missing from the list',
+        nb.bookingId + '  ' + nb.name + '  ' + dateKey_(nb.date) + ' ' + normalizeTime_(nb.time), labelName);
+    });
+  } catch (e) {
+    logError_('reconcileOneThread_ ' + cfg.source, e, labelName);
+  }
 }
 
-/** Run the integrity check on demand (editor): prints + writes the Verification tab. */
-function verifyBookingsNow() {
-  RNR_RUN_STARTED_AT_ = Date.now();
-  resetRunCaches_();
-  RNR_SKIP_PROCESSED_ = false;
-  const r = verifyBookingIntegrity_();
-  const msg = r.missing
-    ? ('⚠ ' + r.missing + ' confirmed upcoming booking(s) MISSING — run recoverMissingBookings(). See the Verification + Errors tabs.')
-    : '✓ Verified: every confirmed upcoming booking is on the list. See the Verification tab for the counts.';
-  console.log(msg);
-  return msg;
+/** True at most once per ~20h (Script Property throttle) — gates the heavier Done
+ *  deep-sweep so the audit runs it about once a day without doing it every run. */
+function deepReconcileDue_() {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    const last = Number(p.getProperty('RNR_LAST_DEEP_RECONCILE') || 0);
+    if (Date.now() - last < 20 * 3600000) return false;
+    p.setProperty('RNR_LAST_DEEP_RECONCILE', String(Date.now()));
+    return true;
+  } catch (e) { return false; }
 }
 
 /**
@@ -1828,7 +1729,7 @@ function recoverMissingBookings() {
   RNR_SKIP_PROCESSED_ = false;
   try {
     ensureSheets_();
-    const n = reconcileConfirmationsToBookingList_();
+    const n = reconcileConfirmationsToBookingList_(true);   // deep: Confirmations AND Done labels
     dedupeActiveSheets_();
     sortActiveSheets_();
     safeRebuildPortalFeed_();
