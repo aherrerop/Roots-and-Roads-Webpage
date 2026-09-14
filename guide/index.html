@@ -182,7 +182,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-14-silent-backoff";
+const PORTAL_VERSION = "2026-09-14-fast-propagation";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -480,25 +480,15 @@ function canAutoRefresh(){
   if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName||"") && a.closest && a.closest("#toursPane,#schedPane")) return false; // typing/choosing in a field
   return true;
 }
-// Base auto-refresh interval (ms). Every request runs as the owner and Google
-// serializes those executions, so N guides polling is the main source of the
-// queue contention that throttles loads. 60s (vs the old 30s) halves the request
-// rate — the single biggest contention lever — and POLL_MS widens further, up to
-// 180s, when the server reports it is busy (silent: no UI change).
-let POLL_MS = 60000;
-function scheduleNextPoll(){
-  if(window._rrPollT) clearTimeout(window._rrPollT);
-  window._rrPollT = setTimeout(()=>{ ckFlush(); if(canAutoRefresh()) loadTours("poll"); scheduleNextPoll(); }, POLL_MS);
-}
-window._rrReschedulePoll = scheduleNextPoll;
 function startAutoRefresh(){
-  if(window._rrStarted) return; window._rrStarted = true;
-  // Self-rescheduling poll (not a fixed setInterval) so the interval can widen
-  // under load. A co-guide's check-in still shows within ~60s, and the person who
-  // MADE a change sees it immediately (optimistic overlay + post-action reconcile)
-  // — so the slower poll costs the actor no freshness. The inflight guard still
-  // drops any poll that would overlap a running load.
-  scheduleNextPoll();
+  if(window._rrRefresh) return;
+  // Poll every 20s so an assignment or check-in made on another device shows up
+  // FAST (the manager assigns on one screen and watches it appear on the phone).
+  // The person who made a change sees it instantly via the optimistic overlay; the
+  // poll is what propagates it to everyone else, so it must stay snappy. The
+  // inflight guard (LOADING) still drops any poll that would overlap a running load,
+  // so a slow load never stacks up requests.
+  window._rrRefresh = setInterval(()=>{ ckFlush(); if(canAutoRefresh()) loadTours("poll"); }, 20000);
   // Check for a newer deployed build every 5 min and when the tab regains focus.
   window._rrVerCheck = setInterval(checkForUpdate, 300000);
   document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours("focus"); } });
@@ -537,10 +527,6 @@ async function loadTours(nav){
   // see real completed-load times (vs the aborts/timeouts reported below).
   if(LOAD_FAILS>0 || LOAD_NAV==="initial") beacon("ok", took, LOAD_NAV);
   LOAD_FAILS=0;
-  // SILENT adaptive back-off: when the owner-run backend is queuing it raises
-  // pollHint; we poll less often so the queue drains, then it drops back. Clamped
-  // so a bad value can't wedge the poll. No UI text — the indicator stays plain.
-  if(r.pollHint){ const next=Math.max(30000, Math.min(180000, Number(r.pollHint)*1000)); if(next!==POLL_MS){ POLL_MS=next; if(window._rrReschedulePoll) window._rrReschedulePoll(); } }
   setFresh("ok", r.now);
   store.cache=r;
   renderAll(r);
