@@ -124,7 +124,13 @@ check('the auto-refresh poll base is 30s (fewer serialized executions)', /POLL_M
 check('the passive poll is adaptive (self-rescheduling on POLL_MS)', /setTimeout\(\(\)=>\{ ckFlush\(\); if\(canAutoRefresh\(\)\) loadTours\("poll"\); scheduleNextPoll\(\); \}, POLL_MS\)/.test(html), null);
 check('the client adopts the server pollHint (backpressure) and reschedules', /if\(r\.pollHint\)\{[\s\S]*?POLL_MS=next; if\(window\._rrReschedulePoll\) window\._rrReschedulePoll\(\)/.test(html), null);
 check('pollHint is clamped so a bad value cannot wedge the poll', /Math\.max\(20000, Math\.min\(180000, Number\(r\.pollHint\)\*1000\)\)/.test(html), null);
-check('a busy server is shown honestly (load-level indicator)', /function reflectLoadLevel\(\)/.test(html) && /\.fresh\.busy/.test(html), null);
+// Backpressure stays SILENT: pollHint still widens the poll under load (asserted
+// above), but the freshness line must NOT be rewritten with "server busy"/"busier
+// than usual" — the owner asked for the plain "Up to date / Updating…" wording.
+check('the freshness indicator stays plain (no "busy" text appended)', !/server busy|busier than usual/.test(html), null);
+// The remembered tab is applied BEFORE first paint (guarded so it can never abort
+// the load), and again after each render — so a reload never flashes "My tours".
+check('showDash restores the last tab early, guarded so it cannot block the load', /try\{ restoreTab\(\); \}catch\(e\)\{\}/.test(html), null);
 check('a move reconciles with loadTours whether it succeeds OR fails', /\.mvbox[\s\S]*?loadTours\(\);\s+\/\/ reconcile either way/.test(html), null);
 check('one Move applies BOTH language and time in a single call', /api\("move",\{[\s\S]*?toLanguage:toLanguage,[\s\S]*?toTime: timeChange/.test(html), null);
 check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime && \(!dateSel \|\| dateSel\.value===info\.fromDate\)\)/.test(html), null);
