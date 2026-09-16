@@ -290,8 +290,8 @@ function updateWeeklyScheduleToCurrentOffer() {
   // and set Private = yes, so an Italian private tour keeps Italian.
   const preserved = [];
   if (sh.getLastRow() > 1) {
-    const raw = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
-    const dv = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getDisplayValues();
+    const raw = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
+    const dv = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getDisplayValues();
     raw.forEach((r, i) => {
       const langRaw = String(dv[i][2] || r[2] || '').trim();
       const isPriv = /^(1|true|yes|y|x)$/i.test(String(dv[i][8] || '').trim())
@@ -310,7 +310,8 @@ function updateWeeklyScheduleToCurrentOffer() {
         r[5] || '',
         String(dv[i][6] || '').trim(),                       // Guide (col G)
         String(dv[i][7] || '').trim(),                       // Hide from availability (col H)
-        isPriv ? 'yes' : String(dv[i][8] || '').trim()       // Private (col I)
+        isPriv ? 'yes' : String(dv[i][8] || '').trim(),      // Private (col I)
+        String(dv[i][9] || '').trim()                        // Hide from website (col J) — preserved as-is
       ]);
     });
   }
@@ -320,9 +321,10 @@ function updateWeeklyScheduleToCurrentOffer() {
   // EVERY availability week. (Stamping today's date here made the offer look
   // like it started on the run date, hiding tours such as 11:00 from earlier
   // weeks and — on any mid-week re-run — from the current week's early days.)
-  // 9 columns: Day, Time, Language, Guides needed, Active from, Active until,
-  // Guide (G), Hide from availability (H), Private (I). Managed rows leave G/H/I blank.
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '', '']));
+  // 10 columns: Day, Time, Language, Guides needed, Active from, Active until,
+  // Guide (G), Hide from availability (H), Private (I), Hide from website (J).
+  // Managed offer rows leave G/H/I/J blank.
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '', '', '']));
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
 
   add(MTThF, '11:00', 'English');
@@ -331,15 +333,15 @@ function updateWeeklyScheduleToCurrentOffer() {
   add(['Wednesday'], '17:00', 'English');
   add(['Saturday'], '17:00', 'English');
 
-  const all = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability', 'Private']]
+  const all = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability', 'Private', 'Hide from website']]
     .concat(rows)
     .concat(preserved);
 
   sh.clear();
   // Time column as TEXT before writing: "11:00" can never again become a Date.
   sh.getRange(1, 2, all.length, 1).setNumberFormat('@');
-  sh.getRange(1, 1, all.length, 9).setValues(all);
-  sh.getRange(1, 1, 1, 9).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+  sh.getRange(1, 1, all.length, 10).setValues(all);
+  sh.getRange(1, 1, 1, 10).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
   sh.setFrozenRows(1);
   Logger.log('Weekly_Schedule updated: ' + rows.length + ' offer rows + ' +
              preserved.length + ' preserved rows (German etc., times repaired).');
@@ -746,7 +748,7 @@ function setupWeeklySchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('Weekly_Schedule') || ss.insertSheet('Weekly_Schedule');
 
-  const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability', 'Private']];
+  const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability', 'Private', 'Hide from website']];
   // Blank "Active from" = always active (see updateWeeklyScheduleToCurrentOffer).
   // Blank "Guide" (col G) = no recurring default; fill it to auto-assign a guide
   // to that weekly slot every week (a manager can still override a single date).
@@ -755,7 +757,10 @@ function setupWeeklySchedule() {
   // "Private" (col I) = yes/x marks a private slot (any language, or blank Language
   // for language-agnostic): shows on the availability sheet, never staged as a
   // group tour, never sent to the website.
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '', '']));
+  // Blank "Hide from website" (col J) = shows on the public website; set TRUE/yes/x
+  // to keep it OFF the website while still on the availability sheet + portal.
+  // Cols H and J are INDEPENDENT — management controls each surface separately.
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '', '', '']));
 
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
   add(MTThF, '11:00', 'English');
@@ -772,14 +777,14 @@ function setupWeeklySchedule() {
   // 17:00, Sat 17:00. To offer a private tour in a specific language, add a row
   // with that Language and Private = yes.
   const MTWThF = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-  const addPriv = (days, time) => days.forEach(d => rows.push([d, time, '', 0, '', '', '', '', 'yes']));
+  const addPriv = (days, time) => days.forEach(d => rows.push([d, time, '', 0, '', '', '', '', 'yes', '']));
   addPriv(MTWThF, '10:00');
   addPriv(MTWThF, '17:00');
   addPriv(['Saturday'], '17:00');
 
   sh.clear();
-  sh.getRange(1, 1, rows.length, 9).setValues(rows);
-  sh.getRange(1, 1, 1, 9).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+  sh.getRange(1, 1, rows.length, 10).setValues(rows);
+  sh.getRange(1, 1, 1, 10).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
   sh.setFrozenRows(1);
 }
 
@@ -1120,7 +1125,13 @@ function readWeeklySchedule_(ss) {
       // "Hide from availability" (col H): TRUE/yes/x hides this slot's column from
       // the guide-availability sheet ONLY. The tour still runs on the website and
       // shows on the guide portal (buildShifts_ stages it regardless).
-      hideFromAvailability: /^(1|true|yes|y|x|hide)$/i.test(String(displayRow[7] || "").trim())
+      hideFromAvailability: /^(1|true|yes|y|x|hide)$/i.test(String(displayRow[7] || "").trim()),
+      // "Hide from website" (col J): TRUE/yes/x hides this slot from the PUBLIC
+      // WEBSITE's bookable availability ONLY. Independent of Hide from availability
+      // (col H) and Private (col I) — management controls each surface separately.
+      // The website builder lives in the booking project (websiteAvailabilityUpdate.gs),
+      // which reads this same column; this field mirrors it for the control side.
+      hideFromWebsite: /^(1|true|yes|y|x|hide)$/i.test(String(displayRow[9] || "").trim())
     });
   }
   return rules;

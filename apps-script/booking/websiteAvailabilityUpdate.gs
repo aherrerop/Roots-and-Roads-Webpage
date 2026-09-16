@@ -131,8 +131,9 @@ function websiteReadWeeklyScheduleIntoMap_(control, slots) {
   const sh = control.getSheetByName(WEBSITE_CONTROL_WEEKLY_TAB);
   if (!sh || sh.getLastRow() < 2) return;
 
-  const values = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
-  const display = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getDisplayValues();
+  // Read 10 columns (A–J) so the "Hide from website" flag (col J) comes through.
+  const values = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
+  const display = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getDisplayValues();
 
   values.forEach((row, i) => {
     const day = websiteClean_(display[i][0]);
@@ -145,6 +146,10 @@ function websiteReadWeeklyScheduleIntoMap_(control, slots) {
     const isPrivate = /^(1|true|yes|y|x)$/i.test(websiteClean_(display[i][8]))
                       || /^private$/i.test(websiteClean_(display[i][2]));
     if (isPrivate) return;
+    // "Hide from website" (col J): management can keep a slot on the availability
+    // sheet + portal but OFF the public website. Independent of col H/I. TRUE/yes/x.
+    const hideFromWebsite = /^(1|true|yes|y|x|hide)$/i.test(websiteClean_(display[i][9]));
+    if (hideFromWebsite) return;
     const language = websiteNormalizeLanguage_(display[i][2]);
 
     if (!day || !time || !language) return;

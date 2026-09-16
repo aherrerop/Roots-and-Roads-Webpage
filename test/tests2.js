@@ -95,6 +95,35 @@ check('portal/website still see the hidden Mon 16:00 Italian',
 check('English default (blank col H) is not hidden',
   hideRules.find(r=>r.language==='English').hideFromAvailability===false, null);
 
+/* --- "Hide from website" (col J): INDEPENDENT of Hide from availability (col H).
+      Management can hide a slot from the website but keep it on the availability
+      sheet + portal, or the reverse, or both, or neither. --- */
+console.log('--- hideFromWebsite column (independent of hideFromAvailability) ---');
+ws.clear();
+ws.getRange(1,1,5,10).setValues([
+ ['Day','Time','Language','Guides needed','Active from','Active until','Guide','Hide from availability','Private','Hide from website'],
+ ['Monday','11:00','English',1,'','','','','',''],            // shows on BOTH
+ ['Tuesday','16:00','Italian',1,'','','','yes','',''],        // hidden from availability ONLY
+ ['Wednesday','16:00','Italian',1,'','','','','','yes'],      // hidden from website ONLY
+ ['Thursday','16:00','Italian',1,'','','','yes','','yes']]);  // hidden from BOTH
+const webRules=readWeeklySchedule_(control);
+const gday=d=>webRules.find(r=>r.day===d)||{};
+check('blank col J parses hideFromWebsite=false', gday('Monday').hideFromWebsite===false, gday('Monday'));
+check('col J = yes parses hideFromWebsite=true', gday('Wednesday').hideFromWebsite===true, gday('Wednesday'));
+check('Hide-from-website row is NOT hidden from availability (independent)', gday('Wednesday').hideFromAvailability===false, gday('Wednesday'));
+check('Hide-from-availability row is NOT hidden from website (independent)', gday('Tuesday').hideFromWebsite===false, gday('Tuesday'));
+check('a row flagged in BOTH cols is hidden from both', gday('Thursday').hideFromAvailability===true && gday('Thursday').hideFromWebsite===true, gday('Thursday'));
+// The website builder (booking project) filters !hideFromWebsite; the availability
+// sheet filters !hideFromAvailability — two independent lists off the same rows.
+const webVisible=webRules.filter(r=>!r.hideFromWebsite);
+check('website list omits the Hide-from-website rows (Wed + Thu)',
+  !webVisible.some(r=>r.day==='Wednesday') && !webVisible.some(r=>r.day==='Thursday'), webVisible.map(r=>r.day));
+check('website list KEEPS the Hide-from-availability-only row (Tue)',
+  webVisible.some(r=>r.day==='Tuesday'), webVisible.map(r=>r.day));
+const availVisible2=webRules.filter(r=>!r.hideFromAvailability);
+check('availability list KEEPS the Hide-from-website-only row (Wed)',
+  availVisible2.some(r=>r.day==='Wednesday'), availVisible2.map(r=>r.day));
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
