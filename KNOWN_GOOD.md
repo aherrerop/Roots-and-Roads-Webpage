@@ -47,7 +47,7 @@ To just *look at* the old copy without changing anything:
 
 | Blessed (date) | Commit | Deployed versions at that point | Notes |
 |---|---|---|---|
-| 2026-09-16 | `66419d0` | Control **v97** · Booking **v101** · Portal **2026-09-16-assign-dots** | Full system verified green (709 assertions); crisis playbooks added; check-in/assign/apostrophe fixes, website-recovery, Hide-from-website, availability dots all in and working. |
+| 2026-09-16 | `known-good` tag | Control **v97** · Booking **v101** · Portal **2026-09-16-assign-dots** | Full system verified green (709 assertions); crisis playbooks added; check-in/assign/apostrophe fixes, website-recovery, Hide-from-website, availability dots all in and working. (`npm run knowngood` prints the exact commit.) |
 
 _When you run `npm run bless`, add a row here (date, `git rev-parse --short HEAD`,
 the deployed versions from the deploy output, one-line note) so we keep a readable
