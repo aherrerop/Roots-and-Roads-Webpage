@@ -178,12 +178,69 @@
 </div>
 
 <script>
+/* ============================================================================
+   GUIDE PORTAL — maintainer's map & damage-control guide
+   ----------------------------------------------------------------------------
+   WHAT: one static page (served by GitHub Pages) that guides + managers open on
+   their phones. It talks to the Apps Script web app (PORTAL_URL) for all data.
+   NO build step — edit this file, bump PORTAL_VERSION, git push (Pages deploys).
+
+   THE FLOW: login -> showDash() -> loadTours() -> renderAll(r) -> renderTours()
+   then bindTours(). A poll re-loads periodically; checkForUpdate() hard-reloads
+   the phone onto a newer build when one is deployed.
+
+   HARD-WON RULES (each one cost a real outage — do not break):
+   1. esc() MUST escape the single quote '. Guest names are placed into
+      SINGLE-quoted data-* attributes (data-mv carries the name); an apostrophe
+      (O'Brien) broke JSON.parse in bindTours and silently killed check-in binding.
+   2. In showDash(), NOTHING that can throw may run before loadTours("initial").
+      A throw there aborts the whole load = blank screen, no "Updating". The
+      restoreTab() call there is wrapped in try/catch for exactly this reason.
+   3. In bindTours(), handlers bind top-to-bottom; a throw in one binder skips ALL
+      later ones (check-in included). Guard every JSON.parse of a data-* attribute.
+   4. Bump PORTAL_VERSION on EVERY deploy (drives auto-update + the footer). After
+      deploying, confirm the LIVE footer shows the new version.
+   5. Replica-lag holds: a change you just made must survive the NEXT (possibly
+      stale) server read for the 90s settle window, or it "flips back" on refresh.
+        assigns   -> PENDING_ASSIGN  + applyPendingAssigns()
+        check-ins -> PENDING_CHECKIN + applyPendingCheckins()  (never downgrades)
+      Keep BOTH applied in renderAll() whenever you touch the render.
+   6. A check-in must never be lost: a failed save is QUEUED (ckEnqueue) and
+      retried by ckFlush() on every poll/focus/reconnect; saveTour() returns ok
+      only after the server (ledger) write confirms.
+
+   WHERE THINGS LIVE (search the section markers below):
+     CONFIG          PORTAL_URL, PORTAL_VERSION, checkForUpdate
+     API             api() — fetch-first with JSONP fallback + timeouts
+     STATE/HELPERS   store (localStorage), esc/cssq, setFresh, the PENDING_* holds
+     LOGIN           doLogin
+     TABS            switchTab / restoreTab (remembered tab)
+     LOAD            showDash, loadTours, startAutoRefresh (the poll), onLoadFailed,
+                     applyPendingAssigns/applyPendingCheckins, renderAll
+     TOUR CARDS      renderTours, tourCard, assignSelect, bindTours (every button
+                     handler: check-in, assign, move, note, close)
+     BOOT            if(store.token) showDash()
+
+   DAMAGE CONTROL (symptom -> where to look):
+     nothing loads / no "Updating"      -> a throw in showDash before loadTours (rule 2)
+     click check-in, no reaction        -> a throw in bindTours before the .ckin
+                                           binding (rules 1/3); check the browser
+                                           console for "Unterminated string in JSON"
+     change flips back on 1st refresh   -> a PENDING_* hold is missing or its key
+                                           doesn't match the server shift (rule 5)
+     stuck on an old build              -> PORTAL_VERSION not bumped, or edge cache
+                                           (hard-reload / incognito) (rule 4)
+     server slow / loads time out       -> owner-serialized Apps Script contention;
+                                           the poll backs off via pollHint. Not a bug
+                                           in THIS file — see the control project.
+   ============================================================================ */
+
 /* ================== CONFIG ================== */
 const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hcjuNZ_Z7J8zu7iI5ZPq9P4Ag6rZ19-XYgx_qWjFLohAa7iEf/exec";
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-14-checkin-hold";
+const PORTAL_VERSION = "2026-09-16-cleanup";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -524,7 +581,6 @@ function startAutoRefresh(){
 let LOAD_SEQ = 0;
 let LOADING = false;   // one tours request at a time — never let polls pile up
 let POLL_MS = 30000;   // passive-refresh interval; the server adjusts it via r.pollHint under load
-let LOAD_LEVEL = "normal";  // server-reported contention level (normal/busy/overloaded)
 async function loadTours(nav){
   // A tours load can take several seconds. The 20s poll (and focus/visibility
   // events) must NOT start a second one while the first is still running, or
@@ -555,17 +611,14 @@ async function loadTours(nav){
     const next=Math.max(20000, Math.min(180000, Number(r.pollHint)*1000));
     if(next!==POLL_MS){ POLL_MS=next; if(window._rrReschedulePoll) window._rrReschedulePoll(); }
   }
-  if(r.loadLevel) LOAD_LEVEL=r.loadLevel;
-  setFresh("ok", r.now);       // plain "Up to date · TIME" — the indicator stays simple
-  reflectLoadLevel();
+  // The freshness line stays PLAIN ("Up to date / Updating… / Can't refresh").
+  // Backpressure still works silently (pollHint widens the poll under load, just
+  // above); no load-level note is ever appended to the line (the owner asked to
+  // keep it plain).
+  setFresh("ok", r.now);
   store.cache=r;
   renderAll(r);
 }
-/* The freshness line stays PLAIN: just "Up to date / Updating… / Can't refresh".
-   Backpressure still works silently (pollHint widens the poll under load, handled
-   above); it no longer appends any load-level note to the line, which the owner
-   asked to remove. Kept as a no-op so no call site can ever dangle. */
-function reflectLoadLevel(){ /* intentionally does nothing — indicator kept plain */ }
 /* One miss shouldn't slap "Can't reach the server" over good data — a mobile
    blip or a single slow response is normal. Keep the last list, retry quietly in
    a few seconds, and only show the banner after TWO misses in a row. Every miss
