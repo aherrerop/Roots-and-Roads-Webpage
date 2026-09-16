@@ -18,10 +18,10 @@
     "deploy:booking": "cd apps-script/booking && clasp push -f && clasp deploy -i AKfycbzGjk_fmnHOqlAmiOi8U2cTMBbkv6l7awGTEGicgwk5On88XeivaD4SlJzYWAl-aw7Z -d \"Deployed via npm run deploy:booking\"",
     "predeploy:control": "npm test",
     "deploy:control": "cd apps-script/control && clasp push -f && clasp deploy -i AKfycbxzl4w3VSVj4Tln9H3hcjuNZ_Z7J8zu7iI5ZPq9P4Ag6rZ19-XYgx_qWjFLohAa7iEf -d \"Deployed via npm run deploy:control\"",
-    "knowngood": "git --no-pager log -1 --format='known-good = %h  %ci  %s' known-good || echo 'No known-good yet — run: npm run bless'",
-    "compare": "git --no-pager diff --stat known-good..HEAD || echo 'No known-good yet — run: npm run bless'",
+    "knowngood": "git --no-pager log -1 --oneline known-good",
+    "compare": "git --no-pager diff --stat known-good..HEAD",
     "compare:full": "git --no-pager diff known-good..HEAD",
-    "bless": "npm test && git tag -f known-good && git push -f origin known-good && git rev-parse --short HEAD | xargs echo 'Blessed as known-good ->'"
+    "bless": "npm test && git tag -f known-good && git push -f origin known-good && git --no-pager log -1 --oneline known-good"
   },
   "devDependencies": {
     "@google/clasp": "^2.4.2"
