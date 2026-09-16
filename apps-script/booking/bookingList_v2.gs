@@ -272,7 +272,15 @@ const RNR = {
   // burst; the search catches the rest once indexed, and the audit backstops all.
   RECENT_RELIABLE_FAST: 3,
 
-  MAX_RUN_MS: 180000,
+  MAX_RUN_MS: 180000,        // audit + manual recovery budget (full pipeline)
+  // The FREQUENT 5-min run gets a TIGHTER budget so it always exits with margin,
+  // well before Apps Script's platform limits. On 2026-09-14 a fast run went the
+  // full 180s and a Google service call near the edge threw an UNCATCHABLE
+  // "server error occurred" (which escaped even safeTriggerRun_ and emailed the
+  // owner a failure summary). Exiting sooner shrinks that near-limit window. Safe:
+  // the fast run only processes NEW threads, and anything it defers is picked up
+  // by the next 5-min run and guaranteed by the twice-daily reconcile.
+  MAX_FAST_RUN_MS: 120000,
 
   // When the fast run can't register a confirmation it escalates to the audit,
   // but no more than once per this window (so a persistent parser gap doesn't
@@ -378,6 +386,9 @@ function sourceConfigs_() {
  ******************************************************/
 
 let RNR_RUN_STARTED_AT_ = 0;
+// Wall-clock budget for THIS run. Defaults to the full budget (audit + manual
+// recovery); the frequent 5-min run lowers it to MAX_FAST_RUN_MS for safe margin.
+let RNR_RUN_BUDGET_MS_ = 180000;
 let RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0, confirmFailures: [] };
 let RNR_LABEL_CACHE_ = null;     // labelName -> GmailLabel (1 lookup per run)
 let RNR_THREADS_CACHE_ = null;   // mode|labelName -> threads[] (1 fetch per run)
@@ -436,7 +447,7 @@ function isReinstated_(source, bookingId) {
 
 
 function runHasTimeLeft_() {
-  return !RNR_RUN_STARTED_AT_ || (Date.now() - RNR_RUN_STARTED_AT_ < RNR.MAX_RUN_MS);
+  return !RNR_RUN_STARTED_AT_ || (Date.now() - RNR_RUN_STARTED_AT_ < RNR_RUN_BUDGET_MS_);
 }
 
 /**
@@ -521,6 +532,8 @@ function runBookingCore_(skipProcessed) {
   RNR_RUN_STARTED_AT_ = Date.now();
   resetRunCaches_();
   RNR_SKIP_PROCESSED_ = !!skipProcessed;
+  // Fast (5-min) run exits with margin; audit gets the full budget.
+  RNR_RUN_BUDGET_MS_ = skipProcessed ? RNR.MAX_FAST_RUN_MS : RNR.MAX_RUN_MS;
 
   try {
     // Fast (5-min) runs must be Gmail-cheap: only create tabs. Labels already
