@@ -125,6 +125,29 @@ check('response reports per-phase timings (sched/book/ledger)', rt.timings && ty
 // "Albert" is alphabetically earlier. Proves seniority beats alphabetical.
 check('English eligible list is most-senior-first (Carlos before Albert)', (rt.guidesByLanguage.English || [])[0] === 'Carlos', rt.guidesByLanguage.English);
 
+console.log('--- Assign dropdown: per-guide availability status dots (info only, still assignable) ---');
+// Direct unit of guideStatusesForShift_ using the real helpers. Target: DATE 12:00 English.
+const gbl = { English: ['Carlos', 'Albert', 'Polina'] };
+const bm = {
+  carlos: [{ ms: shiftStartMs_(DATE, 720), k: 'someother|12:00' }],   // SAME time (12:00) -> busy
+  albert: [{ ms: shiftStartMs_(DATE, 840), k: 'someother|14:00' }]    // 2h later, within 5h -> overlap
+  // Polina: no tours -> free
+};
+const st = guideStatusesForShift_({ dateKey: DATE, minutes: 720, language: 'English' }, gbl, bm);
+const byName = {}; st.forEach(s => { byName[s.name] = s.status; });
+check('a guide with a SAME-time tour is busy (red)', byName.Carlos === 'busy', byName);
+check('a guide with a tour within the 5h window is overlap (yellow)', byName.Albert === 'overlap', byName);
+check('a free guide is free (green)', byName.Polina === 'free', byName);
+check('EVERY language guide is listed (assignable regardless of status)', st.length === 3, st.map(s => s.name));
+// A guide's OWN assignment on THIS shift must not mark them busy against themselves.
+const selfKey = shiftKeyFull_({ dateKey: DATE, minutes: 720, language: 'English' });
+const selfSt = guideStatusesForShift_({ dateKey: DATE, minutes: 720, language: 'English' },
+  { English: ['Carlos'] }, { carlos: [{ ms: shiftStartMs_(DATE, 720), k: selfKey }] });
+check('a guide assigned to THIS shift is NOT marked busy by their own assignment', selfSt[0].status === 'free', selfSt);
+// The live payload carries guideOptions on manager tours.
+const anyShift = (rt.allTours || []).find(s => (s.guideOptions || []).length);
+check('apiTours_ attaches guideOptions [{name,status}] to manager tours', !!anyShift && anyShift.guideOptions.every(o => o.name && ['free','overlap','busy'].indexOf(o.status) !== -1), anyShift && anyShift.guideOptions);
+
 console.log('--- Manager window: near tours load first, far tours behind "Load more" ---');
 const FAR = dayKey(40);
 en.getRange(4, 1, 1, 9).setValues([

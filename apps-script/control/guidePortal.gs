@@ -995,6 +995,9 @@ function apiTours_(p) {
     hasMore = windowDays < PORTAL.UPCOMING_DAYS;
     // Check-ins come from the targeted ledger read above, so a check-in shows no
     // matter which assigned guide on the tour tapped it.
+    // One busy map for the whole schedule -> per-guide availability dots in the
+    // assign dropdown (free / overlap / busy), computed with no extra reads.
+    const busyMap = buildBusyMap_(schedule);
     allTours = schedule.filter(s => s.dateKey <= managerHorizon).map(shift => {
       const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
       const primary = shift.assigned[0] || '';
@@ -1023,6 +1026,7 @@ function apiTours_(p) {
         time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
         privIndex: shift.privIndex || 1,
         eligible: eligibleGuidesForShift_(shift, guidesByLanguage),
+        guideOptions: guideStatusesForShift_(shift, guidesByLanguage, busyMap),
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
         bookedGuests: bookings.reduce((s, b) => s + Number(b.guests || 0), 0),
@@ -3504,6 +3508,33 @@ function buildBusyMap_(schedule) {
  */
 function eligibleGuidesForShift_(shift, guidesByLanguage) {
   return (guidesByLanguage[shift.language] || []).slice();
+}
+
+/**
+ * For the assign dropdown: every active guide who speaks this shift's language,
+ * each tagged with an availability STATUS relative to this shift — so the manager
+ * gets a colour dot but can still assign ANYONE (no filtering).
+ *   'free'    -> 🟢 available: no other tour within the separation window
+ *   'overlap' -> 🟡 has another tour within the separation window (a nearby clash)
+ *   'busy'    -> 🔴 has another tour at the SAME time (a hard double-book)
+ * Uses the schedule's already-built busy map, so it costs NO extra reads. A guide's
+ * own assignment ON THIS shift never counts against them.
+ */
+function guideStatusesForShift_(shift, guidesByLanguage, busyMap) {
+  const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
+  const st = shiftStartMs_(shift.dateKey, shift.minutes);
+  const thisKey = shiftKeyFull_(shift);
+  return (guidesByLanguage[shift.language] || []).map(function (name) {
+    const slots = busyMap[String(name).trim().toLowerCase()] || [];
+    let status = 'free';
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i].k === thisKey) continue;          // their own assignment here doesn't count
+      const d = Math.abs(slots[i].ms - st);
+      if (d === 0) { status = 'busy'; break; }        // same start time -> red (hard clash)
+      if (d < sepMs) status = 'overlap';              // nearby -> yellow (keep scanning for a same-time red)
+    }
+    return { name: name, status: status };
+  });
 }
 
 /** yyyy-MM-dd of the Sunday ending the current week (today..Sunday window). */
