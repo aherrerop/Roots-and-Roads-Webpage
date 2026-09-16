@@ -35,11 +35,10 @@ Each net catches a different failure. Together they mean a booking has to slip p
 | **Fast pass** (`runBookingSystem`) | New confirmations / modifications / cancellations | every 5 min |
 | **Reliability net** (`getThreadsSafe_`, confirmations) | A just-arrived confirmation the Gmail *search index* hasn't caught yet — reads the newest few by label membership | every 5 min |
 | **Loud failure flag** (`flagUnprocessedConfirmation_`) | A confirmation that parsed to nothing / an invalid booking → counted, left **UNREAD**, escalates to the audit | every 5 min |
-| **Reconcile** (`reconcileConfirmationsToBookingList_`) | Any confirmed **upcoming** booking missing from the list — reads **every confirmation in the inbox**, re-inserts the missing ones | audit |
-| **Invariants** (`checkInvariants_`) | Rows that should NOT be there: duplicates, cancelled-still-active, completed-still-active, contaminated names | audit |
-| **Integrity check** (`verifyBookingIntegrity_`) | The reconciliation itself — counts Gmail vs the list and reports any gap on the **Verification** tab | audit |
+| **Reconcile** (`reconcileConfirmationsToBookingList_`) | Any confirmed **upcoming** booking missing from the list — reads the **whole Confirmations label** of every source (incl. the **Website**, via `reconcileSourceConfigs_`), plus a throttled **Done** deep-sweep, and re-inserts the missing ones | audit |
+| **Invariants** (`checkInvariants_`) | Rows that should NOT be there: duplicates, cancelled-still-active, completed-still-active, contaminated names — **logged, never blind-deleted** | audit |
 
-**Why a missed booking now self-heals:** reconcile reads `label:<confirmations> in:inbox` (not a fixed newest-N slice — that was the bug that lost Olga's group of 30). Because the inbox = the upcoming set, *every* upcoming booking is re-checked on every audit regardless of how old its email is. So even if some future change wrongly deletes a row, the next audit puts it back.
+**Why a missed booking self-heals:** reconcile scans the **whole label** (not a fixed newest-N slice — a newest-60 cap was the bug that lost Olga's group of 30) for **every** source including your own website, filtering out anything completed/cancelled/superseded. Because a confirmed booking stays in the inbox until its tour is over, *every* upcoming booking is re-checked on every audit regardless of how old its email is. So even if some future change wrongly deletes a row, the next audit puts it back. (There is no separate "verify"/"integrity" step or tab — reconcile itself is comprehensive and silent.)
 
 ---
 
@@ -49,16 +48,16 @@ Each net catches a different failure. Together they mean a booking has to slip p
 
 | I want to… | Run | What it does |
 |---|---|---|
-| **Fix the sheet now** (bookings missing) | `recoverMissingBookings()` | Re-inserts every missing upcoming booking, dedupes, sorts, rebuilds the feed. Idempotent — safe to run any time. |
-| **Prove nothing is missing** | `verifyBookingsNow()` | Writes the **Verification** tab: inbox counts vs the list, and a ✓ / ⚠ result. |
-| **Full re-read of everything** | `runBookingAudit()` | Reconcile + invariants + integrity + cleanup, ignoring the Processed label. |
+| **Fix the sheet now** (bookings missing) | `recoverMissingBookings()` | Re-inserts every missing upcoming booking (all sources incl. website), dedupes, sorts, rebuilds the feed. Idempotent — safe to run any time. |
+| **Full re-read of everything** | `runBookingAudit()` | Reconcile + invariants + cleanup, ignoring the Processed label. |
 | **Apply stuck modifications / drop superseded rows** | `fixModificationsNow()` | Heals Guruwalk move duplicates + Done-stuck modifications. |
 | **Debug one booking** | `diagnoseBooking('GYG…')` | Prints how each of that booking's emails parses, field by field. |
 
-**The three tabs to glance at:**
+**The two tabs to glance at:**
 - **Status** — "Last run finished" (if >10 min old, the trigger isn't running), and "Confirmations NOT registered this run".
-- **Verification** — the reconciliation: every source's inbox confirmations vs how many are on the list, and **Missing** (must be 0).
 - **Errors** — deduplicated problems, each with a count + last-seen.
+
+There is deliberately **no Verification tab**: verifying used to write a tab and emit a report, but the owner asked for the audit to just *work* silently — so reconcile was made comprehensive and self-healing instead. To confirm nothing is missing, run `recoverMissingBookings()` (it recovers 0 when the sheet is already complete).
 
 ---
 

@@ -1,3 +1,50 @@
+/* ============================================================================
+   BOOKING SYSTEM — CRISIS PLAYBOOK  (read this first when something looks wrong)
+   ----------------------------------------------------------------------------
+   THE TWO MAXIMS this whole file serves:
+     1. NEVER miss a booking — a missed booking can ruin the company.
+     2. Every safety net is idempotent + SILENT — it self-heals with no new emails,
+        tabs or warnings.
+
+   WHY A MISSED BOOKING SELF-HEALS: a confirmed booking STAYS in the Gmail inbox
+   until its tour is over, so the inbox IS the live upcoming-bookings list. The
+   audit's reconcile re-reads EVERY upcoming confirmation (the WHOLE label, not a
+   capped slice — a newest-N cap once lost a 30-pax booking) and re-inserts anything
+   missing. It covers all sources INCLUDING the Website (reconcileSourceConfigs_).
+
+   ── WHEN SOMETHING IS WRONG, RUN ONE OF THESE (Apps Script editor; reload it first) ──
+   • Bookings missing from the sheet     -> recoverMissingBookings()  (idempotent:
+       re-inserts every missing upcoming booking, dedupes, rebuilds the portal feed)
+   • A modification didn't apply, or a     -> fixModificationsNow()
+       duplicate after a guest was moved
+   • Full re-read of everything            -> runBookingAudit()  (reconcile + invariants
+       (ignores the Processed marker)          + cleanup; also the twice-daily trigger)
+   • "How does THIS booking parse?"        -> diagnoseBooking('GYG…')  (field by field)
+
+   ── SAFETY NETS (defence in depth; full reference: docs/Booking_System_Reliability.md) ──
+   • Fast pass (runBookingSystem, every 5 min): new confirm/modify/cancel. TIME-
+     BUDGETED (MAX_FAST_RUN_MS) so a run always exits before Apps Script's platform
+     limits — that is what avoids the rare "server error" failure email.
+   • Reliability net (getThreadsSafe_): reads the newest few by LABEL membership, so
+     a just-arrived confirmation is never missed while Gmail's search index lags.
+   • Reconcile (reconcileConfirmationsToBookingList_): the FLOOR — re-inserts any
+     missing upcoming booking from the whole Confirmations label (+ a Done deep sweep).
+   • Invariants (checkInvariants_): LOGS rows that shouldn't exist (duplicate,
+     cancelled-still-active, contaminated name) — it never deletes blindly.
+   • dedupeActiveSheets_ is SURGICAL: it only removes a real duplicate, never a
+     singleton, so a MANUALLY typed row is always safe.
+
+   ── GOLDEN RULES when editing (each was learned from a real outage) ──
+   • A change that can REMOVE a row is acceptable only because reconcile restores it
+     if wrong — never weaken reconcile or the "stays in the inbox until done" rule.
+   • Trigger entry points must NEVER throw: runBookingSystem / runBookingAudit are
+     wrapped in safeTriggerRun_ so a transient Google error is logged, not emailed.
+   • Keep parsing TOLERANT: read a field by several label variants and add a fallback
+     rather than a stricter regex (one added comma once broke every GYG date).
+   • `node test/run-tests.js` must stay green — it also fails the build on any
+     undefined call or duplicate function (the reference check).
+   ============================================================================ */
+
 /******************************************************
  * ROOTS & ROADS BOOKING SYSTEM  (v2)
  *

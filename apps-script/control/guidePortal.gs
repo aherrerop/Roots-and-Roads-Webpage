@@ -1,3 +1,45 @@
+/* ============================================================================
+   GUIDE PORTAL BACKEND — CRISIS PLAYBOOK  (read this first when something looks wrong)
+   ----------------------------------------------------------------------------
+   THE MAXIM: NEVER miss a check-in or an assignment. Money and staffing depend on it.
+
+   HOW "never miss a check-in" is guaranteed: apiSave_ writes the check-in to BOTH
+   the Portal Feed (cols M/N) AND the guide's Ledger tab, under ONE LockService lock,
+   and flushes before returning. Every read UNIONS feed ∪ ledger, so a check-in shows
+   if it landed in EITHER. The hourly reconcilePortalFeed_ keeps the two in step.
+
+   ── DIAGNOSE FROM A PHONE/BROWSER (no login needed; read-only, no secrets) ──
+   • …/exec?action=health            -> server up? Control + BookingSheet + Ledger
+                                         reachable? timezone right? contention level.
+   • …/exec?action=timings&n=40      -> per-action p50/p95/max + the slow-load log.
+                                         This is how you tell a slow SERVER from a
+                                         slow phone. "tours (slow)" logs loads > 6s.
+
+   ── WHEN SOMETHING IS WRONG, RUN ONE OF THESE (Apps Script editor) ──
+   • Feed and ledger disagree / a check-in  -> updateManagementQueues()  (runs
+       looks missing on one surface             reconcilePortalFeed_ + guide sync + queues)
+   • Duplicate / malformed ledger rows       -> repairLedgers()
+   • Schedule grids need a rebuild           -> runWeeklyScheduling()  (see assignShifts.gs)
+
+   ── KNOWN, EXPECTED BEHAVIOURS (not bugs) ──
+   • Loads can be 7-10s at busy times: every request runs AS the owner and Google
+     SERIALISES the owner's executions, so N guides polling queue up. Mitigated by 3
+     cache versions (global/feed/config), a 180s TTL, and the client backing its poll
+     off under load. It is contention, not an error — check ?action=timings.
+   • Right after an assign/check-in, the NEXT read can hit a lagging Sheets replica
+     and show the old value. The CLIENT masks this for the settle window
+     (PENDING_ASSIGN / PENDING_CHECKIN); the server bumps the cache version so the
+     load after that is correct. Don't "fix" this by slowing or removing the poll.
+
+   ── GOLDEN RULES when editing ──
+   • apiSave_ / apiAssign_ must keep writing feed + ledger under the lock and bumping
+     the cache version — that is what makes a change appear on the next read.
+   • Reads that a check-in must not miss go through the feed ∪ ledger UNION.
+   • Keep heavy work OFF the per-request path (it serialises on the owner). Cache it,
+     or move it to the hourly updateManagementQueues trigger.
+   • `node test/run-tests.js` must stay green (reference check fails on undefined calls).
+   ============================================================================ */
+
 /******************************************************
  * ROOTS & ROADS — GUIDE PORTAL BACKEND  (Apps Script Web App)
  *

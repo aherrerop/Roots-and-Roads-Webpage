@@ -1,3 +1,38 @@
+/* ============================================================================
+   SCHEDULER — CRISIS PLAYBOOK  (read this first when the schedule/availability is off)
+   ----------------------------------------------------------------------------
+   THE MAXIM: NEVER lose or silently overwrite a manager's decision.
+
+   SINGLE SOURCE OF TRUTH: Weekly_Schedule is the ONLY source of availability
+   columns and offer slots — there are NO hardcoded slots. Whatever Management puts
+   there is exactly what the availability sheet, portal and website derive from.
+   Its columns (each an independent control):
+     G Guide  H "Hide from availability"  I "Private"  J "Hide from website"
+   H and J are INDEPENDENT — H hides from the availability sheet only, J from the
+   public website only. Set both to hide from both. (readWeeklySchedule_ parses them.)
+
+   MANAGER LOCKS: a guide name typed in BOLD in a Schedule_<Language> grid cell is a
+   lock. makeSchedule keeps it exactly, assigns everyone else around it, and NEVER
+   overwrites it. A lock that conflicts (wrong language / unavailable / overlap) is
+   KEPT, its cell tinted red, and the conflict written to the Errors tab — never
+   silently resolved.
+
+   ── WHEN SOMETHING IS WRONG (Apps Script editor) ──
+   • A slot is missing / wrong on the       -> edit Weekly_Schedule (the only source),
+       availability sheet, portal or website     then runWeeklyScheduling() to rebuild
+   • Regenerate the standard offer safely    -> updateWeeklyScheduleToCurrentOffer()
+       (preserves German/private/other rows      (10-col aware: never wipes cols H/I/J)
+       and every col H/I/J flag)
+   • Rebuild from scratch (WIPES manual rows)-> setupWeeklySchedule()   (last resort)
+
+   ── GOLDEN RULES when editing ──
+   • Overlaps are ALLOWED on purpose in the portal's manual assign (management may put
+     one guide on two nearby tours to share contacts / retime); the batch scheduler
+     still spaces guides MIN_SEPARATION_HOURS apart. Don't re-add a hard block.
+   • Any writer of Weekly_Schedule must stay 10-column aware so cols H/I/J survive.
+   • `node test/run-tests.js` must stay green (reference check + tests2 Weekly_Schedule).
+   ============================================================================ */
+
 /******************************************************
  * ROOTS & ROADS — assignShifts.gs  (v2, complete, ready to paste)
  * Bind to: Roots_Roads_Control_v1
