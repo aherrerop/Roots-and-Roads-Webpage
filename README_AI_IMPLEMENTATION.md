@@ -15,6 +15,7 @@ Upload the contents of this folder to the GitHub Pages repository root.
 - de/stadtfuehrung-barcelona-deutsch/index.html
 - en/2-days-in-barcelona-itinerary/index.html
 - en/3-days-in-barcelona-itinerary/index.html
+- en/barcelona-company-retreats-private-group-tours/index.html
 - en/barcelona-cruise-stop-itinerary/index.html
 - en/barcelona-on-a-budget/index.html
 - en/best-walking-tour-barcelona/index.html
@@ -58,6 +59,7 @@ Submit `sitemap.xml` and request indexing for the homepage plus the highest-valu
 - /en/2-days-in-barcelona-itinerary/
 - /en/first-time-in-barcelona/
 - /en/best-walking-tour-barcelona/
+- /en/barcelona-company-retreats-private-group-tours/
 - /en/sagrada-familia-gaudi-gothic-quarter-walking-tour/
 - /en/german-walking-tour-barcelona/
 - /en/spanish-walking-tour-barcelona/
