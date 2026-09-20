@@ -183,6 +183,22 @@ check('Website 0 commission: R&R makes 6x2=12', Math.abs(web.rrMakes-12)<0.001, 
 const gyg=computeMoney_('GetYourGuide',2,false,27,rates);
 check('Paid tour unchanged: R&R makes income-weOwe = 27-20 = 7', Math.abs(gyg.rrMakes-7)<0.001, gyg);
 
+// The GYG 3-in-1 (source "GYG") is a NORMAL paid tour: SAME 10/pax guide rate and
+// SAME 25% commission as GetYourGuide (income is already net), NOT the SF-ext rate.
+PORTAL._paidSources=['Viator','GetYourGuide','GYG','GYG-SF','Viator-SF','Airbnb'];
+const g3=computeMoney_('GYG',2,false,27,rates);
+check('GYG 3-in-1: paid exactly like GetYourGuide (weOwe 20, R&R 7, type Paid)',
+  g3.weOwe===20 && Math.abs(g3.rrMakes-7)<0.001 && g3.type==='Paid', g3);
+check('GYG 3-in-1: identical money to GetYourGuide for the same slot',
+  g3.weOwe===gyg.weOwe && g3.rrMakes===gyg.rrMakes && g3.type===gyg.type, {g3, gyg});
+check('GYG 3-in-1: NOT charged the SF-exterior 3/pax rate', g3.weOwe!==6, g3);
+// No-show: booked 2, only 1 checked in -> guide paid for the 1 who came; R&R keeps
+// the full prepaid net (GYG already paid us regardless of the no-show).
+const g3ns=computeMoney_('GYG',1,false,27,rates);
+check('GYG 3-in-1 no-show: guide paid 10 for the 1 present, R&R keeps 27-10=17',
+  g3ns.weOwe===10 && Math.abs(g3ns.rrMakes-17)<0.001, g3ns);
+PORTAL._paidSources=rates.paidSources;   // restore for the tests below
+
 console.log('--- Ledger: SF exterior tour pays its own per-PLATFORM guide rate ---');
 // Guest pays 8€ gross; the platform commission is already taken out, so `income`
 // is NET (GYG keeps 25% -> 6€/pax net). Guide gets its per-platform rate; R&R

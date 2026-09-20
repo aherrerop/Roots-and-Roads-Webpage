@@ -484,12 +484,14 @@ function getSupersededIds_() {
  */
 function markReinstated_(source, bookingId) {
   const id = normalizeId_(bookingId);
-  if (source && id && RNR_REINSTATED_IDS_) RNR_REINSTATED_IDS_.add(source + '|' + id);
+  const src = threadSourceFor_(source);   // GYG family shares one reinstatement key
+  if (src && id && RNR_REINSTATED_IDS_) RNR_REINSTATED_IDS_.add(src + '|' + id);
 }
 
 function isReinstated_(source, bookingId) {
   const id = normalizeId_(bookingId);
-  return Boolean(RNR_REINSTATED_IDS_ && source && id && RNR_REINSTATED_IDS_.has(source + '|' + id));
+  const src = threadSourceFor_(source);   // ...so a 'GYG' mark is seen by a 'GetYourGuide' check
+  return Boolean(RNR_REINSTATED_IDS_ && src && id && RNR_REINSTATED_IDS_.has(src + '|' + id));
 }
 
 
@@ -2073,19 +2075,60 @@ function isBookingCancelledByEmail_(booking) {
 }
 
 
+/**
+ * GetYourGuide issues ONE globally-unique booking id per booking, and that id is
+ * shared across every GYG listing that can bill it: the main account
+ * ('GetYourGuide'), our second-account "3-in-1" listing ('GYG'), and the prepaid
+ * Sagrada exterior product ('GYG-SF'). A cancellation or modification email can
+ * therefore be tagged with a DIFFERENT GYG listing than the confirmation that
+ * created the active row — e.g. a cancel email that omits the "3-in-1" title
+ * parses as 'GetYourGuide' while the row is 'GYG'. So when we match by that
+ * unique id, treat the whole GYG family as ONE source: a real cancellation must
+ * always find and remove its row, and a modification must update the right one
+ * instead of duplicating it. Non-GYG sources still require an exact match, and
+ * the human-data (no-id) fallbacks below stay source-strict so two platforms can
+ * never cross-cancel. (SF_EXT_VIATOR is excluded — Viator ids live in a separate
+ * id space and must never be treated as GYG.)
+ */
+function isGygFamilySource_(s) {
+  return s === RNR.SOURCE.GYG || s === RNR.SOURCE.GYG2 || s === RNR.SOURCE.SF_EXT;
+}
+function sourcesMatchForId_(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return isGygFamilySource_(a) && isGygFamilySource_(b);
+}
+
+/**
+ * A GYG-family row is tagged with its listing ('GYG' for the 3-in-1, 'GYG-SF'
+ * for the Sagrada exterior), but every Gmail thread, cache, config, thread-index
+ * and reinstatement key for it lives under the MAIN GetYourGuide source — those
+ * emails ride the GetYourGuide labels + parser. So whenever a ROW source has to
+ * resolve its config or key into a thread index / cache / reinstatement set (all
+ * built under the config source), canonicalise a GYG-family source to
+ * GetYourGuide. Identity for every other source, so nothing else changes.
+ */
+function threadSourceFor_(source) {
+  return isGygFamilySource_(source) ? RNR.SOURCE.GYG : source;
+}
+
+
 function cancellationMatchesBooking_(cancelled, booking) {
   const C = normalizeBooking_(cancelled);
   const B = normalizeBooking_(booking);
 
-  if (!C.source || !B.source || C.source !== B.source) return false;
+  if (!C.source || !B.source) return false;
 
   const cId = normalizeId_(C.bookingId);
   const bId = normalizeId_(B.bookingId);
 
-  // Strongest signal: same platform id.
-  if (cId && bId && cId === bId) return true;
+  // Strongest signal: same platform id. GYG-family listings share one id, so a
+  // 'GetYourGuide'-tagged cancellation still removes a 'GYG' (3-in-1) row.
+  if (cId && bId && cId === bId && sourcesMatchForId_(C.source, B.source)) return true;
 
-  // Conservative fallback on human data.
+  // Human-data fallback (only trustworthy when a source with no id to compare):
+  // keep it STRICT on source so two platforms never cross-cancel.
+  if (C.source !== B.source) return false;
   const sameDate = C.dateKey && B.dateKey && C.dateKey === B.dateKey;
   const sameTime = normalizeTime_(C.time) && normalizeTime_(B.time) &&
                    normalizeTime_(C.time) === normalizeTime_(B.time);
@@ -2179,7 +2222,9 @@ function removeActiveBookingBySourceAndId_(source, bookingId) {
 
     rows.forEach((row, i) => {
       const b = rowToBooking_(row, sheetName);
-      if (b.source === source && normalizeId_(b.bookingId) === id) deleteRows.push(i + 2);
+      // Family-aware: a GYG-family cancellation removes the matching GYG-family
+      // row even if the listing tag differs (see sourcesMatchForId_).
+      if (sourcesMatchForId_(b.source, source) && normalizeId_(b.bookingId) === id) deleteRows.push(i + 2);
     });
 
     deleteRows.sort((a, b) => b - a).forEach(row => sh.deleteRow(row));
@@ -2194,13 +2239,14 @@ function removeActiveBookingBySourceAndId_(source, bookingId) {
  * cancelled).
  */
 function moveMatchingThreadsToCancellationById_(source, bookingId) {
-  const cfg = sourceConfigs_().find(c => c.source === source);
+  const src = threadSourceFor_(source);   // a 'GYG' row resolves to the GetYourGuide config/threads
+  const cfg = sourceConfigs_().find(c => c.source === src);
   if (!cfg || !cfg.cancel) return;
 
   const id = normalizeId_(bookingId);
   if (!id) return;
 
-  const key = source + '|' + id;
+  const key = src + '|' + id;
   const confirmThread = getConfirmationThreadIndex_().get(key);
   const modifyThread = cfg.modify ? getModificationThreadIndex_().get(key) : null;
 
@@ -2221,10 +2267,11 @@ function moveMatchingThreadsToCancellationById_(source, bookingId) {
  * confirmation used to linger in the inbox forever). Works on every run.
  */
 function archiveConfirmationThreadsById_(source, bookingId) {
-  const cfg = sourceConfigs_().find(c => c.source === source);
+  const src = threadSourceFor_(source);   // a 'GYG' row resolves to the GetYourGuide config/threads
+  const cfg = sourceConfigs_().find(c => c.source === src);
   if (!cfg) return 0;
   const id = normalizeId_(bookingId);
-  if (!id || isReinstated_(source, id)) return 0;
+  if (!id || isReinstated_(src, id)) return 0;
 
   let archived = 0;
   [cfg.confirm, cfg.modify].filter(Boolean).forEach(labelName => {
@@ -2233,9 +2280,9 @@ function archiveConfirmationThreadsById_(source, bookingId) {
     catch (e) { return; }
     threads.forEach(thread => {
       try {
-        const ids = new Set(parseThread_(thread, source, 'any')
+        const ids = new Set(parseThread_(thread, src, 'any')
           .map(b => normalizeId_(b.bookingId)).filter(Boolean));
-        const tid = normalizeId_(extractBookingIdFromThread_(thread, source));
+        const tid = normalizeId_(extractBookingIdFromThread_(thread, src));
         if (tid) ids.add(tid);
         if (!ids.has(id)) return;                 // guard against a fuzzy search hit
         stripSourceLabelsExcept_(thread, cfg, [cfg.cancel]);
@@ -2307,7 +2354,7 @@ function moveMatchingConfirmationOutOfInbox_(booking) {
   const id = normalizeId_(b.bookingId);
   if (!b.source || !id) return;
 
-  const thread = getConfirmationThreadIndex_().get(b.source + '|' + id);
+  const thread = getConfirmationThreadIndex_().get(threadSourceFor_(b.source) + '|' + id);
   if (thread) finalizeThreadProcessed_(thread);
 }
 
@@ -2722,7 +2769,10 @@ function findActiveBookingRowRef_(source, bookingId) {
     const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
     for (let i = 0; i < rows.length; i++) {
       const b = rowToBooking_(rows[i], sheetName);
-      if (b.source === source && normalizeId_(b.bookingId) === id) {
+      // Family-aware: a GYG-family modification finds its row (and preserves the
+      // existing listing tag) even when the email is tagged with a different GYG
+      // listing than the confirmation (see sourcesMatchForId_).
+      if (sourcesMatchForId_(b.source, source) && normalizeId_(b.bookingId) === id) {
         return { sh, row: i + 2, sheetName, booking: b };
       }
     }

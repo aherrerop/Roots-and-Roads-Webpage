@@ -286,6 +286,47 @@ check('SF-ext still wins over 3-in-1 when both patterns could appear (order)',
 check('Viator exterior product detected -> Viator-SF', viatorIsSfExt_('Tour Grade: Sagrada Família Exterior Ultimate Exterior')===true, null);
 check('a regular Viator tour is NOT tagged Viator-SF', viatorIsSfExt_('Tour Grade: Italian Tour 16:00')===false, null);
 
+// CANCEL / MODIFY must still match a 3-in-1 row ('GYG') even if the cancel/modify
+// email is tagged with a DIFFERENT GYG listing ('GetYourGuide') — otherwise a
+// real cancellation could never remove its row (would ruin the company).
+const threeRow = normalizeBooking_({ name:'Jane Noreck', phone:'+491724040430', guests:1,
+  date: threeB.date, time: threeB.time, language:'English', source: RNR.SOURCE.GYG2, bookingId:'GYG3IN1T01' });
+check('GYG family: id shared across listings matches for cancel/modify',
+  sourcesMatchForId_(RNR.SOURCE.GYG, RNR.SOURCE.GYG2)===true &&
+  sourcesMatchForId_(RNR.SOURCE.GYG2, RNR.SOURCE.SF_EXT)===true, null);
+check('GYG family: a GetYourGuide-tagged cancellation matches the GYG (3-in-1) row by id',
+  cancellationMatchesBooking_(
+    normalizeBooking_({ source: RNR.SOURCE.GYG, bookingId:'GYG3IN1T01', name:'Jane Noreck', guests:1,
+      date: threeB.date, time: threeB.time, language:'English' }),
+    threeRow)===true, null);
+check('cross-platform safety: a Viator cancellation NEVER matches a GYG row (different id space)',
+  sourcesMatchForId_(RNR.SOURCE.VIATOR, RNR.SOURCE.GYG2)===false &&
+  cancellationMatchesBooking_(
+    normalizeBooking_({ source: RNR.SOURCE.VIATOR, bookingId:'GYG3IN1T01', name:'Jane Noreck', guests:1,
+      date: threeB.date, time: threeB.time, language:'English' }),
+    threeRow)===false, null);
+check('cross-platform safety: SF_EXT_VIATOR is NOT in the GYG id family',
+  sourcesMatchForId_(RNR.SOURCE.SF_EXT_VIATOR, RNR.SOURCE.GYG)===false, null);
+check('same-source, DIFFERENT id still does NOT cancel (unique ids = different bookings)',
+  cancellationMatchesBooking_(
+    normalizeBooking_({ source: RNR.SOURCE.GYG2, bookingId:'GYGOTHER99', name:'Someone', guests:1,
+      date: threeB.date, time: threeB.time, language:'English' }),
+    threeRow)===false, null);
+
+// A GYG-family row's Gmail threads/caches/reinstatement all live under the MAIN
+// GetYourGuide source (they ride its labels). threadSourceFor_ canonicalises so a
+// 'GYG' mark is seen by a 'GetYourGuide' check — otherwise a rescheduled 3-in-1
+// could be wrongly removed by a stale cancellation email in the same run.
+check('threadSourceFor_: GYG-family canonicalises to GetYourGuide, others unchanged',
+  threadSourceFor_(RNR.SOURCE.GYG2)===RNR.SOURCE.GYG && threadSourceFor_(RNR.SOURCE.SF_EXT)===RNR.SOURCE.GYG &&
+  threadSourceFor_(RNR.SOURCE.VIATOR)===RNR.SOURCE.VIATOR, null);
+RNR_REINSTATED_IDS_ = new Set();
+markReinstated_(RNR.SOURCE.GYG2, 'GYG3IN1T01');   // a 3-in-1 reschedule marks under the row source 'GYG'
+check('reinstatement is unified: a GYG mark is seen by a GetYourGuide check (no wrong removal)',
+  isReinstated_(RNR.SOURCE.GYG, 'GYG3IN1T01')===true && isReinstated_(RNR.SOURCE.GYG2, 'GYG3IN1T01')===true, null);
+check('reinstatement stays isolated per booking id', isReinstated_(RNR.SOURCE.GYG, 'GYGOTHER99')===false, null);
+RNR_REINSTATED_IDS_ = null;
+
 console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
 const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;
 const idEn=idSS.insertSheet('English Tours');
