@@ -4365,10 +4365,16 @@ function parseGygMessage_(msg, mode) {
     time,
     language: f.langRaw ? normalizeLanguage_(f.langRaw) : RNR.LANGUAGE.ENGLISH,
     languageUncertain: !languageRecognised_(f.langRaw),   // flag if it didn't match a language we run
-    // The Sagrada exterior product is tagged by its own source so the Ledger pays
-    // the guide its lower per-person rate; it still lands in the same tab (date +
-    // time + language) as every other booking. Otherwise the normal account tag.
-    source: gygIsSfExt_(text) ? RNR.SOURCE.SF_EXT : gygSourceFor_(msg),
+    // Source tag, most specific product first:
+    //  • Sagrada exterior product   -> SF_EXT ('GYG-SF'), its own guide rate.
+    //  • Barcelona 3-in-1 Tour       -> GYG2 ('GYG'), so management tells it apart
+    //    from the Ultimate Tour on the sheet/ledger. Same paid model + rate, and it
+    //    still lands in the SAME date/time/language tab, so it MERGES into the same
+    //    tour card as the Ultimate bookings (the portal groups by slot, not source).
+    //  • otherwise the account tag (GetYourGuide, or GYG for the 2nd account).
+    source: gygIsSfExt_(text) ? RNR.SOURCE.SF_EXT
+          : gygIs3in1_(text) ? RNR.SOURCE.GYG2
+          : gygSourceFor_(msg),
     income,
     notes: composeNotes_(f.isPrivate, pp.children, pp.infants, ''),
     isCancellation: isCancel,
@@ -4399,6 +4405,22 @@ function parseGygMessage_(msg, mode) {
 function gygIsSfExt_(text) {
   const s = String(text || '');
   return /ultimate\s+exterior|sagrad[ae]?\s+fam[ií]lia\s+ultimate|\b2232675\b/i.test(s);
+}
+
+/**
+ * Is this GetYourGuide email our SECOND product, the "Barcelona 3-in-1 Tour:
+ * Sagrada Família, Gaudí & Old Town"? It is the SAME physical walking tour as the
+ * Ultimate Tour (same route + slot), just a separate GYG listing — so its bookings
+ * are tagged source "GYG" (RNR.SOURCE.GYG2) to tell them apart from the Ultimate
+ * Tour on the sheet/ledger, while still landing in the SAME date/time/language tab
+ * (they merge into the same tour card). Detected by the distinctive "3-in-1" title
+ * fragment; the Ultimate Tour title never contains it.
+ * TUNING POINT: verify against the first real emails — if GYG renders it "3 in 1"
+ * or you want to pin it to the option id, widen this pattern.
+ */
+function gygIs3in1_(text) {
+  const s = String(text || '');
+  return /3\s*-?\s*in\s*-?\s*1/i.test(s);
 }
 
 /**
@@ -6375,6 +6397,68 @@ function reparseActiveRowsFromEmail() {
   if (changes.length) {
     console.log('--- corrections ---');
     changes.forEach(c => console.log('  ' + c));
+  }
+  return fixed;
+}
+
+/**
+ * ONE-OFF (run from the editor): re-tags any ACTIVE booking whose GetYourGuide
+ * email now parses to a DIFFERENT GYG-family source than the row currently shows —
+ * e.g. an existing "Barcelona 3-in-1 Tour" booking still tagged "GetYourGuide" is
+ * re-tagged "GYG". Only re-labels WITHIN the GYG family (GetYourGuide <-> GYG <->
+ * GYG-SF), and touches ONLY the Source cell — never another OTA, never any other
+ * field or a manager's edits. Idempotent; safe to run any time. Run this after
+ * deploying a new GYG product tag so existing rows catch up (new bookings are
+ * already tagged correctly by the parser).
+ */
+function retagGygProductsNow() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) { console.log('Another run is active; try again in a minute.'); return 0; }
+  RNR_RUN_STARTED_AT_ = Date.now();
+  resetRunCaches_();
+  RNR_SKIP_PROCESSED_ = false;           // read every confirmation, Processed included
+
+  const GYG_FAMILY = [RNR.SOURCE.GYG, RNR.SOURCE.GYG2, RNR.SOURCE.SF_EXT];
+  const SOURCE_COL = RNR.ACTIVE_HEADERS.indexOf('Source') + 1;   // 1-based; 'Source' is col F
+  let fixed = 0; const changes = [];
+  try {
+    if (SOURCE_COL < 1) throw new Error('Source column not found in ACTIVE_HEADERS');
+    // Correct source per booking id, from the freshly parsed confirmation emails
+    // (the parser now returns GYG for the 3-in-1 tour). The cache VALUE carries the
+    // correctly-parsed source even though it is keyed by the config source.
+    const cache = getConfirmationCache_();
+    const correctById = {};
+    cache.forEach(function (bk) {
+      const id = normalizeId_(bk.bookingId);
+      if (id && GYG_FAMILY.indexOf(bk.source) !== -1) correctById[id] = bk.source;
+    });
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    activeSheetNames_().forEach(function (sheetName) {
+      const sh = ss.getSheetByName(sheetName);
+      if (!sh || sh.getLastRow() < 2) return;
+      const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
+      rows.forEach(function (row, i) {
+        const cur = rowToBooking_(row, sheetName);
+        const id = normalizeId_(cur.bookingId);
+        if (!id) return;
+        const correct = correctById[id];
+        // Only re-tag a GYG-family row to a different GYG-family source.
+        if (correct && cur.source !== correct && GYG_FAMILY.indexOf(cur.source) !== -1) {
+          sh.getRange(i + 2, SOURCE_COL).setNumberFormat('@').setValue(correct);
+          fixed++; changes.push(cur.bookingId + ' [' + sheetName + '] ' + cur.source + ' -> ' + correct);
+        }
+      });
+    });
+
+    if (fixed) safeRebuildPortalFeed_();   // so the portal shows the new source
+    console.log('Re-tagged ' + fixed + ' GYG booking(s).');
+    changes.forEach(c => console.log('  ' + c));
+  } catch (e) {
+    logError_('retagGygProductsNow', e, '');
+    console.log(String(e && e.stack ? e.stack : e));
+  } finally {
+    lock.releaseLock();
   }
   return fixed;
 }

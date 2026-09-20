@@ -257,6 +257,31 @@ check('SF-ext lands with its real date/time/language (same slot as other booking
 check('the REGULAR "Ultimate Tour" is NOT mistaken for the exterior product',
   gygIsSfExt_('Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town')===false, null);
 check('the exterior title IS detected', gygIsSfExt_('Barcelona: Sagrada Família Ultimate Exterior Tour')===true, null);
+
+console.log('--- GYG: the Barcelona 3-in-1 Tour is tagged source "GYG" and merges into the same slot ---');
+// SAME physical tour as the Ultimate (same route/slot), a separate GYG listing -> tag
+// "GYG" (GYG2) so management tells them apart, while it lands in the same date/time/
+// language tab and merges into the same tour card.
+const threeBody=[
+ '¡Hola! Buenas noticias.','Se ha reservado tu producto',
+ 'Barcelona 3-in-1 Tour: Sagrada Família, Gaudí & Old Town','Tour en inglés',
+ 'Número de referencia GYG3IN1T01',
+ 'Fecha October 12, 2026 10:30 AM',
+ 'Número de participantes','1 x Adult (Edad 15 - 99)','1 x Child (Edad 2 - 14)',
+ 'Cliente principal','Jane Noreck Teléfono: +491724040430 Idioma: German',
+ 'Idioma del tour','Inglés (Live tour guide)'
+].join('\n');
+const threeB=parseGygMessage_(makeFakeMsg_('Booking - S809442 - GYG3IN1T01', threeBody),'confirm');
+check('3-in-1 booking tagged source "GYG" (GYG2, NOT GetYourGuide)', threeB && threeB.source==='GYG' && threeB.source===RNR.SOURCE.GYG2, threeB && threeB.source);
+check('3-in-1 lands with its real date/time/language (same slot -> same card)',
+  threeB && dateKey_(threeB.date)==='2026-10-12' && normalizeTime_(threeB.time)==='10:30 AM' && threeB.language==='English',
+  threeB && {d:threeB.date&&dateKey_(threeB.date), t:normalizeTime_(threeB.time), l:threeB.language});
+check('3-in-1 is a PAID model, same guide rate as GetYourGuide', RNR.MODEL['GYG']==='paid', RNR.MODEL['GYG']);
+check('the REGULAR Ultimate Tour is NOT mistaken for the 3-in-1', gygIs3in1_('Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town')===false, null);
+check('the 3-in-1 title IS detected', gygIs3in1_('Barcelona 3-in-1 Tour: Sagrada Família, Gaudí & Old Town')===true, null);
+check('the "3 in 1" spacing variant is also detected', gygIs3in1_('Barcelona 3 in 1 Tour')===true, null);
+check('SF-ext still wins over 3-in-1 when both patterns could appear (order)',
+  parseGygMessage_(makeFakeMsg_('Booking - S1 - GYGSF3', ['Se ha reservado tu producto','Sagrada Família Ultimate Exterior Tour 3-in-1','Número de referencia GYGSF3','Fecha August 4, 2027 10:30 AM','2 x Adults','Idioma del tour','Inglés'].join('\n')),'confirm').source==='GYG-SF', null);
 // Viator gets the same exterior product later, with its OWN source/payout.
 check('Viator exterior product detected -> Viator-SF', viatorIsSfExt_('Tour Grade: Sagrada Família Exterior Ultimate Exterior')===true, null);
 check('a regular Viator tour is NOT tagged Viator-SF', viatorIsSfExt_('Tour Grade: Italian Tour 16:00')===false, null);
