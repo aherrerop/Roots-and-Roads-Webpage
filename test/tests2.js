@@ -124,6 +124,24 @@ const availVisible2=webRules.filter(r=>!r.hideFromAvailability);
 check('availability list KEEPS the Hide-from-website-only row (Wed)',
   availVisible2.some(r=>r.day==='Wednesday'), availVisible2.map(r=>r.day));
 
+console.log('--- Availability horizon: rolling window, extended to the seasonal end date ---');
+// mondayThis well before AVAILABILITY_UNTIL (2026-12-31): project out to the week
+// containing Dec 31, not just the 4-week rolling window.
+const _mon = dateOnly_(new Date('2026-09-21T12:00:00'));   // a Monday
+const _wa = availabilityWeeksAhead_(_mon);
+check('opens availability out to the Dec-31 week (>= 14 weeks from Sep 21, not just 4)',
+  _wa >= 14, _wa);
+check('never fewer than the rolling minimum', _wa >= ASSIGN_CFG.AVAILABILITY_WEEKS_AHEAD, _wa);
+// The last projected Monday must reach the week that contains Dec 31, 2026.
+const _lastMon = new Date(_mon); _lastMon.setDate(_mon.getDate() + 7 * _wa);
+const _until = dateOnly_(new Date('2026-12-31T12:00:00'));
+check('the furthest week tab covers Dec 31, 2026', _lastMon <= _until && (function(){
+  const end = new Date(_lastMon); end.setDate(_lastMon.getDate()+6); return dateOnly_(end) >= _until; })(), _lastMon);
+// Past the season end -> fall back to the rolling window only.
+const _monLate = dateOnly_(new Date('2027-03-01T12:00:00'));
+check('after the season end date, it is just the rolling window',
+  availabilityWeeksAhead_(_monLate) === ASSIGN_CFG.AVAILABILITY_WEEKS_AHEAD, availabilityWeeksAhead_(_monLate));
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

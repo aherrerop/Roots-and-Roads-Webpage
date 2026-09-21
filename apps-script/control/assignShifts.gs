@@ -85,6 +85,13 @@ const ASSIGN_CFG = {
   //   next week, which is what guides are used to seeing.
   AVAILABILITY_WEEKS_AHEAD: 4,
   SCHEDULE_WEEKS_AHEAD: 1,
+  // AVAILABILITY_UNTIL: a FIXED seasonal end date. The Guide_Availability file
+  //   keeps week tabs out to whichever is FURTHER — the rolling
+  //   AVAILABILITY_WEEKS_AHEAD window OR the week containing this date. Lets us
+  //   open availability through the end of a season without a huge rolling
+  //   window the rest of the year. Blank or a past date = rolling window only.
+  //   Bump the year each season (kept as YYYY-MM-DD text).
+  AVAILABILITY_UNTIL: '2026-12-31',
 
   // A guide's two tours must start at least this many hours apart.
   MIN_SEPARATION_HOURS: 5,
@@ -765,6 +772,14 @@ function safeTriggerRun_(label, fn) {
   }
 }
 
+/** RUN from the editor: create/extend the availability week tabs (out to the
+ *  seasonal end date) and refresh their columns. No email, no scheduling.
+ *  A runnable (no trailing "_") wrapper so it shows in the Run menu. */
+function syncAvailabilityTabs() {
+  ensureWeekTabs_();
+  syncAvailabilityFile();
+}
+
 function runWeeklyScheduling() {
   safeTriggerRun_('runWeeklyScheduling', function () {
     ensureWeekTabs_();      // delete past weeks, create the upcoming ones
@@ -862,6 +877,26 @@ function emailWeeklySchedule() {
 const WEEKS_AHEAD = ASSIGN_CFG.AVAILABILITY_WEEKS_AHEAD;
 
 /**
+ * How many weeks of availability tabs to project ahead of `mondayThis` (a
+ * Monday, midnight-stripped): the rolling AVAILABILITY_WEEKS_AHEAD minimum, or
+ * further when the fixed seasonal end date AVAILABILITY_UNTIL reaches past it —
+ * so we can open availability through, say, Dec 31 without a giant rolling
+ * window the rest of the year. Pure (no sheet access) so it is unit-testable.
+ */
+function availabilityWeeksAhead_(mondayThis) {
+  let weeksAhead = WEEKS_AHEAD;
+  const untilRaw = ASSIGN_CFG.AVAILABILITY_UNTIL;
+  if (untilRaw) {
+    const until = dateOnly_(new Date(untilRaw + 'T12:00:00'));
+    if (until && !isNaN(until) && until >= mondayThis) {
+      const weeksToUntil = Math.floor((until - mondayThis) / (7 * 86400000));
+      if (weeksToUntil > weeksAhead) weeksAhead = weeksToUntil;
+    }
+  }
+  return weeksAhead;
+}
+
+/**
  * Auto-manage the availability Week tabs: delete any week fully in the past,
  * and create the current week + WEEKS_AHEAD upcoming weeks if missing.
  * Safe to run repeatedly.
@@ -880,9 +915,13 @@ function ensureWeekTabs_() {
   const dow = (today.getDay() + 6) % 7;
   const mondayThis = new Date(today); mondayThis.setDate(today.getDate() - dow);
 
+  // How many weeks to project ahead (rolling minimum, extended to the seasonal
+  // end date when that is further out).
+  const weeksAhead = availabilityWeeksAhead_(mondayThis);
+
   // Names we want to exist (current + next weeks).
   const wanted = {};
-  for (let i = 0; i <= WEEKS_AHEAD; i++) {
+  for (let i = 0; i <= weeksAhead; i++) {
     const m = new Date(mondayThis); m.setDate(mondayThis.getDate() + 7 * i);
     m.setHours(12, 0, 0, 0);
     wanted["Week " + getISOWeek_(m)] = m;
