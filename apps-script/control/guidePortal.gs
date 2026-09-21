@@ -116,7 +116,8 @@ const PORTAL = {
   // matched case-insensitively against the booking Source; '' is the default.
   DEFAULT_FREE_COMMISSIONS: {
     guruwalk: 4.70,
-    'free tour': 0,
+    'free tour': 2.5,           // Freetour.com account #1 — €2.5/checked-in to the platform
+    'free-tour': 3.5,           // Freetour.com account #2 (DB Tours) — €3.5/checked-in
     website: 0,
     '': 0                       // any other free source
   },
@@ -2989,6 +2990,38 @@ function readRates_() {
   }
   PORTAL._paidSources = paidSources; // cache for isPaidSource_
   return { paid, free, privatePay, sfPay, freeCommissions, paidSources };
+}
+
+/**
+ * ONE-OFF (run once from the Control editor): write the two Freetour.com platform
+ * commissions onto the Ledger's Rates tab — account #1 ("free tour") = 2.5 and
+ * account #2 ("free-tour") = 3.5 €/checked-in person — updating each row in place
+ * or appending it if missing. The live Rates tab is the source of truth, so this
+ * makes the new commissions actually take effect. Idempotent; safe to re-run.
+ */
+function setFreeTourCommissions() {
+  const ss = ledgerSS_();
+  let sh = ss.getSheetByName('Rates');
+  if (!sh) { seedRatesTab_(ss); sh = ss.getSheetByName('Rates'); }
+  const targets = { 'free tour': 2.5, 'free-tour': 3.5 };
+  const last = sh.getLastRow();
+  const rows = last >= 2 ? sh.getRange(2, 1, last - 1, 2).getValues() : [];
+  const seen = {};
+  rows.forEach((r, i) => {
+    const l = String(r[0] || '').toLowerCase();
+    if (l.indexOf('free tour commission') !== 0) return;
+    const m = l.match(/commission\s*[—\-:]\s*([^(]+)/);
+    const key = m ? m[1].trim() : '';
+    if (Object.prototype.hasOwnProperty.call(targets, key)) {
+      sh.getRange(i + 2, 2).setValue(targets[key]);
+      seen[key] = true;
+    }
+  });
+  Object.keys(targets).forEach(key => {
+    if (!seen[key]) sh.appendRow(['Free tour commission — ' + key + ' (€ per checked-in person)', targets[key]]);
+  });
+  SpreadsheetApp.flush();
+  return 'Free tour commissions set: #1 (free tour) = 2.5, #2 (free-tour) = 3.5.';
 }
 
 /** Free-tour platform commission (€ per checked-in person) for a booking's

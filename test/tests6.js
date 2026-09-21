@@ -178,6 +178,22 @@ check('Guruwalk free: guide owes 6x4=24', gw.theyOwe===24, gw);
 check('Guruwalk free: R&R makes (6-4.7)x4 = 5.2 (was 19.3)', Math.abs(gw.rrMakes-5.2)<0.001, gw.rrMakes);
 const ft=computeMoney_('Free Tour',3,false,0,rates);
 check('Free Tour commission 2/person: R&R makes (6-2)x3=12', Math.abs(ft.rrMakes-12)<0.001, ft.rrMakes);
+
+// Our TWO Freetour.com accounts: guide owes 6/pax (like Guruwalk); the platform
+// takes 2.5 (#1 "Free Tour") vs 3.5 (#2 "Free-Tour"); R&R keeps the difference.
+const ftRates={paid:10, free:6, privatePay:75,
+  freeCommissions:{guruwalk:4.7, 'free tour':2.5, 'free-tour':3.5, website:0, '':0},
+  paidSources:['Viator','GetYourGuide','Airbnb']};
+PORTAL._paidSources=ftRates.paidSources;
+const ft1m=computeMoney_('Free Tour',4,false,0,ftRates);
+check('FreeTour #1: guide owes 6x4=24, platform 2.5 -> R&R keeps (6-2.5)x4=14', ft1m.theyOwe===24 && Math.abs(ft1m.rrMakes-14)<0.001 && ft1m.type==='Free', ft1m);
+const ft2m=computeMoney_('Free-Tour',4,false,0,ftRates);
+check('FreeTour #2: guide owes 6x4=24, platform 3.5 -> R&R keeps (6-3.5)x4=10', ft2m.theyOwe===24 && Math.abs(ft2m.rrMakes-10)<0.001 && ft2m.type==='Free', ft2m);
+check('FreeTour #2 is NOT accidentally matched to the "free tour" (space) commission key', ft2m.rrMakes!==ft1m.rrMakes, {a:ft1m.rrMakes,b:ft2m.rrMakes});
+// No-show: guide owes only for who checked in; both accounts scale per person.
+const ft2ns=computeMoney_('Free-Tour',1,false,0,ftRates);
+check('FreeTour #2 no-show: only the 1 who came is billed (theyOwe 6, R&R 2.5)', ft2ns.theyOwe===6 && Math.abs(ft2ns.rrMakes-2.5)<0.001, ft2ns);
+PORTAL._paidSources=rates.paidSources;   // restore
 const web=computeMoney_('Website',2,false,0,rates);
 check('Website 0 commission: R&R makes 6x2=12', Math.abs(web.rrMakes-12)<0.001, web.rrMakes);
 const gyg=computeMoney_('GetYourGuide',2,false,27,rates);

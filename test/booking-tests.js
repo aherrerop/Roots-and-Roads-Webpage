@@ -327,6 +327,65 @@ check('reinstatement is unified: a GYG mark is seen by a GetYourGuide check (no 
 check('reinstatement stays isolated per booking id', isReinstated_(RNR.SOURCE.GYG, 'GYGOTHER99')===false, null);
 RNR_REINSTATED_IDS_ = null;
 
+console.log('--- Freetour.com: TWO accounts, tagged "Free Tour" (#1) and "Free-Tour" (#2), same slot ---');
+// The REAL Freetour.com email: departure on one "Salida:" line (time first, then
+// weekday + date), "Adultos:", "Reserva a nombre:", "Teléfono de reserva:".
+const ftBody = [
+ '---------- Forwarded message ---------',
+ 'De: Freetour.com <bookings@freetour.com>',
+ 'Subject: Reserva de Freetour.com - Booking ID: 114641-20260920075822-805',
+ 'To: DB Tours <delbarritour@gmail.com>',
+ '',
+ 'Free Tour Barcelona REAL: Sagrada Familia, Modernismo & Barrio Gótico Reserva del Tour',
+ '*Salida:* 10:00 AM, Monday, 21 September 2026',
+ '*Idioma:* Español',
+ '*Adultos:* 2 personas',
+ '*Reserva a nombre:* Maria Pia Bongiorno',
+ '*Teléfono de reserva:* +393887468311',
+ '*Referencia de Reserva:*','114641-20260920075822-805'
+].join('\n');
+// #2 arrives forwarded by the DB Tours account (delbarritour@gmail.com).
+const ft2 = parseFreetourMessage_(makeFakeMsg_('Fwd: Reserva de Freetour.com - Booking ID: 114641-20260920075822-805',
+  ftBody, { from:'DB Tours <delbarritour@gmail.com>', to:'rootsandroadstours@gmail.com' }), 'confirm');
+check('FreeTour #2: tagged source "Free-Tour" (2nd account, by the delbarritour marker)',
+  ft2 && ft2.source===RNR.SOURCE.FREETOUR2 && ft2.source==='Free-Tour', ft2 && ft2.source);
+check('FreeTour: the "Salida:" line parses BOTH date and time (was null before)',
+  ft2 && dateKey_(ft2.date)==='2026-09-21' && normalizeTime_(ft2.time)==='10:00 AM',
+  ft2 && {d:ft2.date&&dateKey_(ft2.date), t:ft2.time});
+check('FreeTour: name / phone / guests / language / id all parse from the real format',
+  ft2 && ft2.name==='Maria Pia Bongiorno' && /393887468311/.test(ft2.phone||'') && ft2.guests===2 &&
+  ft2.language==='Spanish' && ft2.bookingId==='114641-20260920075822-805', ft2);
+check('FreeTour: it is a FREE model (same as Guruwalk), guests counted free', RNR.MODEL['Free-Tour']==='free', RNR.MODEL['Free-Tour']);
+// #1 (main account): same email WITHOUT the delbarritour marker -> "Free Tour".
+const ft1 = parseFreetourMessage_(makeFakeMsg_('Reserva de Freetour.com - Booking ID: FT111',
+  ftBody.replace(/delbarritour@gmail.com/g,'rootsandroads@x.com').replace('DB Tours','R&R').replace('114641-20260920075822-805','FT111'),
+  { from:'Freetour.com <bookings@freetour.com>', to:'rootsandroadstours@gmail.com' }), 'confirm');
+check('FreeTour #1: tagged source "Free Tour" (main account, no marker)',
+  ft1 && ft1.source===RNR.SOURCE.FREETOUR && ft1.source==='Free Tour', ft1 && ft1.source);
+
+// Same slot, two accounts -> both land in the SAME date/time/language tab (they
+// merge into one portal card, grouped by slot not source), just distinct sources.
+const ftRow2 = normalizeBooking_({ name:'Maria Pia Bongiorno', phone:'+393887468311', guests:2,
+  date: ft2.date, time: ft2.time, language:'Spanish', source: RNR.SOURCE.FREETOUR2, bookingId:'114641-20260920075822-805' });
+check('FreeTour family: sources match by id across the two accounts',
+  sourcesMatchForId_(RNR.SOURCE.FREETOUR, RNR.SOURCE.FREETOUR2)===true, null);
+check('FreeTour family: a "Free Tour"-tagged cancellation removes the "Free-Tour" row by id',
+  cancellationMatchesBooking_(
+    normalizeBooking_({ source: RNR.SOURCE.FREETOUR, bookingId:'114641-20260920075822-805', name:'Maria Pia Bongiorno',
+      guests:2, date: ft2.date, time: ft2.time, language:'Spanish' }),
+    ftRow2)===true, null);
+check('cross-platform safety: FreeTour is NOT in the GYG id family (and vice-versa)',
+  sourcesMatchForId_(RNR.SOURCE.FREETOUR, RNR.SOURCE.GYG)===false &&
+  sourcesMatchForId_(RNR.SOURCE.FREETOUR2, RNR.SOURCE.VIATOR)===false, null);
+check('threadSourceFor_: FreeTour family canonicalises to the main "Free Tour" source',
+  threadSourceFor_(RNR.SOURCE.FREETOUR2)===RNR.SOURCE.FREETOUR &&
+  threadSourceFor_(RNR.SOURCE.FREETOUR)===RNR.SOURCE.FREETOUR, null);
+RNR_REINSTATED_IDS_ = new Set();
+markReinstated_(RNR.SOURCE.FREETOUR2, '114641-20260920075822-805');
+check('FreeTour reinstatement is unified across the two accounts',
+  isReinstated_(RNR.SOURCE.FREETOUR, '114641-20260920075822-805')===true, null);
+RNR_REINSTATED_IDS_ = null;
+
 console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
 const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;
 const idEn=idSS.insertSheet('English Tours');

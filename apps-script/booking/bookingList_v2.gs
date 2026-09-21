@@ -250,7 +250,8 @@ const RNR = {
     GYG2: 'GYG',            // our SECOND GetYourGuide account (a different listing/password)
     SF_EXT: 'GYG-SF',       // GetYourGuide "Sagrada Família Ultimate Exterior Tour" (prepaid ~8€, own guide rate)
     SF_EXT_VIATOR: 'Viator-SF',  // the same Sagrada exterior product on Viator (coming later; own payout)
-    FREETOUR: 'Free Tour'
+    FREETOUR: 'Free Tour',
+    FREETOUR2: 'Free-Tour'  // our SECOND Freetour.com account (a different listing); rides the SAME Free Tour labels/parser, own ledger commission
   },
 
   // The SECOND GetYourGuide account forwards its emails into this mailbox. They
@@ -258,6 +259,13 @@ const RNR = {
   // the SOURCE as "GYG" (vs "GetYourGuide") so the two accounts are told apart on
   // the sheet. Detection is by the address the email was sent to (see parseGyg).
   GYG_SECOND_EMAIL: 'destinationstewards@gmail.com',
+
+  // The SECOND Freetour.com account (DB Tours) forwards its bookings into this
+  // mailbox. They ride the SAME Free Tour labels + parser; we only tag the SOURCE
+  // as "Free-Tour" (vs "Free Tour") so the two accounts are told apart on the
+  // sheet and paid their own ledger commission. Detection is by this address in
+  // the forwarding envelope / forwarded header (see freetourSourceFor_).
+  FREETOUR_SECOND_EMAIL: 'delbarritour@gmail.com',
 
   /**
    * Guest accounting model per source.
@@ -273,6 +281,7 @@ const RNR = {
     'Viator-SF': 'paid',    // Sagrada exterior prepaid tour (Viator) — paid guests (own guide rate)
     Guruwalk: 'free',
     'Free Tour': 'free',
+    'Free-Tour': 'free',    // second Freetour.com account — same free model, own ledger commission
     Website: 'free'
   },
 
@@ -2093,10 +2102,18 @@ function isBookingCancelledByEmail_(booking) {
 function isGygFamilySource_(s) {
   return s === RNR.SOURCE.GYG || s === RNR.SOURCE.GYG2 || s === RNR.SOURCE.SF_EXT;
 }
+// Our two Freetour.com accounts ('Free Tour' and 'Free-Tour') ride the SAME Free
+// Tour labels/parser and share Freetour's globally-unique booking id — so a
+// cancellation/modification tagged with one account still matches the other's
+// row by id, exactly like the GYG family.
+function isFreetourFamilySource_(s) {
+  return s === RNR.SOURCE.FREETOUR || s === RNR.SOURCE.FREETOUR2;
+}
 function sourcesMatchForId_(a, b) {
   if (!a || !b) return false;
   if (a === b) return true;
-  return isGygFamilySource_(a) && isGygFamilySource_(b);
+  return (isGygFamilySource_(a) && isGygFamilySource_(b)) ||
+         (isFreetourFamilySource_(a) && isFreetourFamilySource_(b));
 }
 
 /**
@@ -2109,7 +2126,9 @@ function sourcesMatchForId_(a, b) {
  * GetYourGuide. Identity for every other source, so nothing else changes.
  */
 function threadSourceFor_(source) {
-  return isGygFamilySource_(source) ? RNR.SOURCE.GYG : source;
+  if (isGygFamilySource_(source)) return RNR.SOURCE.GYG;
+  if (isFreetourFamilySource_(source)) return RNR.SOURCE.FREETOUR;
+  return source;
 }
 
 
@@ -4494,6 +4513,29 @@ function gygSourceFor_(msg) {
   } catch (e) { return RNR.SOURCE.GYG; }
 }
 
+/**
+ * Which of our two Freetour.com accounts did this booking come through? The 2nd
+ * account (DB Tours) forwards its emails into the mailbox, so its address shows
+ * up as the forwarding From/To/Cc AND in the forwarded "To: … <…>" header line in
+ * the body — check all of them so a manual OR an auto-forward is caught. Default
+ * to the main account ("Free Tour") when the marker is absent.
+ * TUNING POINT: verify against the first real 2nd-account email; if the forward
+ * strips the address from every header, the body-header check still catches it.
+ */
+function freetourSourceFor_(msg) {
+  try {
+    if (!RNR.FREETOUR_SECOND_EMAIL || !msg) return RNR.SOURCE.FREETOUR;
+    const marker = RNR.FREETOUR_SECOND_EMAIL.toLowerCase();
+    const hay = [
+      (msg.getFrom && msg.getFrom()) || '',
+      (msg.getTo && msg.getTo()) || '',
+      (msg.getCc && msg.getCc()) || '',
+      getBestMessageText_(msg) || ''
+    ].join(' ').toLowerCase();
+    return hay.indexOf(marker) !== -1 ? RNR.SOURCE.FREETOUR2 : RNR.SOURCE.FREETOUR;
+  } catch (e) { return RNR.SOURCE.FREETOUR; }
+}
+
 
 /**
  * Find a GYG booking (with a real name) by id inside a given label's threads.
@@ -4800,6 +4842,7 @@ function parseFreetourMessage_(msg, mode) {
   ]);
 
   const name = extractFirst_(text, [
+    /Reserva a nombre:\s*([^\n\r]+)/i,     // Freetour.com
     /Name:\s*([^\n\r]+)/i,
     /Guest(?:'s)? name:\s*([^\n\r]+)/i,
     /Customer:\s*([^\n\r]+)/i,
@@ -4809,13 +4852,14 @@ function parseFreetourMessage_(msg, mode) {
   ]);
 
   const rawPhone = extractFirst_(text, [
+    /Tel[eé]fono(?:\s+de\s+reserva)?:\s*([+\d][+\d\s().-]*)/i,   // Freetour.com "Teléfono de reserva:"
     /Phone(?:\s*number)?:\s*([+\d][+\d\s().-]*)/i,
     /Mobile:\s*([+\d][+\d\s().-]*)/i,
-    /Tel[eé]fono:\s*([+\d][+\d\s().-]*)/i,
     /M[oó]vil:\s*([+\d][+\d\s().-]*)/i
   ]);
 
   const guestsText = extractFirst_(text, [
+    /Adultos?:\s*(\d+)/i,                  // Freetour.com "Adultos: N persona(s)"
     /Guests?:\s*(\d+)/i,
     /People:\s*(\d+)/i,
     /Participants?:\s*(\d+)/i,
@@ -4826,14 +4870,25 @@ function parseFreetourMessage_(msg, mode) {
     /(\d+)\s+(?:guest|person|people|persona|plaza)s?/i
   ]);
 
-  const dateText = extractFirst_(text, [
+  // Freetour.com renders the departure as ONE line: "Salida: 10:00 AM, Monday,
+  // 21 September 2026" (time first, then weekday + date). Split it: the time is
+  // the leading token; the date is what remains after dropping that token (and
+  // normalizeDate_ then drops the weekday). Other free-tour formats still use the
+  // labelled Date:/Time: lines below as a fallback.
+  const salidaText = extractFirst_(text, [/Salida:\s*([^\n\r]+)/i]);
+  const salidaTime = salidaText ? extractFirst_(salidaText, [/(\d{1,2}:\d{2}\s*(?:AM|PM))/i]) : '';
+  const salidaDate = salidaText
+    ? salidaText.replace(/^\s*\d{1,2}:\d{2}\s*(?:AM|PM)?\s*,?\s*/i, '').trim()
+    : '';
+
+  const dateText = salidaDate || extractFirst_(text, [
     /Date:\s*([^\n\r]+)/i,
     /Tour date:\s*([^\n\r]+)/i,
     /Fecha(?:\s+(?:del?\s+tour|de\s+la\s+reserva))?:\s*([^\n\r]+)/i,
     /D[ií]a:\s*([^\n\r]+)/i
   ]);
 
-  const timeText = extractFirst_(text, [
+  const timeText = salidaTime || extractFirst_(text, [
     /Time:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
     /Start time:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
     /Hora:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
@@ -4850,6 +4905,11 @@ function parseFreetourMessage_(msg, mode) {
   const ftChildren = ftKidsText ? Number(ftKidsText) : 0;
   const date = normalizeDate_(dateText);
 
+  // Our TWO Freetour.com accounts ride the same labels/parser; tag the source by
+  // the account the booking came through (see freetourSourceFor_) so the sheet
+  // and the Ledger tell them apart and pay each its own commission.
+  const source = freetourSourceFor_(msg);
+
   // Stable fallback id so re-processing dedupes cleanly.
   if (!bookingId) bookingId = generateFallbackBookingId_('FT', date, name, rawPhone, guests);
 
@@ -4861,8 +4921,8 @@ function parseFreetourMessage_(msg, mode) {
     date,
     time: timeText ? normalizeTime_(timeText) : '',
     language: normalizeLanguage_(languageText),
-    source: RNR.SOURCE.FREETOUR,
-    income: incomeForFreeSource_(RNR.SOURCE.FREETOUR, guests),
+    source: source,
+    income: incomeForFreeSource_(source, guests),
     bookingId,
     notes: composeNotes_(false, ftChildren, 0, 'Free Tour'),
     isCancellation: isCancel,
@@ -5627,14 +5687,18 @@ function debugLabelLifecycleAudit() {
  * Add a new fixture whenever an OTA changes its template.
  ******************************************************/
 
-function makeFakeMsg_(subject, body) {
+function makeFakeMsg_(subject, body, opts) {
   const id = 'FIXTURE_' + Math.random().toString(36).slice(2);
+  const o = opts || {};
   return {
     getId: function () { return id; },
     getSubject: function () { return subject; },
     getPlainBody: function () { return body; },
     getBody: function () { return ''; },
-    getDate: function () { return new Date(); }
+    getDate: function () { return new Date(); },
+    getFrom: function () { return o.from || ''; },
+    getTo: function () { return o.to || ''; },
+    getCc: function () { return o.cc || ''; }
   };
 }
 
