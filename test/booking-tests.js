@@ -286,6 +286,30 @@ check('SF-ext still wins over 3-in-1 when both patterns could appear (order)',
 check('Viator exterior product detected -> Viator-SF', viatorIsSfExt_('Tour Grade: Sagrada Família Exterior Ultimate Exterior')===true, null);
 check('a regular Viator tour is NOT tagged Viator-SF', viatorIsSfExt_('Tour Grade: Italian Tour 16:00')===false, null);
 
+// A GYG PRIVATE tour must be recognised as private (flat guide pay, its own portal
+// column) — VERY important. The 3-in-1 PRIVATE case must be BOTH source "GYG" AND
+// private, with the real "3 x Adults" count (not "Group up to N"). Real email format.
+const gygPrivBody = [
+ 'Hi Supply Partner, great news! Your offer has been booked:',
+ 'Barcelona 3-in-1 Tour: Sagrada Família, Gaudí & Old Town Private tour',
+ 'Reference number GYG83W7LWAGA','Date October 2, 2026, 3:30 PM',
+ 'Number of participants 3 x Adults (Age 15 - 99)',
+ 'Main customer Janice mcleod customer-x@reply.getyourguide.com Phone: +447758083573 Language: English',
+ 'Tour language English (Live tour guide)','Price € 75.00'].join('\n');
+const gygPriv = parseGygMessage_(makeFakeMsg_('Booking - S809442 - GYG83W7LWAGA', gygPrivBody, {to:'destinationstewards@gmail.com'}), 'confirm');
+check('GYG 3-in-1 PRIVATE: source "GYG" AND recognised as Private, 3 guests, income 75*0.75',
+  gygPriv && gygPriv.source===RNR.SOURCE.GYG2 && /Private/.test(gygPriv.notes||'') && gygPriv.guests===3 &&
+  Math.abs(gygPriv.income-56.25)<0.02 && dateKey_(gygPriv.date)==='2026-10-02', gygPriv);
+check('GYG main-account Ultimate PRIVATE: source "GetYourGuide" AND Private, 3 guests',
+  (function(){ const b=parseGygMessage_(makeFakeMsg_('Booking - S779080 - GYGMX38ZZ2AB',
+    ['Your offer has been booked:','Barcelona Ultimate Tour: Sagrada Familia, Gaudí & Old Town Private Tour',
+     'Reference number GYGMX38ZZ2AB','Date September 29, 2026, 3:30 PM','Number of participants 3 x Adults (Age 15 - 99)',
+     'Main customer John Doe Phone: +34600 Language: Spanish','Tour language Español','Price € 90.00'].join('\n'),
+    {to:'rootsandroadstours@gmail.com'}),'confirm');
+    return b && b.source===RNR.SOURCE.GYG && /Private/.test(b.notes||'') && b.guests===3; })(), null);
+check('a REGULAR 3-in-1 (not private) is NOT flagged Private',
+  !/Private/.test((threeB&&threeB.notes)||''), threeB&&threeB.notes);
+
 // CANCEL / MODIFY must still match a 3-in-1 row ('GYG') even if the cancel/modify
 // email is tagged with a DIFFERENT GYG listing ('GetYourGuide') — otherwise a
 // real cancellation could never remove its row (would ruin the company).
