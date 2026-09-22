@@ -1974,16 +1974,18 @@ function guideColumns_(header) {
   const email = idx('Email');
   const password = idx('Password');
   const manager = idx('Manager');
+  const vacation = header.findIndex(h => /vacation/i.test(h));
   const langStart = seniority + 1;
   // Languages are the columns after Seniority, up to the first of Manager/Email.
   const stops = [email, manager].filter(c => c > seniority);
   const langEnd = stops.length ? Math.min.apply(null, stops) : header.length;
   const languages = [];
   for (let c = langStart; c < langEnd; c++) {
+    if (c === vacation) continue;                 // the vacation column is never a language
     if (header[c]) languages.push({ col: c, name: header[c] });
   }
   return { nameCol: idx('Guide'), activeCol: idx('Active?'), emailCol: email, passwordCol: password,
-           managerCol: idx('Manager'), seniorityCol: seniority, languages };
+           managerCol: idx('Manager'), seniorityCol: seniority, vacationCol: vacation, languages };
 }
 
 function parseGuideRow_(row, cols) {
@@ -1999,6 +2001,8 @@ function parseGuideRow_(row, cols) {
     // Seniority: lower number = more senior (1 first). Missing -> sorts last.
     seniority: (cols.seniorityCol > -1 && row[cols.seniorityCol] !== '' && !isNaN(row[cols.seniorityCol]))
       ? Number(row[cols.seniorityCol]) : 999,
+    // Blocked/vacation date ranges (Guides tab "Vacation dates" column).
+    vacations: parseVacationRanges_(cols.vacationCol > -1 ? row[cols.vacationCol] : ''),
     languages
   };
 }
@@ -2026,6 +2030,47 @@ function guidesParsed_() {
 function findGuideByEmail_(email) {
   const e = String(email == null ? '' : email).trim().toLowerCase();
   return guidesParsed_().byEmail[e] || null;
+}
+
+/**
+ * VACATION / blocked dates for a guide, entered in the Guides tab's "Vacation
+ * dates" column. Accepts single days AND ranges, European day/month, comma or
+ * newline separated, e.g.  "3/9, 4/9, 3/10 - 10/10, 21/12 - 26/12 pending".
+ * Trailing words (e.g. "pending") are ignored. The YEAR is inferred: this year,
+ * or next year if the day/month already passed more than ~40 days ago. Returns
+ * inclusive ranges as { from, to } yyyy-MM-dd date keys. Shared by the portal
+ * (weeklyDefaultGuide_, the assign dots) and the scheduler (makeSchedule).
+ */
+function parseVacationRanges_(cell) {
+  const s = String(cell || '').trim();
+  if (!s) return [];
+  const out = [];
+  s.split(/[,;\n]+/).forEach(function (part) {
+    const toks = []; let m; const re = /(\d{1,2})\s*\/\s*(\d{1,2})/g;
+    while ((m = re.exec(part)) !== null) toks.push([Number(m[1]), Number(m[2])]);
+    if (!toks.length) return;
+    const a = vacDateKey_(toks[0][0], toks[0][1]);
+    const b = toks.length > 1 ? vacDateKey_(toks[1][0], toks[1][1]) : a;
+    if (a && b) out.push({ from: (a <= b ? a : b), to: (a <= b ? b : a) });
+  });
+  return out;
+}
+function vacDateKey_(day, month) {
+  if (!(month >= 1 && month <= 12) || !(day >= 1 && day <= 31)) return '';
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  let year = today.getFullYear();
+  const cand = new Date(year, month - 1, day, 12, 0, 0, 0);
+  if ((today - cand) / 86400000 > 40) year += 1;          // already well past -> next year
+  const d = new Date(year, month - 1, day, 12, 0, 0, 0);
+  if (isNaN(d) || d.getMonth() !== month - 1) return '';  // guards e.g. 31/2
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+function isGuideOnVacation_(guide, dateKey) {
+  if (!guide || !dateKey || !guide.vacations || !guide.vacations.length) return false;
+  for (let i = 0; i < guide.vacations.length; i++) {
+    if (dateKey >= guide.vacations[i].from && dateKey <= guide.vacations[i].to) return true;
+  }
+  return false;
 }
 
 function findGuideByName_(guideName) {
@@ -2744,6 +2789,10 @@ function weeklyDefaultGuide_(dateKey, time, language) {
     if (r.activeFrom && dateKey < toDateKey_(r.activeFrom)) continue;
     if (r.activeUntil && dateKey > toDateKey_(r.activeUntil)) continue;
     const g = findGuideByName_(r.guide);
+    // A guide on vacation is NOT auto-filled onto their usual slot for that date —
+    // the slot shows "Needs a guide" so a manager staffs it (they can still assign
+    // anyone manually, including this guide). Soft block by design.
+    if (g && isGuideOnVacation_(g, dateKey)) return '';
     return (g && g.active && g.languages[language] === true) ? r.guide : '';
   }
   return '';
@@ -3613,6 +3662,10 @@ function guideStatusesForShift_(shift, guidesByLanguage, busyMap) {
   const st = shiftStartMs_(shift.dateKey, shift.minutes);
   const thisKey = shiftKeyFull_(shift);
   return (guidesByLanguage[shift.language] || []).map(function (name) {
+    // On vacation this date -> flag it so a manager doesn't reassign them by accident
+    // (they still CAN — the option stays selectable; this is only the status dot).
+    const gv = findGuideByName_(name);
+    if (gv && isGuideOnVacation_(gv, shift.dateKey)) return { name: name, status: 'vacation' };
     const slots = busyMap[String(name).trim().toLowerCase()] || [];
     let status = 'free';
     for (let i = 0; i < slots.length; i++) {

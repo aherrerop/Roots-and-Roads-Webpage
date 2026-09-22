@@ -187,6 +187,30 @@ check('a PAST manager assignment is NOT resurrected', !_fS(_past,'10:30','German
 check('an in-window assignment is not duplicated',
   _pShifts.filter(s=>s.dateText===_inwin && s.time==='10:30' && s.language==='English').length===1, _pShifts.length);
 
+console.log('--- Guide vacations: single dates + ranges, and the usual-guide is not auto-filled ---');
+const _vac = parseVacationRanges_('3/10, 19/10 - 29/10, 21/12 - 26/12 pending');
+check('parses 3 entries (1 single + 2 ranges) from a mixed cell', _vac.length===3, _vac);
+check('a single date is a 1-day range (3/10)', _vac[0].from===_vac[0].to && _vac[0].from.slice(5)==='10-03', _vac[0]);
+check('a range spans its days (19/10 -> 29/10)', _vac[1].from.slice(5)==='10-19' && _vac[1].to.slice(5)==='10-29', _vac[1]);
+check('trailing "pending" is ignored, the range still parses (21/12 -> 26/12)', _vac[2].from.slice(5)==='12-21' && _vac[2].to.slice(5)==='12-26', _vac[2]);
+const _yr = _vac[1].from.slice(0,4);
+const _gv = { name:'Francesca', vacations: parseVacationRanges_('19/10 - 29/10') };
+check('isGuideOnVacation_: a date inside the range is blocked', isGuideOnVacation_(_gv, _yr+'-10-22')===true, _gv.vacations);
+check('isGuideOnVacation_: a date outside the range is free', isGuideOnVacation_(_gv, _yr+'-10-30')===false, _gv.vacations);
+check('isGuideOnVacation_: a guide with no vacation column is never blocked', isGuideOnVacation_({name:'X', vacations:[]}, _yr+'-10-22')===false, null);
+// weeklyDefaultGuide_ integration: Polina is the usual Sunday 10:30 guide but is on
+// vacation THAT Sunday -> no auto-fill; a Sunday she is NOT off -> Polina.
+const _vSunA = (function(){ const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()+7); while(d.getDay()!==0) d.setDate(d.getDate()+1); return d; })();
+const _vSunB = new Date(_vSunA); _vSunB.setDate(_vSunA.getDate()+7);
+const _vKey = d => Utilities.formatDate(d, Session.getScriptTimeZone(),'yyyy-MM-dd');
+const _dmA = _vSunA.getDate()+'/'+(_vSunA.getMonth()+1);   // block sunA only
+__RRX = {};
+__RRX.guidesRaw = { header: ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Manager','Email','Password','Vacation dates'],
+  rows: [['Polina', true, 1, true, false, false, false, false, false, 'p@x.com','pw', _dmA]] };
+__RRX.weekly = [{ day:'Sunday', time:'10:30', language:'English', guidesNeeded:1, isPrivate:false, activeFrom:null, activeUntil:null, guide:'Polina', hideFromAvailability:false, hideFromWebsite:false }];
+check('weeklyDefaultGuide_: usual guide is NOT auto-filled on their vacation Sunday', weeklyDefaultGuide_(_vKey(_vSunA),'10:30','English')==='', weeklyDefaultGuide_(_vKey(_vSunA),'10:30','English'));
+check('weeklyDefaultGuide_: usual guide IS filled on a Sunday they are not off', weeklyDefaultGuide_(_vKey(_vSunB),'10:30','English')==='Polina', weeklyDefaultGuide_(_vKey(_vSunB),'10:30','English'));
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

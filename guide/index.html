@@ -240,7 +240,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-22-assign-queue";
+const PORTAL_VERSION = "2026-09-22-vacations";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -847,14 +847,15 @@ function assignSelect(t){
   // EVERY guide who speaks the language is assignable — the dot is only INFO, never
   // a block. Server sends guideOptions [{name,status}] where status is:
   //   free 🟢 (available) · overlap 🟡 (a tour within 5h) · busy 🔴 (a tour at the
-  //   SAME time). Falls back to the plain eligible list if guideOptions is absent.
-  const DOT={free:"🟢",overlap:"🟡",busy:"🔴"};
+  //   SAME time) · vacation 🌴 (on their blocked/vacation dates). Falls back to the
+  //   plain eligible list if guideOptions is absent.
+  const DOT={free:"🟢",overlap:"🟡",busy:"🔴",vacation:"🌴"};
   let opts = (Array.isArray(t.guideOptions)&&t.guideOptions.length)
     ? t.guideOptions.slice()
     : (t.eligible||GUIDES_BY_LANG[t.language]||[]).map(n=>({name:n,status:""}));
   const cur=(t.assigned&&t.assigned[0])||"";
   if(cur && !opts.some(o=>o.name===cur)) opts=[{name:cur,status:""}].concat(opts);
-  const legend="🟢 available · 🟡 overlapping tour · 🔴 already booked this time — you can still pick anyone";
+  const legend="🟢 available · 🟡 overlapping tour · 🔴 already booked this time · 🌴 on vacation — you can still pick anyone";
   let html='<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1}))+'\'>';
   html+='<option value=""'+(cur?'':' selected')+'>Not assigned</option>';
   opts.forEach(o=>{ const d=DOT[o.status]?DOT[o.status]+" ":""; html+='<option value="'+esc(o.name)+'"'+(o.name===cur?' selected':'')+'>'+d+esc(o.name)+'</option>'; });

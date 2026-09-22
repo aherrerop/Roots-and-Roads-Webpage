@@ -242,6 +242,7 @@ function makeSchedule() {
       g.active &&
       g.languages[shift.language] === true &&
       shift.availableGuides.includes(g.name) &&
+      !isGuideOnVacation_(g, shift.dateText) &&                 // on vacation -> not auto-assigned
       !shift.lockedGuides.some(n => n.toLowerCase() === g.name.toLowerCase()) &&
       !hasConflict_(assignedByGuide[g.name], shift.dateTimeObj)
     );
@@ -1236,6 +1237,7 @@ function readGuides_(ss) {
     const c = header.findIndex(h => h.toLowerCase() === l.toLowerCase());
     if (c !== -1) langCol[l] = c;
   });
+  const vacCol = header.findIndex(h => /vacation/i.test(h));   // "Vacation dates" column
   const guides = [];
   for (let r = 1; r < values.length; r++) {
     const row = values[r];
@@ -1248,6 +1250,7 @@ function readGuides_(ss) {
       active: row[1] === true,
       seniority: Number(row[2]) || 999,
       order: r,
+      vacations: parseVacationRanges_(vacCol !== -1 ? row[vacCol] : ''),   // blocked date ranges
       languages
     });
   }
