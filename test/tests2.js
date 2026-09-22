@@ -124,6 +124,29 @@ const availVisible2=webRules.filter(r=>!r.hideFromAvailability);
 check('availability list KEEPS the Hide-from-website-only row (Wed)',
   availVisible2.some(r=>r.day==='Wednesday'), availVisible2.map(r=>r.day));
 
+console.log('--- Manager CLEAR sticks: the weekly default does not re-fill a cleared slot ---');
+const clrSS = new __mock.MockSS('control-clear'); SpreadsheetApp._active = clrSS;
+clrSS.insertSheet('Guides').getRange(1, 1, 2, 11).setValues([
+  ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Manager','Email','Password'],
+  ['Polina', true, 1, true, false, false, false, false, false, 'p@x.com','pw']]);
+// A recurring Sunday 10:30 English slot whose USUAL guide (col G) is Polina.
+clrSS.insertSheet('Weekly_Schedule').getRange(1, 1, 2, 10).setValues([
+  ['Day','Time','Language','Guides needed','Active from','Active until','Guide','Hide from availability','Private','Hide from website'],
+  ['Sunday','10:30','English',1,'','','Polina','','','']]);
+__RRX = {}; __RRX.weekly = readWeeklySchedule_(clrSS);   // fresh rules, bypass cache
+const _sunA = (function(){ const d=new Date(); d.setHours(12,0,0,0); while(d.getDay()!==0) d.setDate(d.getDate()+1); return Utilities.formatDate(d, Session.getScriptTimeZone(),'yyyy-MM-dd'); })();
+const _sunB = (function(){ const d=new Date(_sunA+'T12:00:00'); d.setDate(d.getDate()+7); return Utilities.formatDate(d, Session.getScriptTimeZone(),'yyyy-MM-dd'); })();
+const _s1 = [{ dateKey:_sunA, time:'10:30', minutes:630, language:'English', private:false, assigned:[], status:'Not assigned' }];
+applyWeeklyDefaults_(_s1);
+check('an UNTOUCHED Sunday 10:30 slot auto-fills the usual guide (Polina)', _s1[0].assigned.join()==='Polina', _s1[0].assigned);
+const _s2 = [{ dateKey:_sunB, time:'10:30', minutes:630, language:'English', private:false, assigned:[], status:'Not assigned', cleared:true }];
+applyWeeklyDefaults_(_s2);
+check('a manager-CLEARED slot STAYS empty (usual guide does NOT re-fill it)', _s2[0].assigned.length===0, _s2[0].assigned);
+check('guideForShift_ returns nobody for a cleared slot (not the weekly default)',
+  guideForShift_([{ dateKey:_sunB, minutes:630, language:'English', private:false, assigned:[], cleared:true }], _sunB, '10:30', 'English', false)==='', 'expected empty');
+check('the grid reader flags a "Not assigned (cleared)" cell as cleared, plain "Not assigned" as not',
+  /cleared/i.test('Not assigned (cleared)')===true && /cleared/i.test('Not assigned')===false, null);
+
 console.log('--- Availability horizon: rolling window, extended to the seasonal end date ---');
 // mondayThis well before AVAILABILITY_UNTIL (2026-12-31): project out to the week
 // containing Dec 31, not just the 4-week rolling window.

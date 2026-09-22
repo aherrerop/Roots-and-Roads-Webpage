@@ -1743,7 +1743,13 @@ function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guid
 
   const cell = sh.getRange(rowNum, colNum);
   if (!guide) {
-    cell.setValue('Not assigned');
+    // MANAGER CLEAR = "Not assigned (cleared)" — a deliberate lock to NOBODY. The
+    // "(cleared)" marker makes the weekly-default overlay (applyWeeklyDefaults_)
+    // AND the weekly scheduler (makeSchedule) both leave this slot empty, so the
+    // usual/recurring guide never re-fills a slot the manager explicitly cleared.
+    // (A plain "Not assigned" — written by makeSchedule for unstaffed slots — still
+    // takes the default, which is the wanted convenience.)
+    cell.setValue('Not assigned (cleared)');
     cell.setFontWeight('normal').setFontStyle('italic').setFontColor('#94a3b8');
   } else {
     // Manager assignment = LOCK -> bold, so makeSchedule never moves it.
@@ -2099,12 +2105,17 @@ function readSchedule_(opts) {
         const namesFrom = ls => ls.filter(l => !/not assigned|need \d|lock conflict/i.test(l))
           .join(',').split(',').map(s => s.trim()).filter(Boolean);
 
+        // A manager's explicit clear (writeAssignmentToGrid_) writes
+        // "Not assigned (cleared)"; carry that so the weekly default is suppressed.
+        const clearedCell = /cleared/i.test(raw);
+
         if (t.headerPrivate) {
           // Whole column is one private group.
           out.push(Object.assign({}, base, {
             private: true, privIndex: t.privIndex,
             assigned: namesFrom(lines.map(l => l.replace(/🔒/g, '').replace(/\(private\)/ig, ''))),
-            status: /not assigned/i.test(raw) ? 'Not assigned' : 'OK'
+            status: /not assigned/i.test(raw) ? 'Not assigned' : 'OK',
+            cleared: clearedCell
           }));
           return;
         }
@@ -2117,7 +2128,8 @@ function readSchedule_(opts) {
           const names = namesFrom(regLines);
           out.push(Object.assign({}, base, {
             private: false, assigned: names,
-            status: names.length ? 'OK' : 'Not assigned'
+            status: names.length ? 'OK' : 'Not assigned',
+            cleared: clearedCell && !names.length
           }));
         }
 
@@ -2752,6 +2764,7 @@ function applyWeeklyDefaults_(schedule) {
   };
   schedule.forEach(s => {
     if (s.private) return;                              // defaults are for regular slots
+    if (s.cleared) return;                              // manager explicitly cleared -> stays empty ("my clear wins")
     if (s.assigned && s.assigned.length) return;        // a real assignment always wins
     const guide = weeklyDefaultGuide_(s.dateKey, s.time, s.language);
     if (!guide) return;
@@ -4221,6 +4234,7 @@ function guideForShift_(schedule, dateKey, time, language, isPrivate) {
     s.dateKey === dateKey && s.minutes === minutes &&
     sameName_(s.language, language) && !!s.private === !!isPrivate);
   if (hit && hit.assigned.length) return hit.assigned.join(', ');
+  if (hit && hit.cleared) return '';   // manager explicitly cleared this slot -> genuinely nobody
   // No grid assignment: fall back to the weekly default so the management queues
   // attribute the SAME recurring guide the portal already shows. Without this a
   // tour staffed only by the weekly pattern (e.g. the weekday English slots that

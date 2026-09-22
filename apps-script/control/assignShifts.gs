@@ -170,6 +170,9 @@ function makeSchedule() {
 
   // MANAGER LOCKS: bold names in the Schedule_<Language> grids are fixed.
   const locks = readLockedAssignments_(controlSS);
+  // MANAGER CLEARS: slots the manager explicitly emptied stay empty (no default,
+  // no auto-assign) — the same authority as a lock, but to nobody.
+  const clearedSlots = readClearedSlots_(controlSS);
 
   // Value of each shift to the guide who runs it (private = flat; paid = /guest;
   // free = ~net tip/guest). This drives the balancing.
@@ -231,7 +234,11 @@ function makeSchedule() {
   // PASS 2 — auto-assign the remaining seats.
   const assignedShifts = [];
   order.forEach(shift => {
-    const eligible = guides.filter(g =>
+    // A manager-cleared slot with no lock stays empty: skip auto-assignment.
+    const lkC = lockKey_(shift.dateText, normalizeTime_(shift.time), shift.language, shift.isPrivate, shift.privIndex);
+    shift.cleared = !!clearedSlots[lkC] && !(shift.lockedGuides && shift.lockedGuides.length);
+
+    const eligible = shift.cleared ? [] : guides.filter(g =>
       g.active &&
       g.languages[shift.language] === true &&
       shift.availableGuides.includes(g.name) &&
@@ -239,7 +246,7 @@ function makeSchedule() {
       !hasConflict_(assignedByGuide[g.name], shift.dateTimeObj)
     );
 
-    const need = Math.max(0, (shift.guidesNeeded || 1) - shift.lockedGuides.length);
+    const need = shift.cleared ? 0 : Math.max(0, (shift.guidesNeeded || 1) - shift.lockedGuides.length);
     const assigned = [];
     const pool = [...eligible];
     while (assigned.length < need && pool.length) {
@@ -275,13 +282,15 @@ function makeSchedule() {
       assignedGuides: shift.lockedGuides.concat(assigned.map(g => g.name)),
       lockedGuides: shift.lockedGuides,
       hasLockConflict: hasConflictFlag,
-      status: ok ? "OK" : "Not assigned",
+      // A manager-cleared slot keeps the "(cleared)" marker so it survives this
+      // rebuild AND is recognised as cleared on the next run (readClearedSlots_).
+      status: shift.cleared ? "Not assigned (cleared)" : (ok ? "OK" : "Not assigned"),
       notes: [
         shift.isPrivate ? "Private" : "",
         shift.extra ? "Extra tour (not in Weekly_Schedule)" : "",
         shift.lockedGuides.length ? "Locked: " + shift.lockedGuides.join(", ") : "",
         hasConflictFlag ? "LOCK CONFLICT (see Errors tab)" : "",
-        ok ? "" : `Need ${needTotal}, assigned ${totalAssigned}`
+        shift.cleared ? "Cleared by manager" : (ok ? "" : `Need ${needTotal}, assigned ${totalAssigned}`)
       ].filter(Boolean).join(" · ")
     });
   });
@@ -480,6 +489,42 @@ function readLockedAssignments_(controlSS) {
     }
   });
   return locks;
+}
+
+/**
+ * Read every MANAGER-CLEARED slot from the Schedule_<Language> grids. A clear is
+ * the cell text "Not assigned (cleared)" written by the portal (writeAssignmentToGrid_).
+ * makeSchedule uses this to leave those slots empty instead of auto-assigning a
+ * guide to them — the manager's clear wins, just like a lock does. Returns a set
+ * of lockKey_ strings. (A plain "Not assigned" cell is NOT cleared; it still gets
+ * auto-assigned / defaulted as usual.)
+ */
+function readClearedSlots_(controlSS) {
+  const cleared = {};
+  controlSS.getSheets().forEach(sheet => {
+    const name = sheet.getName();
+    if (name.indexOf('Schedule_') !== 0) return;
+    const language = name.substring('Schedule_'.length).trim();
+    if (!language || sheet.getLastRow() < 3) return;
+
+    const dv = sheet.getDataRange().getDisplayValues();
+    const anchor = gridAnchor_(String(dv[0][0] || ''));
+    const timeRow = dv[1] || [];
+    for (let r = 2; r < dv.length; r++) {
+      const label = String(dv[r][0] || '').trim();
+      if (!label) continue;
+      const dateText = gridLabelToKey_(label, anchor);
+      if (!dateText) continue;
+      for (let c = 1; c < timeRow.length; c++) {
+        const h = parseGridTimeHeader_(timeRow[c]);
+        if (!h) continue;
+        if (!/cleared/i.test(String(dv[r][c] || ''))) continue;
+        const idx = h.isPrivate ? h.index : 1;
+        cleared[lockKey_(dateText, h.time, language, h.isPrivate, idx)] = true;
+      }
+    }
+  });
+  return cleared;
 }
 
 /** Write lock conflicts to the Control sheet's Errors tab (visible flag). */
