@@ -27,14 +27,15 @@ var CFG = {
   // do-not-reply@notification.getyourguide.com.)
   SENDER_MATCH: 'getyourguide.com',
 
-  // Label names. Change these if you prefer a different structure — nested
-  // labels use "/" (e.g. "Bookings/Confirmations" shows as Bookings ▸ Confirmations).
+  // Label names — set to the SAME structure this account already uses (the labels
+  // your existing Gmail filters apply), so nothing is duplicated. Nested labels
+  // use "/" (e.g. "Publishing Pages/GetYourGuide/Confirmations").
   LABELS: {
-    CONFIRM: 'Bookings/Confirmations',
-    CANCEL:  'Bookings/Cancellations',
-    MODIFY:  'Bookings/Modifications',
-    DONE:    'Bookings/Done',
-    PROCESSED: 'Bookings/Processed'   // marker so a thread is handled only once
+    CONFIRM: 'Publishing Pages/GetYourGuide/Confirmations',
+    CANCEL:  'Publishing Pages/GetYourGuide/Cancellations',
+    MODIFY:  'Publishing Pages/GetYourGuide/Modifications',
+    DONE:    'Publishing Pages/GetYourGuide/Done',
+    PROCESSED: 'Publishing Pages/Processed'   // marker so a thread is handled only once
   },
 
   // How many threads to scan per run (Gmail search cap; well above a day's volume).
@@ -57,18 +58,27 @@ function organizeGygInbox() {
     threads.forEach(function (thread) {
       try {
         var type = classifyThread_(thread);         // 'cancel' | 'modify' | 'confirm'
-        var typeLabel = type === 'cancel' ? L.CANCEL : (type === 'modify' ? L.MODIFY : L.CONFIRM);
 
-        thread.addLabel(typeLabel);
         thread.addLabel(L.PROCESSED);
         thread.markRead();
 
         if (type === 'cancel') {
-          // A cancellation is done: file it under Cancellations and get it out of
+          // A cancellation is done: file it under Cancellations, drop any wrong
+          // Confirmations/Modifications label a filter may have added, get it out of
           // the inbox — AND move the ORIGINAL confirmation for the same booking to
           // Cancellations too, exactly like the main script does.
+          thread.addLabel(L.CANCEL);
+          thread.removeLabel(L.CONFIRM);
+          thread.removeLabel(L.MODIFY);
           thread.moveToArchive();
           moveConfirmationToCancellations_(thread, L);
+        } else if (type === 'modify') {
+          // A modification is its own email, not a confirmation — label it Modifications
+          // and drop any stray Confirmations label. Stays in the inbox (booking is live).
+          thread.addLabel(L.MODIFY);
+          thread.removeLabel(L.CONFIRM);
+        } else {
+          thread.addLabel(L.CONFIRM);
         }
         // Confirmations: kept VISIBLE in the inbox as your live upcoming list (the
         // Done sweep below files them once the tour date passes). Modifications:
