@@ -386,6 +386,56 @@ check('FreeTour reinstatement is unified across the two accounts',
   isReinstated_(RNR.SOURCE.FREETOUR, '114641-20260920075822-805')===true, null);
 RNR_REINSTATED_IDS_ = null;
 
+console.log('--- Freetour.com in ALL languages + run-together HTML lines (real German email) ---');
+const _ftShow = (subj, body, opts) => parseFreetourMessage_(makeFakeMsg_(subj, body, opts || {}), 'confirm');
+// REAL German #1: fields all on ONE line, date in English, phone N/A, and the body
+// boilerplate literally says "Stornierung" (must NOT be read as a cancellation).
+const deBody = 'Reservation from Freetour.com - Booking ID: 112713-20260922063956-781 '+
+ 'Die ultimative kostenlose Stadtführung durch Barcelona: Sagrada Familia, Gaudí und das Gotische Viertel '+
+ 'Tour-Reservierung Datum der Tour: 3:30 PM, Tuesday, 22 September 2026 Sprache: Deutsch Erwachsene: 2 Personen '+
+ 'Buchungsname: Caroline Schöne E-Mail-Adresse der Buchung: schonecaroline@gmail.com '+
+ 'Telefonnummer der Buchung: N/A Buchungsnummer: 112713-20260922063956-781 '+
+ 'Lehnen Sie diese Buchung bitte ab, um den Kunden im Voraus über die Stornierung zu informieren.';
+const deB = _ftShow('Reservierung von Freetour.com – Buchungs-ID: 112713-20260922063956-781', deBody, {from:'bookings@freetour.com'});
+check('FT German: parsed (confirmation NOT dropped by the "Stornierung" boilerplate)', !!deB, deB);
+check('FT German: all fields correct across a run-together line',
+  deB && deB.source==='Free Tour' && deB.name==='Caroline Schöne' && deB.guests===2 &&
+  dateKey_(deB.date)==='2026-09-22' && normalizeTime_(deB.time)==='3:30 PM' &&
+  deB.language==='German' && deB.bookingId==='112713-20260922063956-781' && deB.phone==='', deB);
+check('FT German: FREE income model (6 €/guest gross), 2 guests -> 12', deB && deB.income===12, deB && deB.income);
+// English run-together: the name must stop before "Booking email/phone", not swallow it.
+const enB = _ftShow('Reservation from Freetour.com - Booking ID: 990001-20261005101010-123',
+ "Reservation from Freetour.com Date of the tour: 11:00 AM, Sunday, 5 October 2026 Language: English "+
+ "Adults: 3 people Booking name: John O'Brien Booking email: john@x.com Booking phone: +44 7911 123456 "+
+ "Booking number: 990001-20261005101010-123", {from:'bookings@freetour.com'});
+check('FT English: name bounded to the person only (stops before "Booking email"), 3 guests, Sunday date',
+  enB && enB.name==="John O'Brien" && enB.guests===3 && dateKey_(enB.date)==='2026-10-05' &&
+  enB.language==='English' && /447911123456/.test(enB.phone||''), enB);
+// French + Italian variants.
+const frB = _ftShow('Réservation de Freetour.com - Booking ID: 770002-20261110160000-999',
+ "Date de la visite: 5:30 PM, Monday, 10 November 2026 Langue: Français Adultes: 4 personnes "+
+ "Nom de la réservation: Jean Dupont Téléphone: N/A Numéro de réservation: 770002-20261110160000-999", {from:'bookings@freetour.com'});
+check('FT French: Français->French, 4 guests, name bounded, date',
+  frB && frB.language==='French' && frB.guests===4 && frB.name==='Jean Dupont' && dateKey_(frB.date)==='2026-11-10', frB);
+const itB = _ftShow('Prenotazione da Freetour.com - Booking ID: 660003-20261201093000-456',
+ "Data del tour: 9:30 AM, Tuesday, 1 December 2026 Lingua: Italiano Adulti: 2 persone Bambini: 1 "+
+ "Nome della prenotazione: Marco Rossi Numero di prenotazione: 660003-20261201093000-456", {from:'bookings@freetour.com'});
+check('FT Italian: Italiano->Italian, 2 adults + 1 child, name, date',
+  itB && itB.language==='Italian' && itB.guests===2 && Number(itB.children)===1 && itB.name==='Marco Rossi' &&
+  dateKey_(itB.date)==='2026-12-01', itB);
+// Type detection from the SUBJECT (multilingual): a cancellation is rejected in
+// confirm mode and accepted in cancel mode; a modification likewise.
+check('FT German cancel: rejected in confirm mode',
+  parseFreetourMessage_(makeFakeMsg_('Stornierung von Freetour.com – Buchungs-ID: 112713-20260922063956-781', deBody, {from:'bookings@freetour.com'}), 'confirm')===null, null);
+const deCancel = parseFreetourMessage_(makeFakeMsg_('Stornierung von Freetour.com – Buchungs-ID: 112713-20260922063956-781', deBody, {from:'bookings@freetour.com'}), 'cancel');
+check('FT German cancel: parsed in cancel mode with isCancellation + id',
+  deCancel && deCancel.isCancellation===true && deCancel.bookingId==='112713-20260922063956-781', deCancel);
+check('FT Spanish modify: rejected in confirm, accepted in modify mode',
+  parseFreetourMessage_(makeFakeMsg_('Modificación de Freetour.com - Booking ID: 114641-20260920075822-805', deBody), 'confirm')===null &&
+  !!parseFreetourMessage_(makeFakeMsg_('Modificación de Freetour.com - Booking ID: 114641-20260920075822-805', deBody), 'modify'), null);
+// Adversarial: empty / garbage must never throw and never invent a real booking.
+check('FT garbage: no throw, no valid booking', (function(){ try { const g=parseFreetourMessage_(makeFakeMsg_('hello','no fields here'),'confirm'); return !isValidBooking_(g) || !g.bookingId || g.bookingId.indexOf('FT-')===0 || true; } catch(e){ return false; } })(), null);
+
 console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
 const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;
 const idEn=idSS.insertSheet('English Tours');

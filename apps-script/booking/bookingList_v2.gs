@@ -4827,81 +4827,82 @@ function parseFreetourMessage_(msg, mode) {
   const subject = msg.getSubject() || '';
   const text = subject + '\n' + getBestMessageText_(msg);
 
-  const isCancel = /cancel(?:led|ed|lation)?|cancelad|cancelaci[oó]n|anulad|reserva anulada/i.test(text);
-  const isModify = /modif(?:y|ied|ication)?|modificad|cambio|updated|actualizad|reprogramad|rescheduled/i.test(text);
+  // TYPE (confirm / cancel / modify) is read from the SUBJECT LINE ONLY, never
+  // the body: a Freetour confirmation's body boilerplate literally mentions
+  // cancellation in some languages (German: "…über die Stornierung zu
+  // informieren…"), which would falsely flag a confirmation as a cancellation and
+  // drop the booking. Keywords cover EN/ES/DE/FR/IT/PT.
+  const isCancel = /cancel\w*|cancelaci[oó]n|cancelad\w*|anul\w*|storn\w*|abgesagt|annul\w*|annullat\w*|cancellat\w*|cancelamento/i.test(subject);
+  const isModify = /modif\w*|modificaci[oó]n|\bcambio\b|updated|reprogramad\w*|reschedul\w*|ge[aä]ndert|[aä]nderung|umgebucht|aktualisiert|modificat\w*/i.test(subject);
 
   if (mode === 'confirm' && (isCancel || isModify)) return null;
   if (mode === 'cancel' && !isCancel) return null;
   if (mode === 'modify' && !isModify) return null;
 
+  // Freetour.com sends the SAME booking in the guest's language (EN/ES/DE/FR/IT…)
+  // and its HTML often collapses every field onto ONE line, e.g.
+  //   "Datum der Tour: 3:30 PM, Tuesday, 22 September 2026 Sprache: Deutsch
+  //    Erwachsene: 2 Personen Buchungsname: Caroline Schöne E-Mail-Adresse …".
+  // So extract the language-INDEPENDENT values by PATTERN (Freetour always renders
+  // the date in English and the id as 112713-2026…-781), read guests from the
+  // number before a "person" word in any language, take the tour language as the
+  // single word after a Language label, and bound the NAME at the next known label
+  // so a run-together line cannot swallow the e-mail/phone that follow it.
+  const FT_MONTHS = 'January|February|March|April|May|June|July|August|September|October|November|December';
+  // Labels (any language) that can appear AFTER the guest name — the name stops here.
+  const FT_NEXT = 'E-?\\s?Mail|Email|Correo|Courriel|Telefon\\w*|Tel[eé]fono|T[eé]l[eé]phone|Telefone|Phone|Buchungs-?\\w+|Booking\\s*\\w+|Referencia|N[uú]mero|Num[eé]ro|Numero|Reference|Localizador|Sprache|Idioma|Language|Langue|Lingua|Erwachsene|Adult\\w*|Adulto?s?|Adultes|Adulti|Kinder|Ni[ñn]os?|Child\\w*|Enfants?|Bambini';
+
+  // Booking id: the Freetour reference (digits-digits-digits) is language-neutral.
   let bookingId = extractFirst_(text, [
-    /Booking\s*(?:code|reference|ID|number)\s*[:#]?\s*([A-Z0-9-]{4,})/i,
-    /Reference\s*[:#]?\s*([A-Z0-9-]{4,})/i,
-    /Reserva\s*(?:n[ºo\.]*|c[oó]digo|ID)?\s*[:#]?\s*([A-Z0-9-]{4,})/i,
-    /Localizador\s*[:#]?\s*([A-Z0-9-]{4,})/i
+    /\b(\d{4,8}-\d{10,18}-\d{2,6})\b/,
+    /Booking\s*(?:code|reference|ID|number)\s*[:#-]?\s*([A-Z0-9-]{6,})/i,
+    /Buchungs-?(?:nummer|ID)\s*[:#-]?\s*([A-Z0-9-]{6,})/i,
+    /Referencia\s*(?:de\s*Reserva)?\s*[:#-]?\s*([A-Z0-9-]{6,})/i,
+    /Reference\s*[:#-]?\s*([A-Z0-9-]{6,})/i
   ]);
 
+  // Name: multilingual label, captured up to the next known label OR line end.
   const name = extractFirst_(text, [
-    /Reserva a nombre:\s*([^\n\r]+)/i,     // Freetour.com
-    /Name:\s*([^\n\r]+)/i,
-    /Guest(?:'s)? name:\s*([^\n\r]+)/i,
-    /Customer:\s*([^\n\r]+)/i,
-    /Traveler:\s*([^\n\r]+)/i,
-    /Nombre:\s*([^\n\r]+)/i,
-    /Cliente:\s*([^\n\r]+)/i
+    new RegExp('(?:Buchungsname|Booking\\s*name|Reserva a nombre|Nome della prenotazione|Nome da reserva|Nom de la r[ée]servation|R[ée]servation au nom de)\\s*:\\s*([^\\n\\r:]+?)\\s+(?:' + FT_NEXT + ')\\b', 'i'),
+    new RegExp('(?:Buchungsname|Booking\\s*name|Reserva a nombre|Nom|Nome|Nombre|Name|Cliente|Customer)\\s*:\\s*([^\\n\\r:]+?)(?:\\s+(?:' + FT_NEXT + ')\\b|[\\n\\r]|$)', 'i')
   ]);
 
+  // Phone: a real number (starts with + or digits). "N/A" simply yields nothing.
   const rawPhone = extractFirst_(text, [
-    /Tel[eé]fono(?:\s+de\s+reserva)?:\s*([+\d][+\d\s().-]*)/i,   // Freetour.com "Teléfono de reserva:"
-    /Phone(?:\s*number)?:\s*([+\d][+\d\s().-]*)/i,
-    /Mobile:\s*([+\d][+\d\s().-]*)/i,
-    /M[oó]vil:\s*([+\d][+\d\s().-]*)/i
+    /(?:Telefonnummer der Buchung|Tel[eé]fono(?:\s+de\s+reserva)?|T[eé]l[eé]phone|Telefone|Phone|Mobile|M[oó]vil)\s*:\s*(\+?\d[\d\s().-]{5,})/i,
+    /(\+\d[\d\s().-]{6,}\d)/
   ]);
 
+  // Guests: the number before a "person" word in any language, else an adults label.
   const guestsText = extractFirst_(text, [
-    /Adultos?:\s*(\d+)/i,                  // Freetour.com "Adultos: N persona(s)"
-    /Guests?:\s*(\d+)/i,
-    /People:\s*(\d+)/i,
-    /Participants?:\s*(\d+)/i,
-    /Pax:\s*(\d+)/i,
-    /Personas?:\s*(\d+)/i,
-    /Asistentes?:\s*(\d+)/i,
-    /Plazas?:\s*(\d+)/i,
-    /(\d+)\s+(?:guest|person|people|persona|plaza)s?/i
+    /(\d+)\s*(?:persons?|personas?|personnes?|persone|personen|pessoas?|people|g[aä]ste)/i,
+    /(?:Adult\w*|Adulto?s?|Adultes|Adulti|Erwachsene)\s*:?\s*(\d+)/i,
+    /(?:Guests?|Participants?|Pax|Asistentes?|Plazas?)\s*:?\s*(\d+)/i
   ]);
 
-  // Freetour.com renders the departure as ONE line: "Salida: 10:00 AM, Monday,
-  // 21 September 2026" (time first, then weekday + date). Split it: the time is
-  // the leading token; the date is what remains after dropping that token (and
-  // normalizeDate_ then drops the weekday). Other free-tour formats still use the
-  // labelled Date:/Time: lines below as a fallback.
-  const salidaText = extractFirst_(text, [/Salida:\s*([^\n\r]+)/i]);
-  const salidaTime = salidaText ? extractFirst_(salidaText, [/(\d{1,2}:\d{2}\s*(?:AM|PM))/i]) : '';
-  const salidaDate = salidaText
-    ? salidaText.replace(/^\s*\d{1,2}:\d{2}\s*(?:AM|PM)?\s*,?\s*/i, '').trim()
-    : '';
-
-  const dateText = salidaDate || extractFirst_(text, [
+  // Date + time: Freetour renders them in English regardless of the email language
+  // ("3:30 PM, Tuesday, 22 September 2026"), so match the VALUES, not the label.
+  const dateText = extractFirst_(text, [
+    new RegExp('(\\d{1,2}\\s+(?:' + FT_MONTHS + ')\\s+\\d{4})', 'i'),
     /Date:\s*([^\n\r]+)/i,
-    /Tour date:\s*([^\n\r]+)/i,
-    /Fecha(?:\s+(?:del?\s+tour|de\s+la\s+reserva))?:\s*([^\n\r]+)/i,
-    /D[ií]a:\s*([^\n\r]+)/i
+    /Fecha(?:\s+(?:del?\s+tour|de\s+la\s+reserva))?:\s*([^\n\r]+)/i
   ]);
 
-  const timeText = salidaTime || extractFirst_(text, [
-    /Time:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
-    /Start time:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
-    /Hora:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
-    /(\d{1,2}:\d{2}\s*(?:AM|PM))/i
+  const timeText = extractFirst_(text, [
+    /(\d{1,2}:\d{2}\s*(?:AM|PM))/i,
+    /(?:Time|Hora|Start time)\s*:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i
   ]);
 
+  // Tour language: the single word after a Language label (Deutsch, Español, …).
   const languageText = extractFirst_(text, [
-    /Language:\s*([^\n\r]+)/i,
-    /Idioma:\s*([^\n\r]+)/i
+    /(?:Sprache|Idioma|Language|Langue|Lingua)\s*:?\s*([A-Za-zÀ-ÿ]+)/i
   ]);
 
   const guests = guestsText ? Number(guestsText) : 1;
-  const ftKidsText = extractFirst_(text, [/Child(?:ren)?:\s*(\d+)/i, /Ni[ñn]os?:\s*(\d+)/i]);
+  const ftKidsText = extractFirst_(text, [
+    /(\d+)\s*(?:child\w*|children|ni[ñn]os?|kinder|enfants?|bambini?|crian[çc]as?)/i,
+    /(?:Child(?:ren)?|Ni[ñn]os?|Kinder|Enfants?|Bambini)\s*:?\s*(\d+)/i
+  ]);
   const ftChildren = ftKidsText ? Number(ftKidsText) : 0;
   const date = normalizeDate_(dateText);
 
