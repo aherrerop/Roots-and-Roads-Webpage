@@ -65,8 +65,23 @@ console.log('--- Check-in only confirms "✓" once the ledger write succeeds ---
 check('saveTour reports whether the write succeeded', /return ok;/.test(html) && /ok=!!\(r&&r\.ok\)/.test(html), null);
 console.log('--- Offline check-in queue: held on the phone, retried until it lands ---');
 check('a check-in that fails to save is QUEUED (not lost)', /function ckEnqueue/.test(html) && /ckEnqueue\(buildTourData\(tid\)\)/.test(html), null);
-check('the queue flushes on boot, poll, focus and reconnect', /addEventListener\("online", ?ckFlush\)/.test(html) && /ckFlush\(\);\s*\/\/ push any check-ins queued/.test(html), null);
+check('the check-in queue flushes on boot, poll, focus and reconnect', /addEventListener\("online", ?\(\)=>\{ ?ckFlush\(\); ?asgFlush\(\)/.test(html) && /ckFlush\(\); asgFlush\(\);\s*\/\/ push any check-ins/.test(html), null);
 check('a queued check-in shows a syncing state, not a revert', /✓ ⏳/.test(html), null);
+
+console.log('--- Assign queue: a burst of changes never loses the last few (same net as check-ins) ---');
+check('a transient assign failure is QUEUED, not dropped', /function asgEnqueue/.test(html) && /asgEnqueue\(info, ?newGuide\)/.test(html), null);
+check('"Server busy"/timeout/network are treated as TRANSIENT (queued), real rejections are not',
+  /!\/busy\|try again\/i\.test\(errMsg\)/.test(html) && /err\.kind==="timeout" ?\|\| ?err\.kind==="network"/.test(html), null);
+check('a queued assign keeps its optimistic overlay (setPendingAssign on enqueue AND on each retry)',
+  /asgEnqueue\(info, ?newGuide\);\s*setPendingAssign\(info, ?newGuide\)/.test(html) &&
+  /for\(const item of q\)\{\s*setPendingAssign\(item\.info, ?item\.guide\)/.test(html), null);
+check('the assign queue flushes on boot, poll, focus and reconnect',
+  /ckFlush\(\); asgFlush\(\);\s*\/\/ push any check-ins/.test(html) &&           // boot
+  /setTimeout\(\(\)=>\{ ckFlush\(\); asgFlush\(\);/.test(html) &&                 // poll
+  /focus", ?\(\)=>\{ checkForUpdate\(\); ckFlush\(\); asgFlush\(\)/.test(html) && // focus
+  /online", ?\(\)=>\{ ?ckFlush\(\); ?asgFlush\(\)/.test(html), null);            // reconnect
+check('a conflict in the queue is NOT retried forever (needs a human), only transient stays queued',
+  /r\.conflict.*stop retrying/i.test(html) && /else \{ keep\.push\(item\); \}/.test(html), null);
 
 console.log('--- Pending assignment survives a stale read (the Albert->Carlos bug) ---');
 const shift = g => ({ dateKey: '2026-07-31', time: '17:00', language: 'English', isPrivate: false, assigned: g ? [g] : [], guide: g || '', status: g ? 'OK' : 'Not assigned' });
@@ -147,7 +162,7 @@ check('a timeout does NOT fall back to JSONP (no second server execution)', /if\
 check('a timeout skips the quiet fast-retry (waits for the next poll)', /LOAD_FAILS < 2 && !\(err && err\.kind==="timeout"\)/.test(html), null);
 check('the fetch + JSONP load timeout is 60s (a slow-but-alive load finishes)', /setTimeout\(\(\)=>\{ timedOut=true; ctrl\.abort\(\); \}, 60000\)/.test(html) && /reject\(mkErr\("timeout","TIMEOUT"\)\);\} \}, 60000\)/.test(html), null);
 check('the auto-refresh poll base is 30s (fewer serialized executions)', /POLL_MS = 30000;/.test(html), null);
-check('the passive poll is adaptive (self-rescheduling on POLL_MS)', /setTimeout\(\(\)=>\{ ckFlush\(\); if\(canAutoRefresh\(\)\) loadTours\("poll"\); scheduleNextPoll\(\); \}, POLL_MS\)/.test(html), null);
+check('the passive poll is adaptive (self-rescheduling on POLL_MS)', /setTimeout\(\(\)=>\{ ckFlush\(\); asgFlush\(\); if\(canAutoRefresh\(\)\) loadTours\("poll"\); scheduleNextPoll\(\); \}, POLL_MS\)/.test(html), null);
 check('the client adopts the server pollHint (backpressure) and reschedules', /if\(r\.pollHint\)\{[\s\S]*?POLL_MS=next; if\(window\._rrReschedulePoll\) window\._rrReschedulePoll\(\)/.test(html), null);
 check('pollHint is clamped so a bad value cannot wedge the poll', /Math\.max\(20000, Math\.min\(180000, Number\(r\.pollHint\)\*1000\)\)/.test(html), null);
 // Backpressure stays SILENT: pollHint still widens the poll under load (asserted

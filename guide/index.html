@@ -240,7 +240,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-16-assign-dots";
+const PORTAL_VERSION = "2026-09-22-assign-queue";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -516,7 +516,7 @@ function showDash(){
   try{ restoreTab(); }catch(e){}
   const c=store.cache;
   if(c){ renderAll(c); }                 // instant render from the last load
-  ckFlush();                              // push any check-ins queued offline last time
+  ckFlush(); asgFlush();                  // push any check-ins / assignments queued last time
   loadTours("initial");                   // then refresh from the server
   startAutoRefresh();
   checkForUpdate();                       // jump to the newest build if one is live
@@ -561,15 +561,15 @@ function startAutoRefresh(){
   // the inflight guard still drops any poll that would overlap a running load.
   function scheduleNextPoll(){
     if(window._rrPollTimer) clearTimeout(window._rrPollTimer);
-    window._rrPollTimer = setTimeout(()=>{ ckFlush(); if(canAutoRefresh()) loadTours("poll"); scheduleNextPoll(); }, POLL_MS);
+    window._rrPollTimer = setTimeout(()=>{ ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("poll"); scheduleNextPoll(); }, POLL_MS);
   }
   scheduleNextPoll();
   window._rrReschedulePoll = scheduleNextPoll;   // loadTours calls this when pollHint changes
   // Check for a newer deployed build every 2 min and when the tab regains focus.
   window._rrVerCheck = setInterval(checkForUpdate, 120000);
-  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours("focus"); } });
-  window.addEventListener("focus", ()=>{ checkForUpdate(); ckFlush(); if(canAutoRefresh()) loadTours("focus"); });
-  window.addEventListener("online", ckFlush);   // signal came back -> push queued check-ins
+  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("focus"); } });
+  window.addEventListener("focus", ()=>{ checkForUpdate(); ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("focus"); });
+  window.addEventListener("online", ()=>{ ckFlush(); asgFlush(); });   // signal came back -> push queued check-ins + assignments
   // Reloaded/closed the page mid-load? Tell the analytics it was cut short (not a
   // slow server) — this is the "sometimes I reload before it finishes" case.
   window.addEventListener("pagehide", ()=>{ if(LOADING) beacon("abort", Date.now()-LOAD_START, LOAD_NAV); });
@@ -949,28 +949,37 @@ function bindTours(tours){
       MUTATING++; LAST_EDIT=Date.now();
       setPendingAssign(info, newGuide);          // remember the choice; render shows it now
       if(store.cache) renderAll(store.cache);     // instant, and stale reads can't undo it
-      let ok=true, errMsg="";
+      let ok=true, hard=false, errMsg="";
       try{
         let r=await api("assign",Object.assign({token:store.token, guide:newGuide},info));
         if(!r.ok && r.conflict){
           // Management can ENFORCE the change — but never by accident.
           if(confirm(r.error+"\n\nAssign anyway?")){
             r=await api("assign",Object.assign({token:store.token, guide:newGuide, force:1},info));
-          } else { ok=false; }
+          } else { ok=false; hard=true; }   // manager DECLINED -> a real decision, don't retry
         }
-        if(!r.ok){ ok=false; errMsg=r.conflict?"":(r.error||""); }
-      }catch(err){ ok=false; errMsg=err.message||"Network problem — try again"; }
+        if(!r.ok){ ok=false; errMsg=r.conflict?"":(r.error||"");
+          // "Server busy, try again" = the server was momentarily locked -> transient.
+          if(!hard) hard = !/busy|try again/i.test(errMsg); }
+      }catch(err){ ok=false; errMsg=err.message||"Network problem — try again";
+        // A timeout (overloaded) or network drop is transient; anything else is hard.
+        hard = !(err && (err.kind==="timeout" || err.kind==="network")); }
       if(ok){
         // Confirmed. The optimistic overlay already shows it and HOLDS it through
         // the replica-settle window, so we do NOT re-read the grid now (a lagging
         // replica could otherwise flip it back). The next natural poll reconciles.
         if(store.cache) renderAll(store.cache);
+      } else if(!hard){
+        // TRANSIENT (server was briefly locked / timed out / offline): QUEUE it and
+        // keep the overlay, so a burst of changes never loses the last few — asgFlush retries.
+        asgEnqueue(info, newGuide);
+        setPendingAssign(info, newGuide);          // refresh the hold so it survives until the retry lands
       } else {
-        delete PENDING_ASSIGN[shiftIdKey(info)];   // write failed -> drop the optimistic value
+        delete PENDING_ASSIGN[shiftIdKey(info)];   // real rejection -> drop the optimistic value
         try{ await loadTours(); }catch(e){}          // and show the real state
       }
       MUTATING--;
-      if(!ok && errMsg) alert(errMsg);
+      if(!ok && hard && errMsg) alert(errMsg);
     };
   });
   // Manager: move a booking to another LANGUAGE and/or TIME in one step. Changing
@@ -1147,6 +1156,39 @@ async function ckFlush(){
   }
   ckQueueSave(keep);
   CK_FLUSHING=false;
+  if(keep.length!==q.length && canAutoRefresh()) loadTours();   // something synced -> refresh
+}
+
+/* ---- ASSIGN queue: the same safety net check-ins have ----
+   Under a slow, owner-serialized server a BURST of assignments can make the
+   last-fired ones hit the 10s server lock ("Server busy") or time out. Before,
+   a failed assign was dropped (it reverted, easy to miss among many) — so the
+   LAST few changes silently vanished on the next reopen. Now a TRANSIENT failure
+   is QUEUED and retried on every poll/focus/reconnect (exactly like a check-in),
+   and the optimistic overlay is HELD meanwhile, so a burst of changes all land. */
+function asgQueueLoad(){ try{ return JSON.parse(localStorage.getItem("rr_asgqueue")||"[]"); }catch(e){ return []; } }
+function asgQueueSave(q){ try{ localStorage.setItem("rr_asgqueue", JSON.stringify(q||[])); }catch(e){} }
+function asgEnqueue(info, guide){ if(!info) return; const k=shiftIdKey(info);
+  const q=asgQueueLoad().filter(it=>shiftIdKey(it.info)!==k);   // a newer choice supersedes an older queued one
+  q.push({info:info, guide:guide||"", ts:Date.now()}); asgQueueSave(q); }
+function asgPending(){ return asgQueueLoad().length; }
+let ASG_FLUSHING=false;
+async function asgFlush(){
+  if(ASG_FLUSHING || !store.token) return;
+  const q=asgQueueLoad(); if(!q.length) return;
+  ASG_FLUSHING=true;
+  const keep=[];
+  for(const item of q){
+    setPendingAssign(item.info, item.guide);   // keep the screen showing the intended value while it retries
+    try{
+      const r=await api("assign",Object.assign({token:store.token, guide:item.guide}, item.info));
+      if(r && r.ok){ /* landed */ }
+      else if(r && r.conflict){ /* needs a human decision, not a transient drop -> stop retrying */ }
+      else { keep.push(item); }                // still busy/offline -> try again next time
+    }catch(e){ keep.push(item); }
+  }
+  asgQueueSave(keep);
+  ASG_FLUSHING=false;
   if(keep.length!==q.length && canAutoRefresh()) loadTours();   // something synced -> refresh
 }
 async function saveTour(tourId,btn){
