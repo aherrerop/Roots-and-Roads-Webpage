@@ -165,6 +165,28 @@ const _monLate = dateOnly_(new Date('2027-03-01T12:00:00'));
 check('after the season end date, it is just the rolling window',
   availabilityWeeksAhead_(_monLate) === ASSIGN_CFG.AVAILABILITY_WEEKS_AHEAD, availabilityWeeksAhead_(_monLate));
 
+console.log('--- makeSchedule preserves manager assignments OUTSIDE its weekly window ---');
+const _today = dateOnly_(new Date());
+const _fk = (o)=>{ const d=new Date(_today); d.setDate(d.getDate()+o); return Utilities.formatDate(d, Session.getScriptTimeZone(),'yyyy-MM-dd'); };
+const _far = _fk(30), _past = _fk(-10), _inwin = _fk(1);
+const _pShifts = [{ dateText:_inwin, time:'10:30', language:'English', isPrivate:false, privIndex:1, assignedGuides:['Carlos'], lockedGuides:['Carlos'] }];
+const _pLocks = {};
+_pLocks[lockKey_(_far, '17:00', 'English', false, 1)] = ['Polina'];       // far future -> PRESERVE
+_pLocks[lockKey_(_past, '10:30', 'German', false, 1)] = ['Mar'];          // past -> skip
+_pLocks[lockKey_(_inwin, '10:30', 'English', false, 1)] = ['Carlos'];     // already present -> no dupe
+const _pCleared = {}; _pCleared[lockKey_(_far, '10:30', 'Spanish', false, 1)] = true;
+preserveManagerGridState_(_pShifts, _pLocks, _pCleared, _today);
+const _fS = (d,t,l)=>_pShifts.find(s=>s.dateText===d && s.time===t && s.language===l);
+check('a far-future manager LOCK is preserved (not wiped by the weekly rebuild)',
+  !!_fS(_far,'17:00','English') && _fS(_far,'17:00','English').assignedGuides.join()==='Polina' &&
+  _fS(_far,'17:00','English').lockedGuides.join()==='Polina' && _fS(_far,'17:00','English').status==='OK', _fS(_far,'17:00','English'));
+check('a far-future manager CLEAR is preserved with its (cleared) marker',
+  !!_fS(_far,'10:30','Spanish') && _fS(_far,'10:30','Spanish').cleared===true &&
+  _fS(_far,'10:30','Spanish').status==='Not assigned (cleared)', _fS(_far,'10:30','Spanish'));
+check('a PAST manager assignment is NOT resurrected', !_fS(_past,'10:30','German'), 'should be absent');
+check('an in-window assignment is not duplicated',
+  _pShifts.filter(s=>s.dateText===_inwin && s.time==='10:30' && s.language==='English').length===1, _pShifts.length);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

@@ -295,6 +295,10 @@ function makeSchedule() {
     });
   });
 
+  // Keep manager assignments/clears that fall OUTSIDE this run's window, so the
+  // grid rewrite below never wipes a tour staffed weeks ahead.
+  preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDate);
+
   assignedShifts.sort((a, b) => a.dateTimeObj - b.dateTimeObj || a.language.localeCompare(b.language));
 
   logScheduleConflicts_(controlSS, conflicts);
@@ -525,6 +529,51 @@ function readClearedSlots_(controlSS) {
     }
   });
   return cleared;
+}
+
+/**
+ * Keep MANAGER assignments (and clears) that fall OUTSIDE this run's scheduling
+ * window. makeSchedule only builds shifts for today..next-Sunday, and the grid
+ * writer CLEARS each Schedule_<Language> tab and rewrites it from those shifts —
+ * so an assignment a manager made to a tour weeks out (now possible: availability
+ * runs to Dec 31) would be wiped every run. readLockedAssignments_/readClearedSlots_
+ * already read EVERY grid row, so re-inject any lock/clear that the freshly-built
+ * assignedShifts don't already cover (skipping only PAST dates). They carry their
+ * guide + lock marker so the rewrite puts them back exactly, bold and all.
+ */
+function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDate) {
+  const have = {};
+  assignedShifts.forEach(s => {
+    have[lockKey_(s.dateText, normalizeTime_(s.time), s.language, s.isPrivate, s.privIndex)] = true;
+  });
+  const addPreserved = (key, names, cleared) => {
+    if (have[key]) return;
+    const parts = String(key).split('|');
+    if (parts.length < 4) return;
+    const dateText = parts[0], time = parts[1], language = parts[2], tag = parts[3];
+    if (!dateText || !time || !language) return;
+    const isPriv = tag.charAt(0) === 'P';
+    const idx = isPriv ? (Number(tag.slice(1)) || 1) : 1;
+    const dateObj = dateOnly_(new Date(dateText + 'T12:00:00'));
+    if (!dateObj || isNaN(dateObj) || dateObj < startDate) return;   // never resurrect a past assignment
+    have[key] = true;
+    assignedShifts.push({
+      week: 'Week ' + getISOWeek_(dateObj),
+      dateText: dateText, day: fullDayName_(dateObj), time: time, language: language,
+      guidesNeeded: (names && names.length) ? names.length : 1,
+      isPrivate: isPriv, privIndex: idx,
+      dateTimeObj: combineDateAndTime_(dateObj, time),
+      eligibleGuides: [],
+      assignedGuides: (names || []).slice(),
+      lockedGuides: cleared ? [] : (names || []).slice(),   // re-bold the lock; a clear has no name
+      hasLockConflict: false,
+      cleared: !!cleared,
+      status: cleared ? 'Not assigned (cleared)' : 'OK',
+      notes: cleared ? 'Cleared by manager' : ('Locked: ' + (names || []).join(', '))
+    });
+  };
+  Object.keys(locks || {}).forEach(k => addPreserved(k, locks[k], false));
+  Object.keys(clearedSlots || {}).forEach(k => addPreserved(k, [], true));
 }
 
 /** Write lock conflicts to the Control sheet's Errors tab (visible flag). */
