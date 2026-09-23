@@ -8,6 +8,7 @@ function fmtDate(d, tz, pat){
     case 'yyyy-MM-dd HH:mm': return fmtDate(d,tz,'yyyy-MM-dd')+' '+p2(d.getHours())+':'+p2(d.getMinutes());
     case 'yyyy-MM-dd HH:mm:ss': return fmtDate(d,tz,'yyyy-MM-dd HH:mm')+':'+p2(d.getSeconds());
     case 'EEE MMM d': return DAYS[d.getDay()].slice(0,3)+' '+MONS[d.getMonth()]+' '+d.getDate();
+    case 'EEE d MMM': return DAYS[d.getDay()].slice(0,3)+' '+d.getDate()+' '+MONS[d.getMonth()];
     case 'EEE, MMM d': return DAYS[d.getDay()].slice(0,3)+', '+MONS[d.getMonth()]+' '+d.getDate();
     case 'EEEE': return DAYS[d.getDay()];
     case 'H:mm': return d.getHours()+':'+p2(d.getMinutes());

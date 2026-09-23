@@ -357,6 +357,19 @@ const RNR = {
   PRIVATE_TOUR_KEYWORDS: /\bprivate\b|tour privado|grupo privado|group up to|grupo de hasta/i,
   PRIVATE_TOUR_NOTE: 'Private',
 
+  /* ============================================================
+   * FULL-TOUR ALERTS  (close it, or schedule a 2nd guide)
+   * ============================================================ */
+  // When an upcoming GROUP tour (a date/time/language/variant card — private
+  // tours are excluded, they are their own single group) reaches this many
+  // PEOPLE (adults + children), email management ONCE so they can close it on
+  // the platforms or add a second guide. Fires again only if it drops back
+  // below and later refills. Set to 21 if you want "strictly more than 20".
+  TOUR_FULL_THRESHOLD: 20,
+  // Script Property holding the JSON map { tourKey: peopleWhenAlerted } of tours
+  // already alerted, so we never spam the same full tour every 5 minutes.
+  CAPACITY_ALERT_PROP: 'rnr_capacity_alerts_v1',
+
   INTERNAL_ALERT_TO: 'rootsandroadstours@gmail.com',
 
   // INBOX POLICY
@@ -679,6 +692,12 @@ function runBookingCore_(skipProcessed) {
     //    nothing changed) so it tracks the rolling date window. One tab the
     //    portal can read instead of scanning six; check-ins are preserved.
     runPhase_('portalFeed', safeRebuildPortalFeed_);
+
+    // 7. FULL-TOUR ALERTS: right after the feed is current, check whether any
+    //    upcoming group tour has just reached the people cap and, if so, email
+    //    management ONCE (close it / add a 2nd guide). Isolated: a mail hiccup
+    //    can never break the booking pipeline.
+    runPhase_('capacityAlerts', capacityAlerts_);
 
   } catch (err) {
     // Errors are logged, never rethrown, so Google does not email failure alerts.
@@ -3724,6 +3743,164 @@ function rebuildPortalFeed_() {
     sh.getRange(2, 1, rows.length, H.length).setValues(rows);
   }
   return rows.length;
+}
+
+
+/******************************************************
+ * 11b. FULL-TOUR ALERTS  (reach the cap -> close it / add a 2nd guide)
+ ******************************************************/
+
+/** Is this booking's SOURCE the Sagrada exterior product (its own tour: GYG-SF / Viator-SF)? */
+function bookingIsSfExtSource_(source) {
+  const s = String(source || '').trim().toLowerCase();
+  return s === String(RNR.SOURCE.SF_EXT).toLowerCase() ||
+         s === String(RNR.SOURCE.SF_EXT_VIATOR).toLowerCase();
+}
+
+/** A compact, unambiguous day label from a yyyy-MM-dd key: "Fri 26 Sep". */
+function tourDayLabel_(dateKey) {
+  const d = new Date(String(dateKey) + 'T12:00:00');
+  if (isNaN(d.getTime())) return String(dateKey || '');
+  return Utilities.formatDate(d, 'Europe/Madrid', 'EEE d MMM');
+}
+
+/**
+ * Group every upcoming REAL booking in the Portal Feed into its tour card —
+ * keyed date|time|language|variant, exactly like the portal (regular "3h" and
+ * the Sagrada exterior "SF" are DIFFERENT tours; private tours are excluded,
+ * each private booking is its own single group). Returns { key -> {people,...} }
+ * where people = adults + children (the head-count that walks with the guide).
+ * The single source of truth read by capacityAlerts_ (kept separate so it is
+ * unit-testable without sending mail).
+ */
+function readUpcomingTourGroups_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(RNR.SHEETS.PORTAL_FEED);
+  const out = {};
+  if (!sh || sh.getLastRow() < 2) return out;
+  const H = RNR.PORTAL_FEED_HEADERS;
+  const v = sh.getRange(2, 1, sh.getLastRow() - 1, H.length).getValues();
+  v.forEach(r => {
+    if (String(r[15] || '').trim().toLowerCase() === 'shift') return;   // 0-person placeholder
+    const dateKey = String(r[0] || '').trim();
+    const time = String(r[1] || '').trim();
+    const language = String(r[2] || '').trim();
+    if (!dateKey || !time) return;
+    const source = String(r[7] || '').trim();
+    const isSf = bookingIsSfExtSource_(source);
+    const isPriv = !isSf && /privat/i.test(String(r[10] || ''));
+    if (isPriv) return;                                  // private = its own single group; no cap
+    const variant = isSf ? 'SF' : '3h';
+    const key = dateKey + '|' + time + '|' + language.toLowerCase() + '|' + variant;
+    const adults = Number(r[5] || 0) || 0;
+    const children = Number(r[6] || 0) || 0;
+    const guide = String(r[14] || '').trim();
+    const g = out[key] || (out[key] = {
+      key, dateKey, time, language, variant,
+      adults: 0, children: 0, people: 0, guide: '', sources: {}, bookings: []
+    });
+    g.adults += adults; g.children += children; g.people = g.adults + g.children;
+    if (!g.guide && guide) g.guide = guide;
+    const sk = source || '(unknown)';
+    g.sources[sk] = (g.sources[sk] || 0) + adults + children;
+    g.bookings.push({ name: String(r[3] || '').trim(), people: adults + children, source: source });
+  });
+  return out;
+}
+
+function readCapacityState_() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(RNR.CAPACITY_ALERT_PROP);
+    const o = raw ? JSON.parse(raw) : {};
+    return (o && typeof o === 'object') ? o : {};
+  } catch (e) { return {}; }
+}
+function writeCapacityState_(obj) {
+  try {
+    PropertiesService.getScriptProperties().setProperty(RNR.CAPACITY_ALERT_PROP, JSON.stringify(obj || {}));
+  } catch (e) { logError_('capacity state write failed', e, ''); }
+}
+
+/**
+ * Email management the moment an upcoming group tour reaches the people cap, so
+ * they can CLOSE it (pause its availability on the platforms/website) or add a
+ * SECOND GUIDE. Fires ONCE per tour: the alerted tours are remembered in a Script
+ * Property, and a tour re-alerts only if it drops back below the cap and later
+ * refills. Everything the manager needs is in the SUBJECT; the body adds the
+ * per-source and per-booking breakdown. Runs at the end of every booking pass, so
+ * the alert lands within one cycle of the booking that filled the tour.
+ */
+function capacityAlerts_() {
+  const groups = readUpcomingTourGroups_();
+  const THRESH = Number(RNR.TOUR_FULL_THRESHOLD) || 20;
+  const prev = readCapacityState_();
+  const next = {};
+  const crossed = [];
+  Object.keys(groups).forEach(key => {
+    const g = groups[key];
+    if (g.people >= THRESH) {
+      if (prev[key] == null) crossed.push(g);   // was below the cap / unseen -> just crossed it
+      next[key] = g.people;                     // remember we've alerted at this level
+    }
+    // below the cap -> not carried into `next`, so a later refill re-alerts
+  });
+  if (crossed.length) {
+    crossed.sort((a, b) => (a.dateKey + a.time).localeCompare(b.dateKey + b.time));
+    if (crossed.length === 1) sendCapacityAlertEmail_(crossed[0], THRESH);
+    else sendCapacityDigestEmail_(crossed, THRESH);
+  }
+  // Persist only AFTER a successful send: if mail throws, the phase aborts before
+  // this line, the old state is kept, and the alert is retried next run. A rare
+  // duplicate alert is acceptable; a MISSED "tour is full" is not.
+  writeCapacityState_(next);
+  return crossed.length;
+}
+
+/** One full tour, all detail in the subject line. */
+function sendCapacityAlertEmail_(g, thresh) {
+  const sfTag = g.variant === 'SF' ? ' · SF' : '';
+  const subject = '🔴 FULL ' + g.people + 'p · ' + tourDayLabel_(g.dateKey) + ' ' + g.time + ' ' +
+                  g.language + sfTag + ' — close or add 2nd guide';
+  MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: capacityAlertBody_(g, thresh) });
+}
+
+function capacityAlertBody_(g, thresh) {
+  const L = [];
+  L.push('This tour has reached the ' + thresh + '-person cap.');
+  L.push('CLOSE it (pause its availability on the platforms / website) OR schedule a second guide.');
+  L.push('');
+  L.push('Tour:    ' + tourDayLabel_(g.dateKey) + ' at ' + g.time +
+         '  (' + g.language + (g.variant === 'SF' ? ' · Sagrada exterior' : '') + ')');
+  L.push('People:  ' + g.people + '  (' + g.adults + ' adult' + (g.adults === 1 ? '' : 's') +
+         ' + ' + g.children + ' child' + (g.children === 1 ? '' : 'ren') + ')');
+  L.push('Guide:   ' + (g.guide || 'Not assigned yet'));
+  L.push('');
+  L.push('By source:');
+  Object.keys(g.sources).sort((a, b) => g.sources[b] - g.sources[a])
+    .forEach(s => L.push('  ' + s + ': ' + g.sources[s]));
+  L.push('');
+  L.push('Bookings (' + g.bookings.length + '):');
+  g.bookings.slice().sort((a, b) => b.people - a.people)
+    .forEach(b => L.push('  ' + (b.name || '(no name)') + ' — ' + b.people + ' (' + (b.source || '?') + ')'));
+  L.push('');
+  L.push('You will not be alerted again for this tour unless it drops below ' + thresh + ' and fills up again.');
+  return L.join('\n');
+}
+
+/** Several tours crossed in one pass (e.g. the first run after enabling this):
+ *  one digest instead of a burst of separate emails. */
+function sendCapacityDigestEmail_(list, thresh) {
+  const subject = '🔴 ' + list.length + ' tours full (' + thresh + '+) — close or add a 2nd guide';
+  const blocks = list.map(g => {
+    const sfTag = g.variant === 'SF' ? ' · SF' : '';
+    return '• ' + tourDayLabel_(g.dateKey) + ' ' + g.time + ' ' + g.language + sfTag +
+           ' — ' + g.people + ' people (' + g.adults + ' + ' + g.children + ' children)' +
+           ' — guide: ' + (g.guide || 'none');
+  });
+  const body = list.length + ' upcoming tours have reached the ' + thresh + '-person cap. ' +
+    'Close each on the platforms / website, or add a second guide:\n\n' + blocks.join('\n') +
+    '\n\n(One alert per tour — they will not repeat unless they drop below ' + thresh + ' and refill.)';
+  MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: body });
 }
 
 

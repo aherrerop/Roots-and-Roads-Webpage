@@ -45,7 +45,8 @@ const SUITES = [
   [CONTROL, 'tests6.js'],          // Italian + French: control side
   [CONTROL, 'cache-tests.js'],     // cachedRead_ hit/miss + version-bump freshness (real cache)
   [BOOKING, 'booking-tests.js'],   // Italian + French: booking side
-  [BOOKING, 'viator-tests.js']     // Viator auto-close: 2FA code extraction + slot time
+  [BOOKING, 'viator-tests.js'],    // Viator auto-close: 2FA code extraction + slot time
+  [BOOKING, 'capacity-tests.js']   // full-tour alerts: reach the cap -> one email (close / 2nd guide)
 ];
 
 // Gmail-side integration suite needs the stateful Gmail mock layered on top.
