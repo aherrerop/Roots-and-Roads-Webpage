@@ -127,49 +127,59 @@ function websiteReadCombinedSchedule_() {
 }
 
 
+/** Resolve Weekly_Schedule columns by header name (robust to inserted columns
+ *  such as "Tour Type"); falls back to the legacy fixed positions. */
+function websiteWeeklyCols_(header) {
+  const find = (re, fb) => {
+    for (let i = 0; i < header.length; i++) {
+      if (re.test(String(header[i] || '').toLowerCase().trim())) return i;
+    }
+    return fb;
+  };
+  const tourType = find(/tour\s*type/, -1);
+  const s = tourType > -1 ? 1 : 0;
+  return {
+    day: find(/^day$/, 0), time: find(/^time$/, 1), language: find(/^language$/, 2),
+    tourType: tourType,
+    from: find(/active\s*from/, 4 + s), until: find(/active\s*unt/, 5 + s),
+    private: find(/^private$/, 8 + s), hideWeb: find(/hide.*(web|site)/, 9 + s)
+  };
+}
+
 function websiteReadWeeklyScheduleIntoMap_(control, slots) {
   const sh = control.getSheetByName(WEBSITE_CONTROL_WEEKLY_TAB);
   if (!sh || sh.getLastRow() < 2) return;
 
-  // Read 10 columns (A–J) so the "Hide from website" flag (col J) comes through.
-  const values = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
-  const display = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getDisplayValues();
+  const width = Math.max(sh.getLastColumn(), 11);
+  const values = sh.getRange(1, 1, sh.getLastRow(), width).getValues();
+  const display = sh.getRange(1, 1, sh.getLastRow(), width).getDisplayValues();
+  const C = websiteWeeklyCols_(display[0] || []);
 
-  values.forEach((row, i) => {
-    const day = websiteClean_(display[i][0]);
-    const time = websiteNormalizeTime_(display[i][1]);
-    // Private rows are guide-availability slots, not bookable group tours, and
-    // must never reach the website — even when they carry a real language (an
-    // Italian private tour). Skip on the Private flag (col I) OR the legacy
-    // "Private" label in Language. (A private row with a blank Language would also
-    // slip through as English, since websiteNormalizeLanguage_ defaults to it.)
-    const isPrivate = /^(1|true|yes|y|x)$/i.test(websiteClean_(display[i][8]))
-                      || /^private$/i.test(websiteClean_(display[i][2]));
-    if (isPrivate) return;
-    // "Hide from website" (col J): management can keep a slot on the availability
-    // sheet + portal but OFF the public website. Independent of col H/I. TRUE/yes/x.
-    const hideFromWebsite = /^(1|true|yes|y|x|hide)$/i.test(websiteClean_(display[i][9]));
-    if (hideFromWebsite) return;
-    const language = websiteNormalizeLanguage_(display[i][2]);
+  for (let i = 1; i < display.length; i++) {
+    const row = values[i], drow = display[i];
+    const day = websiteClean_(drow[C.day]);
+    const time = websiteNormalizeTime_(drow[C.time]);
+    // SF ("Sagrada Família exterior") is a GetYourGuide add-on, never a public
+    // website tour — skip it.
+    if (C.tourType > -1 && /^\s*sf\b/i.test(websiteClean_(drow[C.tourType]))) continue;
+    // Private rows are guide-availability slots, not bookable group tours, and must
+    // never reach the website — skip on the Private flag OR the legacy "Private" label.
+    const isPrivate = /^(1|true|yes|y|x)$/i.test(websiteClean_(C.private > -1 ? drow[C.private] : ''))
+                      || /^private$/i.test(websiteClean_(drow[C.language]));
+    if (isPrivate) continue;
+    // "Hide from website": keep a slot on the availability sheet + portal but OFF the website.
+    const hideFromWebsite = /^(1|true|yes|y|x|hide)$/i.test(websiteClean_(C.hideWeb > -1 ? drow[C.hideWeb] : ''));
+    if (hideFromWebsite) continue;
+    const language = websiteNormalizeLanguage_(drow[C.language]);
+    if (!day || !time || !language) continue;
 
-    if (!day || !time || !language) return;
-
-    const activeFrom = row[4] ? websiteDateOnly_(new Date(row[4])) : null;
-    const activeUntil = row[5] ? websiteDateOnly_(new Date(row[5])) : null;
-
+    const activeFrom = (C.from > -1 && row[C.from]) ? websiteDateOnly_(new Date(row[C.from])) : null;
+    const activeUntil = (C.until > -1 && row[C.until]) ? websiteDateOnly_(new Date(row[C.until])) : null;
     const key = websiteScheduleKey_(day, time, language);
-
     if (!slots.has(key)) {
-      slots.set(key, {
-        day,
-        time,
-        displayTime: websiteDisplayTime_(time),
-        language,
-        activeFrom,
-        activeUntil
-      });
+      slots.set(key, { day, time, displayTime: websiteDisplayTime_(time), language, activeFrom, activeUntil });
     }
-  });
+  }
 }
 
 

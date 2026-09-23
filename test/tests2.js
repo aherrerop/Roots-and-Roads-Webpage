@@ -48,21 +48,29 @@ check('Private-flag row parses as isPrivate KEEPING its real language',
       migrates private (blanks the legacy "Private" label, keeps real languages) --- */
 console.log('--- updateWeeklyScheduleToCurrentOffer ---');
 updateWeeklyScheduleToCurrentOffer();
-const after=ws.getRange(1,1,ws.getLastRow(),9).getDisplayValues();
+// The offer writer now emits the 11-column layout (Tour Type inserted at col D):
+// [Day, Time, Language, Tour Type, Guides needed, Active from, Active until,
+//  Guide, Hide from availability, Private, Hide from website].
+const after=ws.getRange(1,1,ws.getLastRow(),11).getDisplayValues();
 check('German preserved with REPAIRED time (10:00, not 12/30/1899)',
   after.some(r=>r[2]==='German'&&r[1]==='10:00'), after.filter(r=>r[2]==='German').map(r=>r[1]));
+check('Tour Type column added, header at col D', after[0][3]==='Tour Type', after[0]);
+check('every managed offer row is tagged 3h',
+  after.slice(1).filter(r=>r[2]==='English'||r[2]==='Spanish').every(r=>r[3]==='3h'),
+  after.slice(1).filter(r=>r[2]==='English').map(r=>r[3]));
 check('English 11:00 Mon-Tue-Thu-Fri present',
   after.filter(r=>r[2]==='English'&&r[1]==='11:00').length===4, null);
 check('Spanish 10:30 present', after.filter(r=>r[2]==='Spanish'&&r[1]==='10:30').length===4, null);
 
 // Private rows are PRESERVED (not regenerated), and the legacy "Private" label
-// is migrated off the Language column into the Private flag.
+// is migrated off the Language column into the Private flag (now col index 9).
 check('no legacy "Private" left in the Language column', !after.some(r=>/^private$/i.test(r[2])), after.map(r=>r[2]));
-const legacyMig=after.find(r=>r[0]==='Monday'&&r[1]==='10:00'&&/^yes$/i.test(r[8]||''));
+const legacyMig=after.find(r=>r[0]==='Monday'&&r[1]==='10:00'&&/^yes$/i.test(r[9]||''));
 check('legacy private 10:00 migrated -> blank Language + Private=yes', !!legacyMig&&legacyMig[2]==='', legacyMig);
 const italPriv=after.find(r=>r[0]==='Saturday'&&r[1]==='14:00');
 check('Italian private preserved -> Italian language + Private=yes',
-  !!italPriv&&italPriv[2]==='Italian'&&/^yes$/i.test(italPriv[8]||''), italPriv);
+  !!italPriv&&italPriv[2]==='Italian'&&/^yes$/i.test(italPriv[9]||''), italPriv);
+check('preserved private row carries Tour Type 3h', !!italPriv&&italPriv[3]==='3h', italPriv);
 const reparsed=readWeeklySchedule_(control);
 check('round-trip: all rows parse', reparsed.length===after.length-1, {rules:reparsed.length, rows:after.length-1});
 const privParsed=reparsed.filter(r=>r.isPrivate);

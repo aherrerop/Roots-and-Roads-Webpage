@@ -83,6 +83,8 @@
   .head .time{font-weight:800;font-size:16px;min-width:50px}
   .pill{display:inline-flex;align-items:center;gap:6px;background:#eef2f7;color:#334155;font-weight:700;font-size:12px;padding:5px 10px;border-radius:20px}
   .pill.priv{background:#fff7ed;color:#b45309}
+  .pill.sf{background:#eef2ff;color:#4338ca}     /* Sagrada exterior add-on */
+  .pill.h3{background:#f1f5f9;color:#64748b;font-size:11px;padding:4px 8px}   /* full 3h tour */
   .spacer{flex:1}
   .count{text-align:right;line-height:1.1}
   .count .big{font-weight:800;font-size:16px}
@@ -240,7 +242,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-22-vacations";
+const PORTAL_VERSION = "2026-09-23-sf-tour";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -856,7 +858,7 @@ function assignSelect(t){
   const cur=(t.assigned&&t.assigned[0])||"";
   if(cur && !opts.some(o=>o.name===cur)) opts=[{name:cur,status:""}].concat(opts);
   const legend="🟢 available · 🟡 overlapping tour · 🔴 already booked this time · 🌴 on vacation — you can still pick anyone";
-  let html='<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1}))+'\'>';
+  let html='<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:""}))+'\'>';
   html+='<option value=""'+(cur?'':' selected')+'>Not assigned</option>';
   opts.forEach(o=>{ const d=DOT[o.status]?DOT[o.status]+" ":""; html+='<option value="'+esc(o.name)+'"'+(o.name===cur?' selected':'')+'>'+d+esc(o.name)+'</option>'; });
   return html+'</select>';
@@ -882,6 +884,7 @@ function tourCard(t, canAssign, dayTimes){
   return '<div class="tour'+peopleCls+'" data-tour="'+esc(t.id)+'">'+ closeBtn +
     '<div class="head js-toggle">'+
       '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+ flagImg(t.language)+
+      (t.sfExt?'<span class="pill sf">SF</span>':'<span class="pill h3">3h</span>')+
       (t.isPrivate?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
       '<div class="count"><div class="big"><span class="ck">'+t.checkedGuests+'</span> / '+t.bookedGuests+(t.bookedChildren?'<span class="kids">+'+t.bookedChildren+'</span>':'')+'</div>'+sub+'</div>'+
     '</div>'+

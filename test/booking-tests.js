@@ -251,6 +251,8 @@ const sfBody=[
 ].join('\n');
 const sfB=parseGygMessage_(makeFakeMsg_('Booking - S800 - GYGSFEXT01', sfBody),'confirm');
 check('Sagrada exterior booking tagged source GYG-SF', sfB && sfB.source==='GYG-SF', sfB && sfB.source);
+check('SF-ext booking carries an "SF" tour-name tag in Notes (BookingSheet visibility)',
+  sfB && /\bSF\b/.test(String(sfB.notes||'')), sfB && sfB.notes);
 check('SF-ext lands with its real date/time/language (same slot as other bookings)',
   sfB && dateKey_(sfB.date)==='2027-08-04' && normalizeTime_(sfB.time)==='10:30 AM' && sfB.language==='English',
   sfB && {d:sfB.date&&dateKey_(sfB.date), t:normalizeTime_(sfB.time), l:sfB.language});

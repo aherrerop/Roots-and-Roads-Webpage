@@ -958,7 +958,7 @@ function apiTours_(p) {
     const bookedChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
     const checkedGuests = bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0);
 
-    const id = shift.private ? key + '|P' + (shift.privIndex || 1) : key;
+    const id = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
     return {
       id,
       dateKey: shift.dateKey,
@@ -970,6 +970,7 @@ function apiTours_(p) {
       coGuides: shift.assigned.filter(a => !sameName_(a, name)),
       status: shift.status,
       isPrivate: !!shift.private,
+      sfExt: !!shift.sfExt, tourName: shift.tourName || (shift.sfExt ? 'SF' : '3h'),
       bookedGuests,
       bookedChildren,
       checkedGuests,
@@ -1062,7 +1063,7 @@ function apiTours_(p) {
             checkedAt: feedCk ? String(b.feedCheckedAt || '') : (cke ? (cke.at || '') : '')
           };
         });
-      const aid = shift.private ? key + '|P' + (shift.privIndex || 1) : key;
+      const aid = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
       return {
         id: aid,
         dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
@@ -1072,6 +1073,7 @@ function apiTours_(p) {
         guideOptions: guideStatusesForShift_(shift, guidesByLanguage, busyMap),
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
+        sfExt: !!shift.sfExt, tourName: shift.tourName || (shift.sfExt ? 'SF' : '3h'),
         bookedGuests: bookings.reduce((s, b) => s + Number(b.guests || 0), 0),
         bookedChildren: bookings.reduce((s, b) => s + Number(b.children || 0), 0),
         checkedGuests: bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0),
@@ -1239,9 +1241,10 @@ function apiCloseShift_(p) {
       const mins = Number(p[1]);
       if (p[0] && Number.isFinite(mins) && p[2]) {
         const t = Math.floor(mins / 60) + ':' + String(mins % 60).padStart(2, '0');
-        const isPriv = /^P/i.test(p[3] || '');
-        writeFeedGuide_(p[0], t, p[2], isPriv, '');
-        removeFeedShiftRow_(p[0], t, p[2], isPriv);
+        const isSf = /^SF$/i.test(p[3] || '');
+        const isPriv = !isSf && /^P/i.test(p[3] || '');
+        writeFeedGuide_(p[0], t, p[2], isPriv, '', isSf);
+        removeFeedShiftRow_(p[0], t, p[2], isPriv, isSf);
       }
     })();
     SpreadsheetApp.flush();
@@ -1340,8 +1343,10 @@ function appendWeeklyScheduleShifts_(schedule, maxDaysAhead) {
   // and timed "Load more" out on phones. Falls back to the full window.
   const days = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(maxDaysAhead) || PORTAL.UPCOMING_DAYS));
   const maxKey = addDaysKey_(today, days);
+  // Dedup key includes the variant (regular vs SF) so an SF slot and a 3h slot at
+  // the same date/time/language are kept as two distinct cards.
   const have = new Set(schedule.filter(s => !s.private)
-    .map(s => shiftKey_(s.dateKey, s.minutes, s.language)));
+    .map(s => shiftKey_(s.dateKey, s.minutes, s.language) + '|' + (s.sfExt ? 'SF' : 'R')));
 
   for (let dateKey = today; dateKey <= maxKey; dateKey = addDaysKey_(dateKey, 1)) {
     const day = dayNameFromKey_(dateKey);
@@ -1353,12 +1358,14 @@ function appendWeeklyScheduleShifts_(schedule, maxDaysAhead) {
       const time = normTime24_(rule.time);
       const minutes = timeToMinutes_(time);
       if (shiftIsOver_(dateKey, minutes)) return;
-      const k = shiftKey_(dateKey, minutes, rule.language);
+      const isSf = !!rule.sfExt;
+      const k = shiftKey_(dateKey, minutes, rule.language) + '|' + (isSf ? 'SF' : 'R');
       if (have.has(k)) return;
       have.add(k);
       schedule.push({
         dateKey, dateText: prettyDate_(dateKey), day, time, timeLabel: to12h_(time),
-        minutes, language: rule.language, private: false, assigned: [], status: 'Not assigned'
+        minutes, language: rule.language, private: false,
+        sfExt: isSf, tourName: isSf ? 'SF' : '3h', assigned: [], status: 'Not assigned'
       });
     });
   }
@@ -1374,7 +1381,8 @@ function apiAssign_(p) {
   const dateKey = String(p.dateKey || '').trim();
   const language = String(p.language || '').trim();
   const time = normTime24_(String(p.time || ''));
-  const isPriv = String(p.isPrivate || '') === '1';
+  const isSf = String(p.sfExt || '') === '1';
+  const isPriv = !isSf && String(p.isPrivate || '') === '1';
   const privIndex = Number(p.privIndex) || 1;
   const guide = String(p.guide || '').trim();   // '' -> unassign
 
@@ -1398,7 +1406,7 @@ function apiAssign_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
-    const out = writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide);
+    const out = writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide, isSf);
     // Mirror the assignment onto the feed's Guide column so the portal can read it
     // there (the grid stays the authority; this is the denormalised copy). If the
     // shift has NO feed rows yet (a bare slot with no booking), drop a 0-person
@@ -1407,16 +1415,16 @@ function apiAssign_(p) {
     // hourly syncFeedGuides_ is the backstop.
     if (out && out.ok) {
       const g = out.assigned || guide;
-      const hadRows = writeFeedGuide_(dateKey, time, language, isPriv, g);
+      const hadRows = writeFeedGuide_(dateKey, time, language, isPriv, g, isSf);
       if (g) {
         // Assigning: if the shift has no feed rows at all, drop a placeholder so
         // the bare assignment still shows.
-        if (!hadRows) ensureFeedShiftRow_(dateKey, time, language, isPriv, g);
+        if (!hadRows) ensureFeedShiftRow_(dateKey, time, language, isPriv, g, isSf);
       } else {
         // Unassigning: remove any 0-person placeholder for this shift (a bare
         // slot fully disappears). removeFeedShiftRow_ only deletes Type='shift'
         // rows, so a shift that still has REAL bookings keeps them (now guideless).
-        removeFeedShiftRow_(dateKey, time, language, isPriv);
+        removeFeedShiftRow_(dateKey, time, language, isPriv, isSf);
       }
       bumpFeedCacheVersion_();
     }
@@ -1666,11 +1674,11 @@ function moveBookingDateInTab_(bookingId, language, dateKey) {
  * assign a booked tour even when it was never in the pre-written offer ("there
  * are people signed up, it must be assignable"). A blank guide clears the cell.
  */
-function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide) {
+function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide, isSf) {
   const ss = control_();
   const tabName = 'Schedule_' + language;
   let sh = ss.getSheetByName(tabName);
-  const header = gridHeaderForColumn_(time, isPriv, privIndex);
+  const header = gridHeaderForColumn_(time, isPriv, privIndex, isSf);
   const dayLabel = Utilities.formatDate(new Date(dateKey + 'T12:00:00'), Session.getScriptTimeZone(), 'EEE MMM d');
   const newMinutes = timeToMinutes_(time);
 
@@ -1695,16 +1703,18 @@ function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guid
   // ---- COLUMN: find by (time, private, index); else insert IN CHRONOLOGICAL
   //      ORDER (so a new 11:00 slots between 10:00 and 17:00, never at the end). ----
   const timeRow = sh.getRange(2, 1, 1, Math.max(2, sh.getLastColumn())).getDisplayValues()[0];
+  const rankOf = (sf, priv) => sf ? 2 : (priv ? 1 : 0);   // regular < private < SF within a time
+  const myRank = rankOf(isSf, isPriv);
   let colNum = -1, insertColAt = -1;
   for (let c = 1; c < timeRow.length; c++) {
     const h = parseGridTimeHeader_(timeRow[c]);
     if (!h) continue;
-    if (h.time === time && h.isPrivate === isPriv && (!isPriv || h.index === privIndex)) { colNum = c + 1; break; }
+    if (h.time === time && !!h.isSf === !!isSf && h.isPrivate === isPriv && (isSf || !isPriv || h.index === privIndex)) { colNum = c + 1; break; }
     if (insertColAt === -1) {
       const hm = timeToMinutes_(h.time);
       const after = hm > newMinutes ||
-        (hm === newMinutes && (h.isPrivate ? 1 : 0) > (isPriv ? 1 : 0)) ||
-        (hm === newMinutes && h.isPrivate === isPriv && (h.index || 1) > (privIndex || 1));
+        (hm === newMinutes && rankOf(h.isSf, h.isPrivate) > myRank) ||
+        (hm === newMinutes && rankOf(h.isSf, h.isPrivate) === myRank && (h.index || 1) > (privIndex || 1));
       if (after) insertColAt = c + 1;
     }
   }
@@ -2121,7 +2131,7 @@ function readSchedule_(opts) {
       // New grids: "11:00" or "10:00 · Private [2]" headers. parseGridTimeHeader_
       // is shared with assignShifts.gs (same project).
       const h = parseGridTimeHeader_(timeRow[c]);
-      if (h) times.push({ col: c, time: h.time, headerPrivate: h.isPrivate, privIndex: h.index });
+      if (h) times.push({ col: c, time: h.time, headerPrivate: h.isPrivate, headerSf: h.isSf, privIndex: h.index });
     }
 
     for (let r = 2; r < vals.length; r++) {
@@ -2153,6 +2163,17 @@ function readSchedule_(opts) {
         // A manager's explicit clear (writeAssignmentToGrid_) writes
         // "Not assigned (cleared)"; carry that so the weekly default is suppressed.
         const clearedCell = /cleared/i.test(raw);
+
+        if (t.headerSf) {
+          // Sagrada exterior tour — its own column/card.
+          out.push(Object.assign({}, base, {
+            sfExt: true, private: false, privIndex: 1, tourName: 'SF',
+            assigned: namesFrom(lines),
+            status: /not assigned/i.test(raw) ? 'Not assigned' : 'OK',
+            cleared: clearedCell
+          }));
+          return;
+        }
 
         if (t.headerPrivate) {
           // Whole column is one private group.
@@ -2515,22 +2536,24 @@ function apiUncheckin_(p) {
  * the SAME private/regular kind (a private and a regular tour can share a slot
  * but have different guides). `guide` '' clears it. One read + one write.
  */
-function writeFeedGuide_(dateKey, time, language, isPrivate, guide) {
+function writeFeedGuide_(dateKey, time, language, isPrivate, guide, isSf) {
   try {
     const sh = bookingSS_().getSheetByName('Portal Feed');
     if (!sh || sh.getLastRow() < 2) return false;
     const n = sh.getLastRow() - 1;
     const minutes = timeToMinutes_(normTime24_(time));
     const langL = String(language || '').trim().toLowerCase();
-    const meta = sh.getRange(2, 1, n, 11).getValues();       // A..K (K=Notes -> private?)
+    const meta = sh.getRange(2, 1, n, 11).getValues();       // A..K (H=Source, K=Notes)
     const col = sh.getRange(2, 15, n, 1).getValues();        // O = Guide
     let changed = 0, matched = 0;
     for (let i = 0; i < n; i++) {
-      const rowPriv = /privat/i.test(String(meta[i][10] || ''));
+      const rowSf = isSfExtSource_(String(meta[i][7] || ''));
+      const rowPriv = !rowSf && /privat/i.test(String(meta[i][10] || ''));
+      const variantMatch = isSf ? rowSf : (!rowSf && rowPriv === !!isPrivate);
       if (toDateKey_(meta[i][0]) === dateKey &&
           timeToMinutes_(normTime24_(meta[i][1])) === minutes &&
           String(meta[i][2] || '').trim().toLowerCase() === langL &&
-          rowPriv === !!isPrivate) {
+          variantMatch) {
         matched++;
         if (String(col[i][0] || '') !== String(guide || '')) { col[i][0] = guide || ''; changed++; }
       }
@@ -2546,7 +2569,7 @@ function writeFeedGuide_(dateKey, time, language, isPrivate, guide) {
  * still appears in the feed-only portal. No-op if the shift already has any row
  * of that private/regular kind. Best-effort.
  */
-function ensureFeedShiftRow_(dateKey, time, language, isPrivate, guide) {
+function ensureFeedShiftRow_(dateKey, time, language, isPrivate, guide, isSf) {
   try {
     const sh = bookingSS_().getSheetByName('Portal Feed');
     if (!sh) return false;
@@ -2556,15 +2579,18 @@ function ensureFeedShiftRow_(dateKey, time, language, isPrivate, guide) {
     if (n > 0) {
       const meta = sh.getRange(2, 1, n, 11).getValues();
       for (let i = 0; i < n; i++) {
-        const rowPriv = /privat/i.test(String(meta[i][10] || ''));
+        const rowSf = isSfExtSource_(String(meta[i][7] || ''));
+        const rowPriv = !rowSf && /privat/i.test(String(meta[i][10] || ''));
+        const variantMatch = isSf ? rowSf : (!rowSf && rowPriv === !!isPrivate);
         if (toDateKey_(meta[i][0]) === dateKey &&
             timeToMinutes_(normTime24_(meta[i][1])) === minutes &&
             String(meta[i][2] || '').trim().toLowerCase() === langL &&
-            rowPriv === !!isPrivate) return false;   // already represented
+            variantMatch) return false;   // already represented
       }
     }
-    const row = [dateKey, to12h_(normTime24_(time)), language, '', '', 0, 0, '', 0, '',
-                 isPrivate ? 'Private' : '', '', '', '', guide || '', 'shift'];
+    // An SF placeholder carries a GYG-SF source so buildScheduleFromFeed_ files it as SF.
+    const row = [dateKey, to12h_(normTime24_(time)), language, '', '', 0, 0, isSf ? 'GYG-SF' : '', 0, '',
+                 (!isSf && isPrivate) ? 'Private' : '', '', '', '', guide || '', 'shift'];
     const at = sh.getLastRow() + 1;
     sh.getRange(at, 2, 1, 1).setNumberFormat('@');   // Time as text
     sh.getRange(at, 1, 1, 16).setValues([row]);
@@ -2573,7 +2599,7 @@ function ensureFeedShiftRow_(dateKey, time, language, isPrivate, guide) {
 }
 
 /** Delete a shift's 0-person placeholder row(s) from the feed (on delete/reopen). */
-function removeFeedShiftRow_(dateKey, time, language, isPrivate) {
+function removeFeedShiftRow_(dateKey, time, language, isPrivate, isSf) {
   try {
     const sh = bookingSS_().getSheetByName('Portal Feed');
     if (!sh || sh.getLastRow() < 2) return false;
@@ -2583,11 +2609,13 @@ function removeFeedShiftRow_(dateKey, time, language, isPrivate) {
     const meta = sh.getRange(2, 1, n, 16).getValues();
     for (let i = n - 1; i >= 0; i--) {
       if (String(meta[i][15] || '').trim().toLowerCase() !== 'shift') continue;
-      const rowPriv = /privat/i.test(String(meta[i][10] || ''));
+      const rowSf = isSfExtSource_(String(meta[i][7] || ''));
+      const rowPriv = !rowSf && /privat/i.test(String(meta[i][10] || ''));
+      const variantMatch = isSf ? rowSf : (!rowSf && rowPriv === !!isPrivate);
       if (toDateKey_(meta[i][0]) === dateKey &&
           timeToMinutes_(normTime24_(meta[i][1])) === minutes &&
           String(meta[i][2] || '').trim().toLowerCase() === langL &&
-          rowPriv === !!isPrivate) sh.deleteRow(i + 2);
+          variantMatch) sh.deleteRow(i + 2);
     }
     return true;
   } catch (e) { return false; }
@@ -2614,11 +2642,11 @@ function syncFeedGuides_() {
   } catch (e) { return; }
   const byKey = {};
   schedule.forEach(s => {
-    byKey[shiftKey_(s.dateKey, s.minutes, s.language) + (s.private ? '|P' : '|R')] =
+    byKey[shiftKey_(s.dateKey, s.minutes, s.language) + (s.sfExt ? '|SF' : (s.private ? '|P' : '|R'))] =
       (s.assigned && s.assigned[0]) || '';
   });
   const n = sh.getLastRow() - 1;
-  const meta = sh.getRange(2, 1, n, 11).getValues();     // A..K
+  const meta = sh.getRange(2, 1, n, 11).getValues();     // A..K (H idx7=Source, K idx10=Notes)
   const col = sh.getRange(2, 15, n, 1).getValues();      // O = Guide
   let changed = 0;
   for (let i = 0; i < n; i++) {
@@ -2626,10 +2654,11 @@ function syncFeedGuides_() {
     const minutes = timeToMinutes_(normTime24_(meta[i][1]));
     const language = String(meta[i][2] || '').trim();
     if (!dateKey || !language) continue;
-    const priv = /privat/i.test(String(meta[i][10] || ''));
-    const k = shiftKey_(dateKey, minutes, language) + (priv ? '|P' : '|R');
+    const isSf = isSfExtSource_(String(meta[i][7] || ''));
+    const priv = !isSf && /privat/i.test(String(meta[i][10] || ''));
+    const k = shiftKey_(dateKey, minutes, language) + (isSf ? '|SF' : (priv ? '|P' : '|R'));
     let want = byKey[k];
-    if (want == null) want = priv ? '' : weeklyDefaultGuide_(dateKey, normTime24_(meta[i][1]), language);
+    if (want == null) want = priv ? '' : weeklyDefaultGuide_(dateKey, normTime24_(meta[i][1]), language, isSf);
     if (String(col[i][0] || '') !== String(want || '')) { col[i][0] = want || ''; changed++; }
   }
   if (changed) sh.getRange(2, 15, n, 1).setValues(col);
@@ -2774,7 +2803,7 @@ function weeklyRules_() {
  * the grid cell, else this weekly default. Respects the rule's active window and
  * requires the guide to be active and to actually speak the language.
  */
-function weeklyDefaultGuide_(dateKey, time, language) {
+function weeklyDefaultGuide_(dateKey, time, language, isSf) {
   const rules = weeklyRules_();
   if (!rules.length || !dateKey) return '';
   const day = dayNameFromKey_(dateKey).toLowerCase();
@@ -2783,6 +2812,7 @@ function weeklyDefaultGuide_(dateKey, time, language) {
   for (const r of rules) {
     if (!r.guide) continue;
     if (r.isPrivate) continue;                 // defaults are for regular slots
+    if (!!r.sfExt !== !!isSf) continue;        // an SF rule staffs only SF shifts, and vice versa
     if (String(r.day).toLowerCase() !== day) continue;
     if (String(r.language).toLowerCase() !== langL) continue;
     if (timeToMinutes_(normTime24_(r.time)) !== minutes) continue;
@@ -2815,7 +2845,7 @@ function applyWeeklyDefaults_(schedule) {
     if (s.private) return;                              // defaults are for regular slots
     if (s.cleared) return;                              // manager explicitly cleared -> stays empty ("my clear wins")
     if (s.assigned && s.assigned.length) return;        // a real assignment always wins
-    const guide = weeklyDefaultGuide_(s.dateKey, s.time, s.language);
+    const guide = weeklyDefaultGuide_(s.dateKey, s.time, s.language, s.sfExt);
     if (!guide) return;
     const st = shiftStartMs_(s.dateKey, s.minutes);
     const gb = busy[guide.trim().toLowerCase()] || [];
@@ -2831,8 +2861,9 @@ function applyWeeklyDefaults_(schedule) {
 function appendOrphanBookingShifts_(schedule, bookingsByKey) {
   const today = todayKey_();
   const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
-  const haveReg = new Set(schedule.filter(s => !s.private).map(s => shiftKey_(s.dateKey, s.minutes, s.language)));
+  const haveReg = new Set(schedule.filter(s => !s.private && !s.sfExt).map(s => shiftKey_(s.dateKey, s.minutes, s.language)));
   const havePriv = new Set(schedule.filter(s => s.private).map(s => shiftKey_(s.dateKey, s.minutes, s.language)));
+  const haveSf = new Set(schedule.filter(s => s.sfExt).map(s => shiftKey_(s.dateKey, s.minutes, s.language)));
 
   Object.keys(bookingsByKey).forEach(key => {
     const parts = key.split('|');
@@ -2851,13 +2882,18 @@ function appendOrphanBookingShifts_(schedule, bookingsByKey) {
       time, timeLabel: to12h_(time), minutes, language
     };
     const bs = bookingsByKey[key] || [];
-    if (bs.some(b => !/privat/i.test(b.note || '')) && !haveReg.has(key)) {
+    const isSfB = b => isSfExtSource_(b.source);
+    if (bs.some(b => !isSfB(b) && !/privat/i.test(b.note || '')) && !haveReg.has(key)) {
       haveReg.add(key);
       schedule.push(Object.assign({}, base, { private: false, assigned: [], status: 'Not assigned', extra: true }));
     }
-    if (bs.some(b => /privat/i.test(b.note || '')) && !havePriv.has(key)) {
+    if (bs.some(b => !isSfB(b) && /privat/i.test(b.note || '')) && !havePriv.has(key)) {
       havePriv.add(key);
       schedule.push(Object.assign({}, base, { private: true, privIndex: 1, assigned: [], status: 'Not assigned', extra: true }));
+    }
+    if (bs.some(isSfB) && !haveSf.has(key)) {
+      haveSf.add(key);
+      schedule.push(Object.assign({}, base, { private: false, sfExt: true, privIndex: 1, tourName: 'SF', assigned: [], status: 'Not assigned', extra: true }));
     }
   });
 }
@@ -2894,14 +2930,16 @@ function buildScheduleFromFeed_(feedIndex) {
                      (langLower.charAt(0).toUpperCase() + langLower.slice(1));
     const time = Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0');
     (feedIndex[sk] || []).forEach(r => {
-      const isPriv = /privat/i.test(r.note || '');
-      const kk = sk + (isPriv ? '|P' : '|R');
+      const isSf = isSfExtSource_(r.source);                 // Sagrada exterior = its own tour
+      const isPriv = !isSf && /privat/i.test(r.note || '');
+      const kk = sk + '|' + variantKey_(isSf, isPriv, 1);
       let sh = byKey[kk];
       if (!sh) {
         sh = byKey[kk] = {
           dateKey, minutes, time, timeLabel: to12h_(time),
           language, day: dayNameFromKey_(dateKey), dateText: prettyDate_(dateKey),
-          private: isPriv, privIndex: 1, assigned: [], status: 'Not assigned'
+          private: isPriv, privIndex: 1, sfExt: isSf, tourName: isSf ? 'SF' : '3h',
+          assigned: [], status: 'Not assigned'
         };
       }
       if (r.feedGuide && !sh.assigned.length) { sh.assigned = [r.feedGuide]; sh.status = 'OK'; }
@@ -3498,6 +3536,22 @@ function shiftKey_(dateKey, minutes, language) {
   return dateKey + '|' + minutes + '|' + String(language || '').trim().toLowerCase();
 }
 
+/**
+ * TOUR VARIANT — a slot (date|time|language) can hold up to three DISTINCT tours,
+ * each its own card / grid column / guide assignment:
+ *   'R'    the regular full 3-hour tour
+ *   'P<n>' a private group (existing)
+ *   'SF'   the Sagrada Família EXTERIOR add-on (source GYG-SF / Viator-SF) — a
+ *          different, shorter tour that must NOT merge with the 3h tour.
+ * SF is never private, so it is a third mutually-exclusive variant. This one
+ * helper is the single source of truth used by every key/column below.
+ */
+function variantKey_(sfExt, isPrivate, privIndex) {
+  return sfExt ? 'SF' : (isPrivate ? 'P' + (privIndex || 1) : 'R');
+}
+/** Short tour NAME shown on the card / sheet / ledger. */
+function tourNameOf_(source) { return isSfExtSource_(source) ? 'SF' : '3h'; }
+
 
 function round2_(n) { return Math.round(Number(n || 0) * 100) / 100; }
 
@@ -3604,7 +3658,7 @@ function shiftStartMs_(dateKey, minutes) {
 /** Unique key of a shift incl. its private index. */
 function shiftKeyFull_(s) {
   return s.dateKey + '|' + s.minutes + '|' + String(s.language || '').toLowerCase() +
-         '|' + (s.private ? 'P' + (s.privIndex || 1) : 'R');
+         '|' + variantKey_(s.sfExt, s.private, s.privIndex);
 }
 
 /** guideNameLower -> [{ms, k}] of every assignment in the schedule. */
@@ -3619,7 +3673,12 @@ function bookingsForShift_(bookingsByKey, shift) {
   const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
   return (bookingsByKey[key] || [])
     .filter(b => (b.rowType || 'booking') !== 'shift')
-    .filter(b => shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || ''));
+    .filter(b => {
+      const bSf = isSfExtSource_(b.source);
+      if (shift.sfExt) return bSf;                    // an SF card takes ONLY the SF bookings
+      if (bSf) return false;                          // SF bookings never sit on a 3h/private card
+      return shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || '');
+    });
 }
 
 function buildBusyMap_(schedule) {
@@ -4281,11 +4340,11 @@ function readCompletedLog_() {
 }
 
 /** Which guide was assigned to a given completed booking's shift. */
-function guideForShift_(schedule, dateKey, time, language, isPrivate) {
+function guideForShift_(schedule, dateKey, time, language, isPrivate, isSf) {
   const minutes = timeToMinutes_(normTime24_(time));
   const hit = schedule.find(s =>
     s.dateKey === dateKey && s.minutes === minutes &&
-    sameName_(s.language, language) && !!s.private === !!isPrivate);
+    sameName_(s.language, language) && !!s.sfExt === !!isSf && !!s.private === !!isPrivate);
   if (hit && hit.assigned.length) return hit.assigned.join(', ');
   if (hit && hit.cleared) return '';   // manager explicitly cleared this slot -> genuinely nobody
   // No grid assignment: fall back to the weekly default so the management queues
@@ -4293,7 +4352,7 @@ function guideForShift_(schedule, dateKey, time, language, isPrivate) {
   // tour staffed only by the weekly pattern (e.g. the weekday English slots that
   // are never hand-assigned) would show blank here and get mis-flagged as
   // "ran with no guide". Private shifts have no weekly default.
-  return isPrivate ? '' : weeklyDefaultGuide_(dateKey, time, language);
+  return isPrivate ? '' : weeklyDefaultGuide_(dateKey, time, language, isSf);
 }
 
 function updateNoShowQueues_() {
@@ -4334,11 +4393,12 @@ function updateNoShowQueues_() {
     if (checkins[key] && Number(checkins[key].checkedIn || 0) > 0) return;
     if (existing[srcKey].has(key)) return;              // already queued
     existing[srcKey].add(key);
-    const isPriv = /privat/i.test(b.notes || '');
+    const isSf = isSfExtSource_(b.source);
+    const isPriv = !isSf && /privat/i.test(b.notes || '');
     newRows[srcKey].push([
       b.dateKey, b.time, b.language, b.source, b.bookingId, b.name,
       b.adults, b.children,
-      guideForShift_(schedule, b.dateKey, b.time, b.language, isPriv),
+      guideForShift_(schedule, b.dateKey, b.time, b.language, isPriv, isSf),
       isPriv ? 'Yes' : '', 'Not checked in', false, '', ''
     ]);
   });
@@ -4396,9 +4456,9 @@ function updateGuruwalkCheckinQueue_() {
   completed.forEach(b => {
     if (!/guruwalk/i.test(b.source)) return;
     if (checkins[b.bookingId + '|' + b.dateKey]) return;   // handled in pass 1
-    const isPriv = /privat/i.test(b.notes || '');
+    const isPriv = /privat/i.test(b.notes || '');   // GuruWalk is never the SF product
     add(b.dateKey, b.time, b.language, b.bookingId, b.name, b.adults, 0, b.children,
-        guideForShift_(schedule, b.dateKey, b.time, b.language, isPriv), '');
+        guideForShift_(schedule, b.dateKey, b.time, b.language, isPriv, false), '');
   });
 
   if (rows.length) {

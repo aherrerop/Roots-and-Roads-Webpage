@@ -4003,7 +4003,7 @@ function parseViatorMessage_(msg, mode) {
     bookingId,
     children: vp.children,
     infants: vp.infants,
-    notes: composeNotes_(isPrivate, vp.children, vp.infants, ''),
+    notes: composeNotes_(isPrivate, vp.children, vp.infants, viatorIsSfExt_(text) ? 'SF' : ''),
     isCancellation: isCancel,
     guestDelta,
     hasExplicitGuests: explicitGuests !== null,
@@ -4445,7 +4445,10 @@ function parseGygMessage_(msg, mode) {
           : gygIs3in1_(text) ? RNR.SOURCE.GYG2
           : gygSourceFor_(msg),
     income,
-    notes: composeNotes_(f.isPrivate, pp.children, pp.infants, ''),
+    // Tag the Sagrada-exterior product with a visible "SF" in Notes so the
+    // BookingSheet shows the tour name at a glance (the full 3h tour is left
+    // implicit). Source ('GYG-SF') already carries it too, for cross-reference.
+    notes: composeNotes_(f.isPrivate, pp.children, pp.infants, gygIsSfExt_(text) ? 'SF' : ''),
     isCancellation: isCancel,
     hasExplicitGuests: Boolean(pp.adults || f.guests),
     hasExplicitDate: Boolean(dateTok),

@@ -178,7 +178,7 @@ function makeSchedule() {
   // free = ~net tip/guest). This drives the balancing.
   const shiftValues = readShiftValues_();
   shifts.forEach(s => {
-    const key = s.dateText + "|" + normalizeTime_(s.time) + "|" + s.language;
+    const key = s.dateText + "|" + normalizeTime_(s.time) + "|" + s.language + "|" + (s.sfExt ? 'SF' : 'R');
     s.value = s.isPrivate ? ASSIGN_CFG.VALUE_PRIVATE_FLAT : (shiftValues[key] || 0);
   });
 
@@ -195,7 +195,7 @@ function makeSchedule() {
   // PASS 1 — seat every manager lock first, so auto-assignment works around
   // them. A lock is preserved even when it conflicts; conflicts are flagged.
   order.forEach(shift => {
-    const lk = lockKey_(shift.dateText, normalizeTime_(shift.time), shift.language, shift.isPrivate, shift.privIndex);
+    const lk = lockKey_(shift.dateText, normalizeTime_(shift.time), shift.language, shift.isPrivate, shift.privIndex, shift.sfExt);
     const lockedNames = locks[lk] || [];
     shift.lockedGuides = [];
     lockedNames.forEach(nm => {
@@ -224,7 +224,7 @@ function makeSchedule() {
         const hard = problems.some(p => p.indexOf('not marked available') === -1);
         conflicts.push({
           dateText: shift.dateText, time: shift.time, language: shift.language,
-          isPrivate: !!shift.isPrivate, privIndex: shift.privIndex, guide: nm,
+          isPrivate: !!shift.isPrivate, privIndex: shift.privIndex, sfExt: !!shift.sfExt, guide: nm,
           problems, hard
         });
       }
@@ -235,7 +235,7 @@ function makeSchedule() {
   const assignedShifts = [];
   order.forEach(shift => {
     // A manager-cleared slot with no lock stays empty: skip auto-assignment.
-    const lkC = lockKey_(shift.dateText, normalizeTime_(shift.time), shift.language, shift.isPrivate, shift.privIndex);
+    const lkC = lockKey_(shift.dateText, normalizeTime_(shift.time), shift.language, shift.isPrivate, shift.privIndex, shift.sfExt);
     shift.cleared = !!clearedSlots[lkC] && !(shift.lockedGuides && shift.lockedGuides.length);
 
     const eligible = shift.cleared ? [] : guides.filter(g =>
@@ -275,6 +275,7 @@ function makeSchedule() {
       c.hard &&
       c.dateText === shift.dateText && normalizeTime_(c.time) === normalizeTime_(shift.time) &&
       c.language === shift.language && !!c.isPrivate === !!shift.isPrivate &&
+      !!c.sfExt === !!shift.sfExt &&
       (Number(c.privIndex) || 1) === (Number(shift.privIndex) || 1));
 
     assignedShifts.push({
@@ -287,6 +288,7 @@ function makeSchedule() {
       // rebuild AND is recognised as cleared on the next run (readClearedSlots_).
       status: shift.cleared ? "Not assigned (cleared)" : (ok ? "OK" : "Not assigned"),
       notes: [
+        shift.sfExt ? "SF" : "",
         shift.isPrivate ? "Private" : "",
         shift.extra ? "Extra tour (not in Weekly_Schedule)" : "",
         shift.lockedGuides.length ? "Locked: " + shift.lockedGuides.join(", ") : "",
@@ -338,49 +340,57 @@ function updateWeeklyScheduleToCurrentOffer() {
   const sh = ss.getSheetByName('Weekly_Schedule');
   if (!sh) throw new Error('Weekly_Schedule tab not found');
 
-  // This function OWNS only the regular English/Spanish offer. Every other row is
-  // preserved: other languages (German, Italian, French …) AND every private row
-  // (any language). We keep Guide (col G), Hide from availability (col H) and
-  // Private (col I), normalise the Time cell (string or coerced Date), and MIGRATE
-  // the legacy model where "Private" was written into Language: blank that label
-  // and set Private = yes, so an Italian private tour keeps Italian.
+  // This function OWNS only the regular English/Spanish 3h offer. Every other row
+  // is preserved: other languages (German, Italian, French …), every private row,
+  // AND every SF (Sagrada exterior) row. We keep Guide, Hide from availability,
+  // Private, Tour Type and Hide from website, normalise the Time cell (string or
+  // coerced Date), and MIGRATE the legacy model where "Private" was written into
+  // Language: blank that label and set Private = yes.
+  //
+  // We ALWAYS write the 11-column layout (Tour Type included), reading the current
+  // sheet BY HEADER so a legacy 10-col sheet migrates cleanly and a sheet that
+  // already has Tour Type keeps every row's value.
+  const HEADER = ['Day', 'Time', 'Language', 'Tour Type', 'Guides needed', 'Active from',
+                  'Active until', 'Guide', 'Hide from availability', 'Private', 'Hide from website'];
   const preserved = [];
   if (sh.getLastRow() > 1) {
-    const raw = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getValues();
-    const dv = sh.getRange(2, 1, sh.getLastRow() - 1, 10).getDisplayValues();
+    const last = sh.getLastRow() - 1, width = sh.getLastColumn();
+    const raw = sh.getRange(2, 1, last, width).getValues();
+    const dv = sh.getRange(2, 1, last, width).getDisplayValues();
+    const C = weeklyScheduleCols_(sh.getRange(1, 1, 1, width).getDisplayValues()[0] || []);
+    const at = (row, idx, fb) => (idx > -1 && idx < row.length) ? row[idx] : fb;
     raw.forEach((r, i) => {
-      const langRaw = String(dv[i][2] || r[2] || '').trim();
-      const isPriv = /^(1|true|yes|y|x)$/i.test(String(dv[i][8] || '').trim())
+      const langRaw = String(at(dv[i], C.language, at(r, C.language, '')) || '').trim();
+      const isPriv = /^(1|true|yes|y|x)$/i.test(String(at(dv[i], C.private, '') || '').trim())
                      || /^private$/i.test(langRaw);
-      // Regular English/Spanish are regenerated below — drop them here.
-      if (!isPriv && ['english', 'spanish'].indexOf(langRaw.toLowerCase()) !== -1) return;
-      if (!langRaw && !isPriv) return;                       // truly empty row
-      const time = normalizeTime_(dv[i][1]) || timeFromCellValue_(r[1]);
+      const isSf = C.tourType > -1 && /^\s*sf\b/i.test(String(at(dv[i], C.tourType, '') || '').trim());
+      // Regular English/Spanish 3h rows are regenerated below — drop them here.
+      // (SF English/Spanish rows are preserved: they are a different tour.)
+      if (!isPriv && !isSf && ['english', 'spanish'].indexOf(langRaw.toLowerCase()) !== -1) return;
+      if (!langRaw && !isPriv && !isSf) return;              // truly empty row
+      const time = normalizeTime_(at(dv[i], C.time, '')) || timeFromCellValue_(at(r, C.time, ''));
       const lang = /^private$/i.test(langRaw) ? '' : langRaw; // strip legacy "Private" label
       preserved.push([
-        String(dv[i][0] || r[0] || '').trim(),
-        time || String(dv[i][1] || ''),
+        String(at(dv[i], C.day, at(r, C.day, '')) || '').trim(),
+        time || String(at(dv[i], C.time, '') || ''),
         lang,
-        Number(r[3]) || (isPriv ? 0 : 1),
-        r[4] || '',
-        r[5] || '',
-        String(dv[i][6] || '').trim(),                       // Guide (col G)
-        String(dv[i][7] || '').trim(),                       // Hide from availability (col H)
-        isPriv ? 'yes' : String(dv[i][8] || '').trim(),      // Private (col I)
-        String(dv[i][9] || '').trim()                        // Hide from website (col J) — preserved as-is
+        isSf ? 'SF' : '3h',                                   // Tour Type (col D)
+        Number(at(r, C.needed, '')) || (isPriv ? 0 : 1),
+        at(r, C.from, '') || '',
+        at(r, C.until, '') || '',
+        String(at(dv[i], C.guide, '') || '').trim(),          // Guide
+        String(at(dv[i], C.hideAvail, '') || '').trim(),      // Hide from availability
+        isPriv ? 'yes' : String(at(dv[i], C.private, '') || '').trim(),  // Private
+        String(at(dv[i], C.hideWeb, '') || '').trim()         // Hide from website — preserved as-is
       ]);
     });
   }
 
   const rows = [];
   // Blank "Active from" = always active. The standard weekly offer must show in
-  // EVERY availability week. (Stamping today's date here made the offer look
-  // like it started on the run date, hiding tours such as 11:00 from earlier
-  // weeks and — on any mid-week re-run — from the current week's early days.)
-  // 10 columns: Day, Time, Language, Guides needed, Active from, Active until,
-  // Guide (G), Hide from availability (H), Private (I), Hide from website (J).
-  // Managed offer rows leave G/H/I/J blank.
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '', '', '']));
+  // EVERY availability week. Managed offer rows are the full "3h" tour and leave
+  // Guide/Hide/Private blank.
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, '3h', 1, '', '', '', '', '', '']));
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
 
   add(MTThF, '11:00', 'English');
@@ -389,26 +399,24 @@ function updateWeeklyScheduleToCurrentOffer() {
   add(['Wednesday'], '17:00', 'English');
   add(['Saturday'], '17:00', 'English');
 
-  const all = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability', 'Private', 'Hide from website']]
-    .concat(rows)
-    .concat(preserved);
+  const all = [HEADER].concat(rows).concat(preserved);
 
   sh.clear();
   // Time column as TEXT before writing: "11:00" can never again become a Date.
   sh.getRange(1, 2, all.length, 1).setNumberFormat('@');
-  sh.getRange(1, 1, all.length, 10).setValues(all);
-  sh.getRange(1, 1, 1, 10).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+  sh.getRange(1, 1, all.length, HEADER.length).setValues(all);
+  sh.getRange(1, 1, 1, HEADER.length).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
   sh.setFrozenRows(1);
   Logger.log('Weekly_Schedule updated: ' + rows.length + ' offer rows + ' +
-             preserved.length + ' preserved rows (German etc., times repaired).');
+             preserved.length + ' preserved rows (German/SF etc., times repaired).');
 }
 
 
 /* ---------- manager locks (bold names in the grids) ---------- */
 
-function lockKey_(dateText, time, language, isPrivate, privIndex) {
+function lockKey_(dateText, time, language, isPrivate, privIndex, isSf) {
   return dateText + "|" + time + "|" + language + "|" +
-         (isPrivate ? "P" + (Number(privIndex) || 1) : "R");
+         (isSf ? "SF" : (isPrivate ? "P" + (Number(privIndex) || 1) : "R"));
 }
 
 /**
@@ -423,21 +431,29 @@ function lockKey_(dateText, time, language, isPrivate, privIndex) {
 function parseGridTimeHeader_(text) {
   const s = String(text || '').trim();
   if (!s) return null;
-  const m = s.match(/^(\d{1,2}:\d{2}(?:\s*[AP]M)?)(?:\s*[·\-]\s*Private(?:\s*(\d+))?)?$/i);
+  // "11:00" · "10:00 · Private" · "17:00 · Private 2" · "10:00 · SF" (Sagrada exterior).
+  const m = s.match(/^(\d{1,2}:\d{2}(?:\s*[AP]M)?)(?:\s*[·\-]\s*(Private|SF)(?:\s*(\d+))?)?$/i);
   if (!m) return null;
   const t = normalizeTime_(m[1]);
   if (!/^\d{1,2}:\d{2}$/.test(t)) return null;
+  const variant = (m[2] || '').toUpperCase();
   return {
     time: t,
-    isPrivate: /private/i.test(s),
-    index: m[2] ? Number(m[2]) : 1
+    isPrivate: variant === 'PRIVATE',
+    isSf: variant === 'SF',
+    index: m[3] ? Number(m[3]) : 1
   };
 }
 
-/** Column header text for a shift column. */
-function gridHeaderForColumn_(time, isPrivate, index) {
+/** Column header text for a shift column. SF = the Sagrada exterior add-on's own column. */
+function gridHeaderForColumn_(time, isPrivate, index, isSf) {
+  if (isSf) return time + ' · SF';
   if (!isPrivate) return time;
   return time + ' · Private' + (Number(index) > 1 ? ' ' + index : '');
+}
+/** Internal column id used by the grid writer (mirrors the header variants). */
+function gridColId_(time, isPrivate, index, isSf) {
+  return isSf ? time + '|SF' : (isPrivate ? time + '|P' + (Number(index) || 1) : time + '|R');
 }
 
 /**
@@ -485,7 +501,7 @@ function readLockedAssignments_(controlSS) {
           txt.split(/[\n,]/).forEach(piece => {
             let nm = piece.replace(/🔒/g, "").replace(/\(private\)/ig, "").trim();
             if (!nm || /not assigned|lock conflict|need \d/i.test(nm)) return;
-            const k = lockKey_(dateText, h.time, language, isPriv, idx);
+            const k = lockKey_(dateText, h.time, language, isPriv, idx, h.isSf);
             if (!locks[k]) locks[k] = [];
             if (locks[k].indexOf(nm) === -1) locks[k].push(nm);
           });
@@ -525,7 +541,7 @@ function readClearedSlots_(controlSS) {
         if (!h) continue;
         if (!/cleared/i.test(String(dv[r][c] || ''))) continue;
         const idx = h.isPrivate ? h.index : 1;
-        cleared[lockKey_(dateText, h.time, language, h.isPrivate, idx)] = true;
+        cleared[lockKey_(dateText, h.time, language, h.isPrivate, idx, h.isSf)] = true;
       }
     }
   });
@@ -545,7 +561,7 @@ function readClearedSlots_(controlSS) {
 function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDate) {
   const have = {};
   assignedShifts.forEach(s => {
-    have[lockKey_(s.dateText, normalizeTime_(s.time), s.language, s.isPrivate, s.privIndex)] = true;
+    have[lockKey_(s.dateText, normalizeTime_(s.time), s.language, s.isPrivate, s.privIndex, s.sfExt)] = true;
   });
   const addPreserved = (key, names, cleared) => {
     if (have[key]) return;
@@ -553,6 +569,7 @@ function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDat
     if (parts.length < 4) return;
     const dateText = parts[0], time = parts[1], language = parts[2], tag = parts[3];
     if (!dateText || !time || !language) return;
+    const isSf = tag === 'SF';
     const isPriv = tag.charAt(0) === 'P';
     const idx = isPriv ? (Number(tag.slice(1)) || 1) : 1;
     const dateObj = dateOnly_(new Date(dateText + 'T12:00:00'));
@@ -562,7 +579,7 @@ function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDat
       week: 'Week ' + getISOWeek_(dateObj),
       dateText: dateText, day: fullDayName_(dateObj), time: time, language: language,
       guidesNeeded: (names && names.length) ? names.length : 1,
-      isPrivate: isPriv, privIndex: idx,
+      isPrivate: isPriv, privIndex: idx, sfExt: isSf, tourName: isSf ? 'SF' : '3h',
       dateTimeObj: combineDateAndTime_(dateObj, time),
       eligibleGuides: [],
       assignedGuides: (names || []).slice(),
@@ -692,12 +709,14 @@ function expandPrivateShifts_(shifts, availIndex, startDate, endDate) {
  * guide instead of the tour silently not existing.
  */
 function expandOrphanShifts_(shifts, availIndex, startDate, endDate) {
-  const existing = new Set(shifts.filter(s => !s.isPrivate)
-    .map(s => s.dateText + '|' + normalizeTime_(s.time) + '|' + s.language));
+  // Variant-aware key: an SF shift and a 3h shift at the same slot are distinct,
+  // so an SF booking never fills (or gets swallowed by) the 3h column.
+  const vkey = s => s.dateText + '|' + normalizeTime_(s.time) + '|' + s.language + '|' + (s.sfExt ? 'SF' : 'R');
+  const existing = new Set(shifts.filter(s => !s.isPrivate).map(vkey));
   const out = shifts.slice();
 
   readActiveBookingSlots_().forEach(slot => {
-    const key = slot.dateText + '|' + slot.time + '|' + slot.language;
+    const key = slot.dateText + '|' + slot.time + '|' + slot.language + '|' + (slot.sfExt ? 'SF' : 'R');
     if (existing.has(key)) return;
     existing.add(key);
     const dateObj = new Date(slot.dateText + 'T12:00:00');
@@ -709,14 +728,16 @@ function expandOrphanShifts_(shifts, availIndex, startDate, endDate) {
       dateText: slot.dateText, day: fullDayName_(dateObj),
       time: slot.time, language: slot.language, guidesNeeded: 1,
       availableGuides: privateAvailability_(availIndex, slot.dateText, slot.time),
-      isPrivate: false, privIndex: 0,
+      isPrivate: false, privIndex: 0, sfExt: !!slot.sfExt,
       extra: true                       // flagged in the Schedule tab notes
     });
   });
   return out;
 }
 
-/** Unique (date, time, language) slots of all NON-private active bookings. */
+/** Unique (date, time, language, variant) slots of all NON-private active
+ *  bookings. An SF (Sagrada exterior) booking is its OWN slot (sfExt:true), so a
+ *  3h and an SF booking sharing a date/time/language yield two distinct shifts. */
 function readActiveBookingSlots_() {
   const seen = new Set();
   const out = [];
@@ -730,13 +751,14 @@ function readActiveBookingSlots_() {
     const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
     rows.forEach(row => {
       if (/privat/i.test(String(row[8] || ""))) return;
+      const sfExt = isSfExtSource_(String(row[5] || ""));   // col F = Source (GYG-SF / Viator-SF)
       const time = timeFromCellValue_(row[4]) || normalizeTime_(row[4]);
       if (!/^\d{1,2}:\d{2}$/.test(time)) return;
       const dateText = row[3] instanceof Date ? formatDate_(row[3]) : formatDate_(new Date(row[3]));
-      const key = dateText + '|' + time + '|' + language;
+      const key = dateText + '|' + time + '|' + language + '|' + (sfExt ? 'SF' : 'R');
       if (seen.has(key)) return;
       seen.add(key);
-      out.push({ dateText, time, language });
+      out.push({ dateText, time, language, sfExt });
     });
   });
   return out;
@@ -781,9 +803,10 @@ function readShiftValues_() {
       const time = timeFromCellValue_(row[4]) || normalizeTime_(row[4]);
       const guests = Number(row[2] || 0);
       const source = String(row[5] || "");
+      const sfExt = isSfExtSource_(source);               // SF valued on its OWN shift
       const paid = PAID_SOURCES_ASSIGN.some(s => s.toLowerCase() === source.toLowerCase());
       const val = (paid ? VALUE_PAID_PER_GUEST : VALUE_FREE_NET_PER_GUEST) * guests;
-      const key = dateKey + "|" + time + "|" + language;
+      const key = dateKey + "|" + time + "|" + language + "|" + (sfExt ? 'SF' : 'R');
       out[key] = (out[key] || 0) + val;
     });
   });
@@ -893,7 +916,7 @@ function setupWeeklySchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('Weekly_Schedule') || ss.insertSheet('Weekly_Schedule');
 
-  const rows = [['Day', 'Time', 'Language', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability', 'Private', 'Hide from website']];
+  const rows = [['Day', 'Time', 'Language', 'Tour Type', 'Guides needed', 'Active from', 'Active until', 'Guide', 'Hide from availability', 'Private', 'Hide from website']];
   // Blank "Active from" = always active (see updateWeeklyScheduleToCurrentOffer).
   // Blank "Guide" (col G) = no recurring default; fill it to auto-assign a guide
   // to that weekly slot every week (a manager can still override a single date).
@@ -905,7 +928,7 @@ function setupWeeklySchedule() {
   // Blank "Hide from website" (col J) = shows on the public website; set TRUE/yes/x
   // to keep it OFF the website while still on the availability sheet + portal.
   // Cols H and J are INDEPENDENT — management controls each surface separately.
-  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, 1, '', '', '', '', '', '']));
+  const add = (days, time, lang) => days.forEach(d => rows.push([d, time, lang, '3h', 1, '', '', '', '', '', '']));
 
   const MTThF = ['Monday', 'Tuesday', 'Thursday', 'Friday'];
   add(MTThF, '11:00', 'English');
@@ -922,14 +945,14 @@ function setupWeeklySchedule() {
   // 17:00, Sat 17:00. To offer a private tour in a specific language, add a row
   // with that Language and Private = yes.
   const MTWThF = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-  const addPriv = (days, time) => days.forEach(d => rows.push([d, time, '', 0, '', '', '', '', 'yes', '']));
+  const addPriv = (days, time) => days.forEach(d => rows.push([d, time, '', '3h', 0, '', '', '', '', 'yes', '']));
   addPriv(MTWThF, '10:00');
   addPriv(MTWThF, '17:00');
   addPriv(['Saturday'], '17:00');
 
   sh.clear();
-  sh.getRange(1, 1, rows.length, 10).setValues(rows);
-  sh.getRange(1, 1, 1, 10).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
+  sh.getRange(1, 1, rows.length, 11).setValues(rows);
+  sh.getRange(1, 1, 1, 11).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
   sh.setFrozenRows(1);
 }
 
@@ -1126,19 +1149,21 @@ function makeOneLanguageScheduleTab_(controlSS, language, shifts) {
    * "10:00 · Private 2", ...) — a private tour is its own shift, never mixed
    * into a regular column. Columns are sorted by time, regular first.
    */
-  const colMap = new Map();   // colId -> {time, isPrivate, index, minutes}
+  const colMap = new Map();   // colId -> {time, isPrivate, index, minutes, isSf}
+  const rank = c => c.isSf ? 2 : (c.isPrivate ? 1 : 0);   // regular, then private, then SF
   shifts.forEach(s => {
     const t = normalizeTime_(s.time);
-    const isPriv = !!s.isPrivate;
+    const isSf = !!s.sfExt;
+    const isPriv = !isSf && !!s.isPrivate;
     const idx = isPriv ? (Number(s.privIndex) || 1) : 1;
-    const colId = isPriv ? t + '|P' + idx : t + '|R';
+    const colId = gridColId_(t, isPriv, idx, isSf);
     if (!colMap.has(colId)) {
-      colMap.set(colId, { time: t, isPrivate: isPriv, index: idx, minutes: timeToMinutes_(t) });
+      colMap.set(colId, { time: t, isPrivate: isPriv, index: idx, isSf: isSf, minutes: timeToMinutes_(t) });
     }
   });
   const cols = [...colMap.entries()]
     .sort((a, b) => a[1].minutes - b[1].minutes ||
-                    (a[1].isPrivate ? 1 : 0) - (b[1].isPrivate ? 1 : 0) ||
+                    rank(a[1]) - rank(b[1]) ||
                     a[1].index - b[1].index);
 
   const dates = [...new Set(shifts.map(s => s.dateText))].sort();   // yyyy-MM-dd
@@ -1148,7 +1173,7 @@ function makeOneLanguageScheduleTab_(controlSS, language, shifts) {
   const cells = {};
   shifts.forEach(shift => {
     const t = normalizeTime_(shift.time);
-    const colId = shift.isPrivate ? t + '|P' + (Number(shift.privIndex) || 1) : t + '|R';
+    const colId = gridColId_(t, !shift.sfExt && shift.isPrivate, Number(shift.privIndex) || 1, !!shift.sfExt);
     const assigned = shift.assignedGuides.join(', ');
     let text = assigned;
     if (shift.status !== 'OK') text = assigned ? `${assigned}\n${shift.status}` : shift.status;
@@ -1166,12 +1191,13 @@ function makeOneLanguageScheduleTab_(controlSS, language, shifts) {
     .setFontWeight('bold').setFontSize(14).setHorizontalAlignment('center')
     .setBackground('#2563eb').setFontColor('#ffffff');
 
-  const headerRow = ['Date'].concat(cols.map(c => gridHeaderForColumn_(c[1].time, c[1].isPrivate, c[1].index)));
+  const headerRow = ['Date'].concat(cols.map(c => gridHeaderForColumn_(c[1].time, c[1].isPrivate, c[1].index, c[1].isSf)));
   sheet.getRange(2, 1, 1, totalCols).setValues([headerRow])
     .setFontWeight('bold').setHorizontalAlignment('center').setBackground('#bfdbfe');
-  // Tint private column headers so they read as their own shifts.
+  // Tint private (amber) and SF (indigo) column headers so they read as their own shifts.
   cols.forEach((c, i) => {
     if (c[1].isPrivate) sheet.getRange(2, i + 2).setBackground('#fde68a');
+    else if (c[1].isSf) sheet.getRange(2, i + 2).setBackground('#c7d2fe');
   });
 
   const table = dates.map(dt => {
@@ -1261,48 +1287,72 @@ function readActiveGuideNames_(ss) {
   return readGuides_(ss).filter(g => g.active).map(g => g.name);
 }
 
+/** Resolve Weekly_Schedule columns BY HEADER NAME (falls back to the legacy fixed
+ *  positions, accounting for whether the "Tour Type" column has been inserted).
+ *  So a manager can add/reorder columns without silently corrupting the reader. */
+function weeklyScheduleCols_(header) {
+  const find = (re, fb) => {
+    for (let i = 0; i < header.length; i++) {
+      if (re.test(String(header[i] || '').toLowerCase().trim())) return i;
+    }
+    return fb;
+  };
+  const tourType = find(/tour\s*type/, -1);
+  const s = tourType > -1 ? 1 : 0;   // legacy layout had no Tour Type column
+  return {
+    day: find(/^day$/, 0), time: find(/^time$/, 1), language: find(/^language$/, 2),
+    tourType: tourType,
+    needed: find(/guides?\s*needed/, 3 + s),
+    from: find(/active\s*from/, 4 + s),
+    until: find(/active\s*unt/, 5 + s),
+    guide: find(/^guide$/, 6 + s),
+    hideAvail: find(/hide.*avail/, 7 + s),
+    private: find(/^private$/, 8 + s),
+    hideWeb: find(/hide.*(web|site)/, 9 + s)
+  };
+}
+
 function readWeeklySchedule_(ss) {
   const sheet = ss.getSheetByName("Weekly_Schedule");
   if (!sheet) throw new Error("Weekly_Schedule tab not found.");
   const values = sheet.getDataRange().getValues();
   const displayValues = sheet.getDataRange().getDisplayValues();
   const rules = [];
+  // Resolve columns BY HEADER NAME (like the Guides tab) so INSERTING a column —
+  // e.g. the new "Tour Type" — never shifts the others out from under the reader.
+  const C = weeklyScheduleCols_(displayValues[0] || []);
   for (let r = 1; r < values.length; r++) {
     const rawRow = values[r], displayRow = displayValues[r];
-    const day = String(displayRow[0] || "").trim();
+    const day = String(displayRow[C.day] || "").trim();
     // Sheets sometimes coerces a "10:00" cell into a Date (epoch 1899, shown
-    // as 12/30/1899). Fall back to the raw Date's hours/minutes so the rule
-    // survives instead of silently disappearing.
-    const time = normalizeTime_(displayRow[1]) || timeFromCellValue_(rawRow[1]);
-    const language = String(displayRow[2] || "").trim();
+    // as 12/30/1899). Fall back to the raw Date's hours/minutes so the rule survives.
+    const time = normalizeTime_(displayRow[C.time]) || timeFromCellValue_(rawRow[C.time]);
+    const language = String(displayRow[C.language] || "").trim();
     // Blank "Guides needed" defaults to 1; an explicit 0 is kept (Private
     // availability slots stage no tour), so never collapse 0 to 1 here.
-    const gnStr = String(displayRow[3] || "").trim();
+    const gnStr = String(displayRow[C.needed] || "").trim();
     const guidesNeeded = gnStr === "" ? 1 : (Number.isFinite(Number(gnStr)) ? Number(gnStr) : 1);
-    // "Private" (col I): a yes/x/TRUE flag, OR the legacy literal "Private" in the
-    // Language cell. A private slot keeps its REAL language (Italian, German, …)
-    // or may be language-agnostic (blank), so private rows are allowed through
-    // even with no Language.
-    const isPrivate = /^(1|true|yes|y|x)$/i.test(String(displayRow[8] || "").trim())
+    // "Private": a yes/x/TRUE flag, OR the legacy literal "Private" in the Language cell.
+    const isPrivate = /^(1|true|yes|y|x)$/i.test(String(C.private > -1 ? displayRow[C.private] : "").trim())
                       || /^private$/i.test(language);
+    // "Tour Type": "3h" (the full tour) or "SF" (Sagrada Família exterior add-on) —
+    // an SF row builds its OWN tour (card/column/guide), never merged with the 3h.
+    const sfExt = C.tourType > -1 && /^\s*sf\b/i.test(String(displayRow[C.tourType] || "").trim());
     if (!day || !time || (!language && !isPrivate)) continue;
     rules.push({
-      day, time, language, guidesNeeded, isPrivate,
-      activeFrom: rawRow[4] ? dateOnly_(new Date(rawRow[4])) : null,
-      activeUntil: rawRow[5] ? dateOnly_(new Date(rawRow[5])) : null,
-      // Optional recurring default guide (col G): who runs this weekly slot unless
-      // a manager overrides that specific date. Read by the portal.
-      guide: String(displayRow[6] || "").trim(),
-      // "Hide from availability" (col H): TRUE/yes/x hides this slot's column from
-      // the guide-availability sheet ONLY. The tour still runs on the website and
-      // shows on the guide portal (buildShifts_ stages it regardless).
-      hideFromAvailability: /^(1|true|yes|y|x|hide)$/i.test(String(displayRow[7] || "").trim()),
-      // "Hide from website" (col J): TRUE/yes/x hides this slot from the PUBLIC
-      // WEBSITE's bookable availability ONLY. Independent of Hide from availability
-      // (col H) and Private (col I) — management controls each surface separately.
-      // The website builder lives in the booking project (websiteAvailabilityUpdate.gs),
-      // which reads this same column; this field mirrors it for the control side.
-      hideFromWebsite: /^(1|true|yes|y|x|hide)$/i.test(String(displayRow[9] || "").trim())
+      day, time, language, guidesNeeded, isPrivate, sfExt,
+      tourName: sfExt ? 'SF' : '3h',
+      activeFrom: (C.from > -1 && rawRow[C.from]) ? dateOnly_(new Date(rawRow[C.from])) : null,
+      activeUntil: (C.until > -1 && rawRow[C.until]) ? dateOnly_(new Date(rawRow[C.until])) : null,
+      // Optional recurring default guide: who runs this weekly slot unless a manager
+      // overrides that date. Read by the portal.
+      guide: String(C.guide > -1 ? displayRow[C.guide] : "").trim(),
+      // "Hide from availability": hides this slot's column from the guide-availability
+      // sheet ONLY. The tour still runs on the website and portal.
+      hideFromAvailability: /^(1|true|yes|y|x|hide)$/i.test(String(C.hideAvail > -1 ? displayRow[C.hideAvail] : "").trim()),
+      // "Hide from website": hides this slot from the PUBLIC website's bookable
+      // availability ONLY. Independent of the other two flags.
+      hideFromWebsite: /^(1|true|yes|y|x|hide)$/i.test(String(C.hideWeb > -1 ? displayRow[C.hideWeb] : "").trim())
     });
   }
   return rules;
@@ -1398,6 +1448,7 @@ function buildShifts_(availability, weeklySchedule, guideCalendar) {
         dateTimeObj: combineDateAndTime_(info.dateObj, rule.time),
         dateText, day: info.day, time: rule.time,
         language: rule.language, guidesNeeded: rule.guidesNeeded,
+        sfExt: !!rule.sfExt,                                 // Tour Type = SF -> its own tour
         availableGuides: availabilityMap[`${dateText}|${info.day}|${rule.time}`] || []
       });
     });

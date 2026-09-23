@@ -235,6 +235,40 @@ apiMoveBookingTime_({ token: token, bookingId: 'B-M3', language: 'English', toTi
 const m3 = anyBk(tours(), 'B-M3');
 check('a moved booking lands in an UNASSIGNED tour (old guide dropped)', m3 && m3.tour.time === '15:00' && (!m3.tour.assigned || m3.tour.assigned.length === 0), m3 && [m3.tour.time, m3.tour.assigned]);
 
+console.log('=== STRESS: SF exterior tour is its OWN shift at a shared slot ===');
+__RRX = {};
+// A Sagrada-exterior (GYG-SF) booking AND a regular 3h booking at the SAME
+// date/time/language must render as TWO distinct cards, each with its own guide,
+// bookings and ledger rate. SF is never merged into the 3h tour.
+feed.getRange(feed.getLastRow() + 1, 1, 2, 16).setValues([
+  [DATE, '3:30 PM', 'English', 'SfGuest', '+1', 2, 0, 'GYG-SF', 16, 'B-SF', 'SF', '', '', '', '', 'booking'],
+  [DATE, '3:30 PM', 'English', 'RegGuest', '+1', 3, 0, 'GetYourGuide', 45, 'B-3H', '', '', '', '', '', 'booking']]);
+__RRX = {}; r = tours();
+const sfCard = (r.allTours || []).find(x => x.dateKey === DATE && x.time === '15:30' && x.sfExt);
+const h3Card = (r.allTours || []).find(x => x.dateKey === DATE && x.time === '15:30' && !x.sfExt && !x.isPrivate);
+check('SF booking makes its OWN card (sfExt=true, tourName SF)', !!sfCard && sfCard.tourName === 'SF', sfCard && [sfCard.sfExt, sfCard.tourName]);
+check('the 3h booking is a SEPARATE card at the same slot (tourName 3h)', !!h3Card && h3Card.tourName === '3h', h3Card && [h3Card.sfExt, h3Card.tourName]);
+check('SF card holds ONLY the SF booking', !!sfCard && sfCard.bookings.length === 1 && sfCard.bookings[0].bookingId === 'B-SF', sfCard && sfCard.bookings.map(b => b.bookingId));
+check('3h card holds ONLY the regular booking', !!h3Card && h3Card.bookings.length === 1 && h3Card.bookings[0].bookingId === 'B-3H', h3Card && h3Card.bookings.map(b => b.bookingId));
+// Each gets its OWN guide (SF -> Carlos, 3h -> Albert) — no cross-assignment.
+apiAssign_({ token: token, dateKey: DATE, time: '15:30', language: 'English', sfExt: '1', guide: 'Carlos', force: '1' });
+apiAssign_({ token: token, dateKey: DATE, time: '15:30', language: 'English', sfExt: '', isPrivate: '', guide: 'Albert', force: '1' });
+__RRX = {}; r = tours();
+const sfCard2 = (r.allTours || []).find(x => x.dateKey === DATE && x.time === '15:30' && x.sfExt);
+const h3Card2 = (r.allTours || []).find(x => x.dateKey === DATE && x.time === '15:30' && !x.sfExt && !x.isPrivate);
+check('SF card is assigned to Carlos', !!sfCard2 && (sfCard2.assigned || []).indexOf('Carlos') !== -1, sfCard2 && sfCard2.assigned);
+check('3h card keeps its OWN guide Albert (SF assign did not bleed over)', !!h3Card2 && (h3Card2.assigned || []).indexOf('Albert') !== -1, h3Card2 && h3Card2.assigned);
+check('the two cards carry DIFFERENT guides at the same slot', !!sfCard2 && !!h3Card2 && (sfCard2.assigned || [])[0] !== (h3Card2.assigned || [])[0], [sfCard2 && sfCard2.assigned, h3Card2 && h3Card2.assigned]);
+// Check-in the SF booking -> ledger Type 'SF Exterior', its OWN rate (3€/pax).
+apiSave_({ token: token, data: JSON.stringify({ dateKey: DATE, time: '15:30', timeLabel: '3:30 PM', language: 'English', guide: 'Carlos',
+  bookings: [{ bookingId: 'B-SF', source: 'GYG-SF', name: 'SfGuest', phone: '+1', guests: 2, children: 0, income: 16, isPrivate: false, checked: true, checkedIn: 2 }] }) });
+const carlosTab = ledger.getSheetByName('Carlos');
+const carlosRows = carlosTab && carlosTab.getLastRow() >= 2 ? carlosTab.getRange(2, 1, carlosTab.getLastRow() - 1, LEDGER_HEADERS.length).getValues() : [];
+const sfLed = carlosRows.find(x => String(x[LEDGER_BOOKINGID_COL]) === 'B-SF');
+check('SF check-in writes a ledger row tagged Type "SF Exterior"', !!sfLed && String(sfLed[13]) === 'SF Exterior', sfLed && sfLed[13]);
+check('SF ledger row carries the SF source (cross-reference)', !!sfLed && String(sfLed[LEDGER_SOURCE_COL]) === 'GYG-SF', sfLed && sfLed[LEDGER_SOURCE_COL]);
+check('SF ledger pays its OWN rate (2 pax x 3€ = 6€ we owe)', !!sfLed && Number(sfLed[10]) === 6, sfLed && sfLed[10]);
+
 console.log('=== STRESS: data-subject access (export) + erasure across all stores ===');
 const exHits = exportClientData('B-M1');
 check('export finds the booking across tabs (feed + Tours)', exHits.length >= 2 && exHits.every(function (h) { return /B-M1/i.test(h.data); }), exHits.map(function (h) { return h.tab; }));
