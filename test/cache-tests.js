@@ -20,14 +20,22 @@ bumpCacheVersion_();
 const c = cachedRead_('x', 60, fn);
 check('bumpCacheVersion_ -> fn runs again, fresh value', calls === 2 && c.v === 2, [calls, c]);
 
-console.log('--- the ledger/feed pattern (key includes feedCacheVersion_) refreshes on a check-in ---');
+console.log('--- the ledger backstop is keyed on the guide set, NOT feedCacheVersion_ ---');
+// The feed is the PRIMARY check-in source; the ledger is only a backstop, and a
+// displayed booking always has a feed row. So a check-in must NOT re-open the
+// ledger file + re-read every guide tab on the next poll (the moment a guide is
+// tapping check-ins). The ledger stays keyed on the guide set + the GLOBAL version
+// (an assign/move, added by cachedRead_) and refreshes on the TTL.
 let lc = 0; const lfn = () => { lc++; return { n: lc }; };
-const lkey = () => 'led:' + feedCacheVersion_() + ':carlos';
+const lkey = () => 'led:carlos';
 cachedRead_(lkey(), 60, lfn); cachedRead_(lkey(), 60, lfn);
 check('repeat poll with no change hits the cache (ledger read skipped)', lc === 1, lc);
-bumpFeedCacheVersion_();                                  // a check-in / undo does this
+bumpFeedCacheVersion_();                                  // a check-in / undo
 cachedRead_(lkey(), 60, lfn);
-check('a check-in (bumpFeedCacheVersion_) refreshes the ledger read', lc === 2, lc);
+check('a check-in does NOT re-open the ledger (feed carries the check-in)', lc === 1, lc);
+bumpCacheVersion_();                                     // an assign/move DOES refresh it
+cachedRead_(lkey(), 60, lfn);
+check('an assign/move refreshes the ledger backstop (global version)', lc === 2, lc);
 
 console.log('--- an oversized value is never cached (stays a live read) ---');
 let big = 0; const bigfn = () => { big++; return { s: 'x'.repeat(96000) }; };
@@ -36,30 +44,32 @@ check('a >95KB value reads live every time (never cached)', big === 2, big);
 
 console.log('--- a DIFFERENT guide set is a different key (reassignment safety) ---');
 let g2 = 0; const g2fn = () => { g2++; return { n: g2 }; };
-cachedRead_('led:' + feedCacheVersion_() + ':setA', 60, g2fn);
-cachedRead_('led:' + feedCacheVersion_() + ':setB', 60, g2fn);
+cachedRead_('led:setA', 60, g2fn);
+cachedRead_('led:setB', 60, g2fn);
 check('a changed guide set misses (reads fresh, not another set\'s check-ins)', g2 === 2, g2);
 
-console.log('--- the ASSEMBLE cache (asm:<feedVer>:<horizon>) skips the rebuild on a warm poll ---');
+console.log('--- the ASSEMBLE cache (asm:<horizon>) skips the rebuild on a warm poll AND across check-ins ---');
 // The assemble phase (buildScheduleFromFeed_ + weekly shifts + defaults + sort) was
 // pure CPU re-run on EVERY poll (1.4-13s), the cause of the multi-minute timeouts.
-// It is now cachedRead_ under the feed version + offer horizon. It MUST invalidate on
-// a check-in (feed) AND on an assign/move/close (global, added inside cachedRead_) so
+// It caches the shift STRUCTURE. A check-in changes only M/N counts (applied
+// per-request from the fresh feed), NOT the structure, so it is NOT keyed on the
+// feed version — a check-in must not rebuild the whole schedule. An assign/move/
+// close bumps the GLOBAL version (added inside cachedRead_) and DOES rebuild it, so
 // it can never serve a stale assignment. Maxim: cannot miss an assignment.
 __mock.PROPS['PORTAL_CACHE_VER'] = '0';
 __mock.PROPS['PORTAL_FEED_VER'] = '0';
 let ab = 0; const abfn = () => { ab++; return { shifts: ab }; };
-const akey = (h) => 'asm:' + feedCacheVersion_() + ':' + h;
+const akey = (h) => 'asm:' + h;
 cachedRead_(akey(90), 60, abfn); cachedRead_(akey(90), 60, abfn);
-check('a warm poll (same feed+horizon) skips the rebuild', ab === 1, ab);
+check('a warm poll (same horizon) skips the rebuild', ab === 1, ab);
+bumpFeedCacheVersion_();                                  // a check-in
+cachedRead_(akey(90), 60, abfn);
+check('a check-in does NOT rebuild the schedule (structure unchanged)', ab === 1, ab);
 bumpCacheVersion_();                                      // an assign / move / close
 cachedRead_(akey(90), 60, abfn);
 check('an assign/move/close rebuilds the schedule (no stale assignment)', ab === 2, ab);
-bumpFeedCacheVersion_();                                  // a check-in
-cachedRead_(akey(90), 60, abfn);
-check('a check-in rebuilds the schedule (feed version in the key)', ab === 3, ab);
 cachedRead_(akey(30), 60, abfn);                          // guide window vs manager window
-check('a different offer horizon is a different key (guide vs manager window)', ab === 4, ab);
+check('a different offer horizon is a different key (guide vs manager window)', ab === 3, ab);
 
 console.log('--- CONFIG reads (guides/closed) survive an assign burst, refresh on a config change ---');
 // Guides + Closed_Shifts don't change on an assign/move/check-in, so they are

@@ -97,6 +97,21 @@ check('a check-in in the ledger but MISSING from the feed still shows (cannot-mi
 // clean up: unassign so later sections start neutral
 apiAssign_({ token: token, dateKey: DATE, time: '10:00', language: 'English', isPrivate: '', guide: '', force: '1' });
 
+console.log('=== STRESS: one multi-guest save mirrors EVERY check-in to the feed (batch write) ===');
+__RRX = {};
+apiSave_({ token: token, data: JSON.stringify({ dateKey: DATE, time: '10:00', timeLabel: '10:00', language: 'English', guide: 'Carlos',
+  bookings: [
+    { bookingId: 'B-A', source: 'GetYourGuide', name: 'Alice', phone: '+1', guests: 2, children: 0, income: 30, isPrivate: false, checked: true, checkedIn: 2 },
+    { bookingId: 'B-B', source: 'Guruwalk', name: 'Bob', phone: '+1', guests: 1, children: 0, income: 6, isPrivate: false, checked: true, checkedIn: 1 }
+  ] }) });
+__RRX = {}; r = tours();
+check('both bookings from ONE save read back checked-in via the feed',
+  (findBk(r, '10:00', 'B-A') || {}).checked === true && (findBk(r, '10:00', 'B-B') || {}).checked === true,
+  [findBk(r, '10:00', 'B-A'), findBk(r, '10:00', 'B-B')]);
+check('the batch keeps each guest\'s own checked-in count',
+  (findBk(r, '10:00', 'B-A') || {}).checkedIn === 2 && (findBk(r, '10:00', 'B-B') || {}).checkedIn === 1,
+  [(findBk(r, '10:00', 'B-A') || {}).checkedIn, (findBk(r, '10:00', 'B-B') || {}).checkedIn]);
+
 console.log('=== STRESS: private vs regular at the same slot ===');
 __RRX = {};
 apiAssign_({ token: token, dateKey: DATE, time: '17:00', language: 'English', isPrivate: '1', guide: 'Albert', force: '1' });

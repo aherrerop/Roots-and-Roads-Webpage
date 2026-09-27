@@ -830,15 +830,17 @@ function apiTours_(p) {
     // expansion + weekly-default overlay + sort is PURE CPU over already-read data,
     // and it re-ran on EVERY poll — 1.4s normally but spiking to 13s+ under Apps
     // Script CPU throttling, which is what produced the multi-minute client
-    // timeouts. It depends only on the feed (its version) and the offer window, so
-    // cache it under those: a warm poll now returns the shifts with no rebuild.
-    // A check-in (feed version) or an assign/move/close (global version, appended
-    // by cachedRead_) invalidates it immediately, so it can never serve a stale
-    // assignment. Bookings + the check-in union are attached per-request below, so
-    // only the shift STRUCTURE is cached. If it ever exceeds the cache cap,
-    // cachedRead_ falls back to a live build — never wrong, just slower that once.
+    // timeouts. It caches the shift STRUCTURE only (which tours exist + who is
+    // assigned); the bookings and the check-in union are attached per-request
+    // below from the FRESH feed read. A check-in changes only M/N counts — NOT the
+    // structure — so we deliberately do NOT key this on feedCacheVersion_: a guide
+    // tapping through check-ins must not rebuild the whole schedule on every tap.
+    // An assign/move/close bumps the GLOBAL version (appended by cachedRead_) and
+    // so still invalidates it immediately — it can never serve a stale assignment.
+    // A new booking at a non-recurring slot appears within the TTL. If the value
+    // ever exceeds the cache cap, cachedRead_ falls back to a live build.
     schedule = _t('assemble', function () {
-      return cachedRead_('asm:' + feedCacheVersion_() + ':' + offerHorizonDays, PORTAL.CACHE_TTL, function () {
+      return cachedRead_('asm:' + offerHorizonDays, PORTAL.CACHE_TTL, function () {
         // Sub-phase timings (only populated on a cold miss — a warm poll skips
         // this whole function) so the Portal Log shows WHICH part of assemble is
         // the cost, not just the total. Keys sort under `assemble` in the detail.
@@ -877,11 +879,17 @@ function apiTours_(p) {
   const ledger = _t('ledger', function () {
     try {
       const guides = guidesForLedger();
-      // Cached under a key that a CHECK-IN (feedCacheVersion_, part of the name)
-      // and a REASSIGNMENT (global version, appended by cachedRead_) both bump — so
-      // the safety net is always fresh after a change, yet repeat polls with no
-      // change skip the read entirely. Short TTL is the final backstop.
-      return cachedRead_('led:' + feedCacheVersion_() + ':' + guides.slice().sort().join(','),
+      // The ledger is only a BACKSTOP: the feed is the primary check-in source
+      // (above), and every DISPLAYED booking has a feed row, so its check-in is
+      // always in the feed. So we deliberately do NOT key this on feedCacheVersion_
+      // — a check-in must not re-open the ledger file (~1s) + re-read every guide's
+      // full-history tab on the very next poll, which is exactly when a guide is
+      // tapping through check-ins and needs the portal fast. It stays keyed on the
+      // guide set + the global version (an assign/move, appended by cachedRead_),
+      // and refreshes on the TTL — the only thing the backstop must catch (a
+      // check-in in the ledger but with no feed row yet) is bounded by that TTL and
+      // also healed by the 5-min feed rebuild.
+      return cachedRead_('led:' + guides.slice().sort().join(','),
                          PORTAL.CACHE_TTL, function () { return readLedgerForGuides_(guides); });
     } catch (e) {
       // A transient ledger read error must NOT crash the poll — degrade to
@@ -1890,9 +1898,11 @@ function apiSave_(p) {
     // this lock: if a guest shows as checked-in in EITHER, they are checked in.
     const at = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm');
     _s('feed', function () {
-      (d.bookings || []).forEach(b => {
-        if (b.checked && b.bookingId) writeFeedCheckin_(b.bookingId, Math.max(0, Number(b.checkedIn || 0)), at);
-      });
+      // ONE read + ONE write for the whole tour's check-ins (was one full feed
+      // read + two cell writes per guest — the biggest cost of a multi-guest save).
+      writeFeedCheckins_((d.bookings || [])
+        .filter(b => b.checked && b.bookingId)
+        .map(b => ({ bookingId: b.bookingId, checkedIn: Math.max(0, Number(b.checkedIn || 0)) })), at);
       return 0;
     });
     _s('flush', function () { SpreadsheetApp.flush(); return 0; });   // commit before returning, so a reload can't read stale
@@ -2366,6 +2376,40 @@ function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
       }
     }
     return false;
+  } catch (e) { return false; }
+}
+
+/**
+ * Mirror MANY check-ins onto the Portal Feed in ONE read + ONE write (the batch
+ * form of writeFeedCheckin_). A tour with 8 checked-in guests used to cost 8 full
+ * feed reads + 16 single-cell writes on every save; this does one read of J..N and
+ * one write of M:N. Same rules: never downgrade a count, keep the FIRST recorded
+ * time. `updates` = [{ bookingId, checkedIn }]; `at` = HH:mm for new check-ins.
+ */
+function writeFeedCheckins_(updates, at) {
+  try {
+    const want = {};
+    (updates || []).forEach(u => { if (u && u.bookingId) want[String(u.bookingId).trim()] = Math.max(0, Number(u.checkedIn || 0)); });
+    if (!Object.keys(want).length) return false;
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const n = sh.getLastRow() - 1;
+    const rng = sh.getRange(2, 10, n, 5).getValues();   // J..N (0=id … 3=M count, 4=N time)
+    let changed = false;
+    for (let i = 0; i < n; i++) {
+      const id = String(rng[i][0] || '').trim();
+      if (!(id in want)) continue;
+      const finalCount = Math.max(Number(rng[i][3] || 0), want[id]);
+      const finalTime = String(rng[i][4] || '').trim() || String(at || '');
+      if (finalCount !== Number(rng[i][3] || 0) || finalTime !== String(rng[i][4] || '').trim()) {
+        rng[i][3] = finalCount; rng[i][4] = finalTime; changed = true;
+      }
+    }
+    if (changed) {
+      sh.getRange(2, 14, n, 1).setNumberFormat('@');                 // N (time) as text
+      sh.getRange(2, 13, n, 2).setValues(rng.map(r => [r[3], r[4]])); // M:N in one write
+    }
+    return true;
   } catch (e) { return false; }
 }
 
