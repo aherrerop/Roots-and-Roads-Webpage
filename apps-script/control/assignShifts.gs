@@ -200,6 +200,14 @@ function makeSchedule() {
     shift.lockedGuides = [];
     lockedNames.forEach(nm => {
       const g = byName[nm.toLowerCase()];
+      // VACATION WINS over a standing lock: a guide pinned to their regular slot
+      // is NOT staffed on a date they are on holiday. Drop the lock for that date
+      // so a substitute is auto-assigned below (PASS 2), and note it so the
+      // manager sees why their usual guide isn't on it.
+      if (g && isGuideOnVacation_(g, shift.dateText)) {
+        (shift.vacationDropped = shift.vacationDropped || []).push(nm);
+        return;
+      }
       const problems = [];
       if (!g) problems.push('not in Guides tab');
       else {
@@ -290,6 +298,8 @@ function makeSchedule() {
       notes: [
         shift.sfExt ? "SF" : "",
         shift.isPrivate ? "Private" : "",
+        (shift.vacationDropped && shift.vacationDropped.length)
+          ? (shift.vacationDropped.join(", ") + " on vacation — restaffed") : "",
         shift.extra ? "Extra tour (not in Weekly_Schedule)" : "",
         shift.lockedGuides.length ? "Locked: " + shift.lockedGuides.join(", ") : "",
         hasConflictFlag ? "LOCK CONFLICT (see Errors tab)" : "",
@@ -300,7 +310,7 @@ function makeSchedule() {
 
   // Keep manager assignments/clears that fall OUTSIDE this run's window, so the
   // grid rewrite below never wipes a tour staffed weeks ahead.
-  preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDate);
+  preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDate, byName);
 
   assignedShifts.sort((a, b) => a.dateTimeObj - b.dateTimeObj || a.language.localeCompare(b.language));
 
@@ -558,7 +568,7 @@ function readClearedSlots_(controlSS) {
  * assignedShifts don't already cover (skipping only PAST dates). They carry their
  * guide + lock marker so the rewrite puts them back exactly, bold and all.
  */
-function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDate) {
+function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDate, byName) {
   const have = {};
   assignedShifts.forEach(s => {
     have[lockKey_(s.dateText, normalizeTime_(s.time), s.language, s.isPrivate, s.privIndex, s.sfExt)] = true;
@@ -575,19 +585,32 @@ function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDat
     const dateObj = dateOnly_(new Date(dateText + 'T12:00:00'));
     if (!dateObj || isNaN(dateObj) || dateObj < startDate) return;   // never resurrect a past assignment
     have[key] = true;
+    // VACATION WINS over a preserved (out-of-window) lock too: drop any pinned
+    // guide who is on holiday that date, so a far-ahead regular tour is never
+    // staffed by someone away. If that empties the slot it shows "Not assigned"
+    // (restaff) — never the vacationing guide.
+    const kept = [], vac = [];
+    (names || []).forEach(nm => {
+      const g = byName && byName[String(nm).toLowerCase()];
+      if (!cleared && g && isGuideOnVacation_(g, dateText)) vac.push(nm); else kept.push(nm);
+    });
+    const noteParts = [];
+    if (cleared) noteParts.push('Cleared by manager');
+    else if (kept.length) noteParts.push('Locked: ' + kept.join(', '));
+    if (vac.length) noteParts.push(vac.join(', ') + ' on vacation — restaff');
     assignedShifts.push({
       week: 'Week ' + getISOWeek_(dateObj),
       dateText: dateText, day: fullDayName_(dateObj), time: time, language: language,
-      guidesNeeded: (names && names.length) ? names.length : 1,
+      guidesNeeded: kept.length ? kept.length : 1,
       isPrivate: isPriv, privIndex: idx, sfExt: isSf, tourName: isSf ? 'SF' : '3h',
       dateTimeObj: combineDateAndTime_(dateObj, time),
       eligibleGuides: [],
-      assignedGuides: (names || []).slice(),
-      lockedGuides: cleared ? [] : (names || []).slice(),   // re-bold the lock; a clear has no name
+      assignedGuides: cleared ? [] : kept.slice(),
+      lockedGuides: cleared ? [] : kept.slice(),   // re-bold the lock; a clear (or a dropped vacation guide) has no name
       hasLockConflict: false,
       cleared: !!cleared,
-      status: cleared ? 'Not assigned (cleared)' : 'OK',
-      notes: cleared ? 'Cleared by manager' : ('Locked: ' + (names || []).join(', '))
+      status: cleared ? 'Not assigned (cleared)' : (kept.length ? 'OK' : 'Not assigned'),
+      notes: noteParts.join(' · ')
     });
   };
   Object.keys(locks || {}).forEach(k => addPreserved(k, locks[k], false));

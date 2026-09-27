@@ -3856,11 +3856,12 @@ function capacityAlerts_() {
   return crossed.length;
 }
 
-/** One full tour, all detail in the subject line. */
+/** One full tour, all detail in the subject line:
+ *  🔴 {language}[ · SF] · {date, no year} {time} · FULL {people}p — close or add 2nd guide */
 function sendCapacityAlertEmail_(g, thresh) {
   const sfTag = g.variant === 'SF' ? ' · SF' : '';
-  const subject = '🔴 FULL ' + g.people + 'p · ' + tourDayLabel_(g.dateKey) + ' ' + g.time + ' ' +
-                  g.language + sfTag + ' — close or add 2nd guide';
+  const subject = '🔴 ' + g.language + sfTag + ' · ' + tourDayLabel_(g.dateKey) + ' ' + g.time +
+                  ' · FULL ' + g.people + 'p — close or add 2nd guide';
   MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: capacityAlertBody_(g, thresh) });
 }
 
@@ -3893,7 +3894,7 @@ function sendCapacityDigestEmail_(list, thresh) {
   const subject = '🔴 ' + list.length + ' tours full (' + thresh + '+) — close or add a 2nd guide';
   const blocks = list.map(g => {
     const sfTag = g.variant === 'SF' ? ' · SF' : '';
-    return '• ' + tourDayLabel_(g.dateKey) + ' ' + g.time + ' ' + g.language + sfTag +
+    return '• ' + g.language + sfTag + ' · ' + tourDayLabel_(g.dateKey) + ' ' + g.time +
            ' — ' + g.people + ' people (' + g.adults + ' + ' + g.children + ' children)' +
            ' — guide: ' + (g.guide || 'none');
   });

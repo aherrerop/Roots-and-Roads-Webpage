@@ -195,6 +195,28 @@ check('a PAST manager assignment is NOT resurrected', !_fS(_past,'10:30','German
 check('an in-window assignment is not duplicated',
   _pShifts.filter(s=>s.dateText===_inwin && s.time==='10:30' && s.language==='English').length===1, _pShifts.length);
 
+console.log('--- makeSchedule: a guide on VACATION is dropped from their preserved regular lock ---');
+const _vFar = _fk(35), _vFar2 = _fk(36);
+const _vd = new Date(_vFar + 'T12:00:00');
+const _vCell = _vd.getDate() + '/' + (_vd.getMonth() + 1);   // the D/M of the locked date
+const _vByName = {
+  polina: { name:'Polina', vacations: parseVacationRanges_(_vCell) },   // Polina IS off that date
+  carlos: { name:'Carlos', vacations: [] }
+};
+const _vShifts = [];
+const _vLocks = {};
+_vLocks[lockKey_(_vFar,  '17:00', 'English', false, 1)] = ['Polina'];   // locked but on vacation -> drop
+_vLocks[lockKey_(_vFar2, '17:00', 'English', false, 1)] = ['Carlos'];   // locked, NOT on vacation -> keep
+preserveManagerGridState_(_vShifts, _vLocks, {}, _today, _vByName);
+const _vf = d => _vShifts.find(s => s.dateText===d && s.time==='17:00' && s.language==='English');
+check('a vacationing guide is DROPPED from their preserved far-future lock',
+  !!_vf(_vFar) && _vf(_vFar).assignedGuides.length===0 && _vf(_vFar).lockedGuides.length===0, _vf(_vFar));
+check('the emptied slot shows "Not assigned" + a restaff note (never miss it)',
+  !!_vf(_vFar) && _vf(_vFar).status==='Not assigned' && /Polina on vacation — restaff/.test(_vf(_vFar).notes),
+  _vf(_vFar) && [_vf(_vFar).status, _vf(_vFar).notes]);
+check('a guide NOT on vacation keeps their preserved lock',
+  !!_vf(_vFar2) && _vf(_vFar2).assignedGuides.join()==='Carlos' && _vf(_vFar2).status==='OK', _vf(_vFar2));
+
 console.log('--- Guide vacations: single dates + ranges, and the usual-guide is not auto-filled ---');
 const _vac = parseVacationRanges_('3/10, 19/10 - 29/10, 21/12 - 26/12 pending');
 check('parses 3 entries (1 single + 2 ranges) from a mixed cell', _vac.length===3, _vac);
