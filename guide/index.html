@@ -242,7 +242,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-23-sf-tour";
+const PORTAL_VERSION = "2026-09-27-3day-window";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -378,7 +378,7 @@ const store = {
   set tab(v){ try{ localStorage.setItem("rr_tab", v||""); }catch(e){} }
 };
 let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
-let HAS_MORE=false, WINDOW_DAYS=7, MANAGER_DAYS=0; const MORE_DAYS=14;   // manager All-tours window
+let HAS_MORE=false, WINDOW_DAYS=3, MANAGER_DAYS=0; const MORE_DAYS=3;   // default load window (both roles); "Load 3 more days"
 let LAST_FRESH="";                                                       // last successful refresh time
 let LOAD_FAILS=0;                        // consecutive failed loads — gates the "can't reach" banner
 let RETRY_TIMER=null;                    // pending soft auto-retry after a miss
@@ -738,7 +738,7 @@ function renderAll(r){
   applyPendingAssigns(r);                // stale reads can never undo your last action
   applyPendingCheckins(r);               // a queued (offline) check-in still shows ✓ ⏳ after a reload
   MANAGER=!!r.manager;
-  HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||7;
+  HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||3;
   GUIDES_BY_LANG=r.guidesByLanguage||{};
   const all=r.allTours||[];
   renderTours(r.tours||[], "toursPane");
@@ -796,13 +796,15 @@ function renderTours(tours, paneId, canAssign){
     dayTimes.sort((a,b)=>_mins(a.time)-_mins(b.time));
     day.items.forEach(t=> html+=tourCard(t, canAssign, dayTimes));
   });
-  // Manager All-tours loads the near window first; "Load more" pulls the next
-  // block of days on demand (far-out tours are costly and rarely needed now).
-  if(canAssign && paneId==="schedPane" && HAS_MORE)
-    html+='<button class="loadmore" id="loadMoreBtn">Load more (next '+MORE_DAYS+' days)</button>';
+  // Both roles load the near window first; "Load more" pulls the next block of
+  // days on demand (a guide's My-tours and the manager's All-tours both stop at
+  // the window, so far-out tours are only built when actually asked for).
+  if(HAS_MORE)
+    html+='<button class="loadmore" id="loadMoreBtn_'+paneId+'">Load '+MORE_DAYS+' more days</button>';
   pane.innerHTML=html;
   bindOpenForm();
-  if(canAssign && paneId==="schedPane"){ const lm=$("loadMoreBtn"); if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||7)+MORE_DAYS; loadTours(); }; }
+  const lm=$("loadMoreBtn_"+paneId);
+  if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
 }
 /* Manager-only: open a brand-new schedule (pick day/date, time, language and,
    optionally, a guide). Reuses the assign action, which creates the grid slot
@@ -1230,7 +1232,10 @@ function renderSchedule(rows){
         '<span class="guides'+(miss?' miss':'')+'">'+who+'</span></div></div>';
     });
   });
+  if(HAS_MORE) html+='<button class="loadmore" id="loadMoreBtn_sched">Load '+MORE_DAYS+' more days</button>';
   pane.innerHTML=html;
+  const lm=$("loadMoreBtn_sched");
+  if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
 }
 
 /* ================== BOOT ================== */

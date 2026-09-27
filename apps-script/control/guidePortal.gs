@@ -125,12 +125,13 @@ const PORTAL = {
   // Show tours from today up to this many days ahead.
   UPCOMING_DAYS: 45,
 
-  // Manager "All tours" loads only the near-term window first (today .. this many
-  // days). Far-out tours (e.g. next month) load on demand via "Load more", which
-  // adds MANAGER_WINDOW_MORE days each tap — they are costly to build and rarely
-  // needed when assigning this week's tours.
-  MANAGER_WINDOW_DAYS: 5,
-  MANAGER_WINDOW_MORE: 14,
+  // DEFAULT load window for EVERYONE (guides + managers): today .. this many days
+  // ahead. Guides used to load the full UPCOMING_DAYS horizon (45 days of their
+  // tours, with every booking's detail) on every load — the biggest avoidable
+  // cost. Now both roles load a small near window and pull further days on demand
+  // via "Load more" (+MANAGER_WINDOW_MORE days each tap).
+  MANAGER_WINDOW_DAYS: 3,
+  MANAGER_WINDOW_MORE: 3,
 
   // A tour stays visible on the portal until this hour (24h) of its own day,
   // so management can check prepaid/free guests after it ran.
@@ -794,8 +795,13 @@ function apiTours_(p) {
   // loads light and stops "Load more" timing out on phones.
   const me = _t('me', function () { return findGuideByName_(name); });
   const isManager = !!(me && me.manager);
+  // BOTH roles load a small near window by default and widen it with "Load more".
+  // (Guides previously loaded the full UPCOMING_DAYS horizon — 45 days of their
+  // own tours with full booking detail — which was the biggest avoidable cost of
+  // a guide load. They now load the same near window; a far-out assignment is one
+  // "Load more" away, never lost.)
   const windowDays = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(p.days) || PORTAL.MANAGER_WINDOW_DAYS));
-  const offerHorizonDays = isManager ? windowDays : PORTAL.UPCOMING_DAYS;
+  const offerHorizonDays = windowDays;
 
   // These cross-file reads are identical for every guide for many seconds, so
   // they are cached (invalidated on any assign/move/note change). This is the
@@ -844,7 +850,7 @@ function apiTours_(p) {
         // Sub-phase timings (only populated on a cold miss — a warm poll skips
         // this whole function) so the Portal Log shows WHICH part of assemble is
         // the cost, not just the total. Keys sort under `assemble` in the detail.
-        const s = _t('asm.build', function () { return buildScheduleFromFeed_(bookingsByKey); });
+        const s = _t('asm.build', function () { return buildScheduleFromFeed_(bookingsByKey, offerHorizonDays); });
         _t('asm.weekly', function () { appendWeeklyScheduleShifts_(s, offerHorizonDays); return 0; });
         _t('asm.def', function () { applyWeeklyDefaults_(s); return 0; });
         _t('asm.sort', function () { sortSchedule_(s); return 0; });
@@ -1039,12 +1045,12 @@ function apiTours_(p) {
   // refresh light — a manager assigning this week does not pay to build next
   // month's tours every 20 seconds. (windowDays computed above with the build.)
   const managerHorizon = addDaysKey_(today, windowDays);
-  // Offer slots are now generated only to windowDays, so "there is more" simply
-  // means the window has not yet reached the full horizon — offer "Load more"
-  // until it does (a wider request regenerates further-out slots + bookings).
-  let hasMore = false;
+  // Both roles load only `windowDays` now, so "there is more" simply means the
+  // window has not yet reached the full horizon — offer "Load more" until it does
+  // (a wider request regenerates further-out slots + bookings). Set for EVERYONE
+  // (a guide's My-tours also stops at the window and gets a "Load more").
+  const hasMore = windowDays < PORTAL.UPCOMING_DAYS;
   if (isManager) _t('mgrTours', function () {
-    hasMore = windowDays < PORTAL.UPCOMING_DAYS;
     // Check-ins come from the targeted ledger read above, so a check-in shows no
     // matter which assigned guide on the tour tapped it.
     // One busy map for the whole schedule -> per-guide availability dots in the
@@ -2958,9 +2964,12 @@ function sortSchedule_(s) {
  * carry. Windowed to the same upcoming range the portal shows. Assignments made
  * via the grid (makeSchedule / manual) reach here through syncFeedGuides_.
  */
-function buildScheduleFromFeed_(feedIndex) {
+function buildScheduleFromFeed_(feedIndex, maxDaysAhead) {
   const today = todayKey_();
-  const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
+  // Window the build to the load's window (default 3 days) so a guide's tours and
+  // the manager's All-tours are only assembled + serialized for the days shown.
+  const days = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(maxDaysAhead) || PORTAL.UPCOMING_DAYS));
+  const maxKey = addDaysKey_(today, days);
   const byKey = {};
   Object.keys(feedIndex).forEach(sk => {
     const parts = sk.split('|');

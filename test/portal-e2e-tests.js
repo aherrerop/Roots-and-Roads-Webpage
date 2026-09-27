@@ -152,9 +152,9 @@ console.log('--- Manager window: near tours load first, far tours behind "Load m
 const FAR = dayKey(40);
 en.getRange(4, 1, 1, 9).setValues([
   ['Far Future', '+34600555000', 2, new Date(FAR + 'T12:00:00'), '10:00 AM', 'GetYourGuide', 30, 'GYGE2EFAR', '']]);
-const rw = apiTours_({ token: token });                       // default 7-day window
+const rw = apiTours_({ token: token });                       // default near window
 check('response carries a freshness timestamp (HH:mm:ss)', /^\d{1,2}:\d{2}:\d{2}$/.test(rw.now || ''), rw.now);
-check('default manager window is 5 days', rw.windowDays === 5, rw.windowDays);
+check('default load window is 3 days (both roles)', rw.windowDays === 3, rw.windowDays);
 check('a 40-day-out tour is NOT in the default window', !(rw.allTours || []).some(s => s.dateKey === FAR), FAR);
 check('hasMore flags there are tours beyond the window', rw.hasMore === true, rw.hasMore);
 const rw2 = apiTours_({ token: token, days: 45 });            // "Load more"
