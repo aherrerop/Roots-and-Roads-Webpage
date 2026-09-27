@@ -91,6 +91,14 @@ const PORTAL = {
   LEDGER_FOLDER_ID: '1AkSO3hS5aoUP8vZXXIBKCjQrhmavUz5j',
   LEDGER_NAME: 'Guide_Ledger_v1',
 
+  // Ledger "time machine": dated copies of the whole ledger file kept in a
+  // "Ledger Backups" subfolder, so a corrupted/mis-edited ledger can be rolled
+  // back to any point. Weekly points cover recent recovery; monthly points are
+  // the long archive. (installLedgerBackupTriggers sets the schedule.)
+  LEDGER_BACKUP_FOLDER: 'Ledger Backups',
+  LEDGER_BACKUP_KEEP_WEEKLY: 12,     // ~3 months of weekly restore points
+  LEDGER_BACKUP_KEEP_MONTHLY: 24,    // 2 years of monthly restore points
+
   // Secret used to sign login tokens. CHANGE THIS to any long random string once.
   TOKEN_SECRET: 'CHANGE_ME_to_a_long_random_string',
   TOKEN_TTL_HOURS: 720,   // 30 days — guides stay logged in on their phones
@@ -3090,6 +3098,112 @@ function seedRatesTab_(ss) {
   const s1 = ss.getSheetByName('Sheet1');
   if (s1 && ss.getSheets().length > 1) ss.deleteSheet(s1);
 }
+
+
+/******************************************************
+ * 6b. LEDGER BACKUPS  ("time machine": dated copies you can restore from)
+ *
+ * The ledger holds the money + check-in history — the ONE store that cannot be
+ * rebuilt from Gmail (recoverMissingBookings rebuilds bookings, not the ledger).
+ * So we keep dated COPIES of the whole file in a "Ledger Backups" subfolder: a
+ * corrupted or mis-edited ledger can be rolled back to any weekly/monthly point.
+ * No emails; just Drive copies.
+ *
+ * SET UP: run  installLedgerBackupTriggers  ONCE from the editor.
+ * SEE POINTS: run  listLedgerBackups  (logs name/date/id/link, newest first).
+ * ROLL BACK: run  restoreLedgerFromBackup('<id from the list>')  — non-destructive.
+ ******************************************************/
+
+/** Manual snapshot — run anytime from the editor. Returns the copy's URL. */
+function backupLedgerNow() { return snapshotLedger_('manual'); }
+
+/** Scheduled snapshots (installLedgerBackupTriggers). Never throw. */
+function backupLedgerWeekly() {
+  try { snapshotLedger_('weekly'); pruneLedgerBackups_('weekly', PORTAL.LEDGER_BACKUP_KEEP_WEEKLY); }
+  catch (e) { console.log('backupLedgerWeekly error (swallowed): ' + e); }
+}
+function backupLedgerMonthly() {
+  try { snapshotLedger_('monthly'); pruneLedgerBackups_('monthly', PORTAL.LEDGER_BACKUP_KEEP_MONTHLY); }
+  catch (e) { console.log('backupLedgerMonthly error (swallowed): ' + e); }
+}
+
+/** Copy the whole live ledger file into the Backups folder, dated + tagged. */
+function snapshotLedger_(tag) {
+  const id = PropertiesService.getScriptProperties().getProperty('LEDGER_ID');
+  if (!id) throw new Error('No LEDGER_ID yet — run setupLedger first.');
+  const file = DriveApp.getFileById(id);
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd_HHmm');
+  const name = PORTAL.LEDGER_NAME + ' — backup — ' + tag + ' — ' + stamp;
+  const copy = file.makeCopy(name, ledgerBackupFolder_());
+  return copy.getUrl();
+}
+
+/** The "Ledger Backups" subfolder inside the Guide Management folder (made once). */
+function ledgerBackupFolder_() {
+  const parent = DriveApp.getFolderById(PORTAL.LEDGER_FOLDER_ID);
+  const it = parent.getFoldersByName(PORTAL.LEDGER_BACKUP_FOLDER);
+  return it.hasNext() ? it.next() : parent.createFolder(PORTAL.LEDGER_BACKUP_FOLDER);
+}
+
+/** Keep only the newest `keep` backups of a given tag; trash the rest. (Drive
+ *  trash is itself recoverable for ~30 days, so pruning is doubly safe.) */
+function pruneLedgerBackups_(tag, keep) {
+  const marker = '— backup — ' + tag + ' —';
+  const files = [];
+  const it = ledgerBackupFolder_().getFiles();
+  while (it.hasNext()) { const f = it.next(); if (f.getName().indexOf(marker) !== -1) files.push(f); }
+  files.sort((a, b) => b.getDateCreated().getTime() - a.getDateCreated().getTime());
+  files.slice(Math.max(0, Number(keep) || 0)).forEach(f => { try { f.setTrashed(true); } catch (e) {} });
+}
+
+/** List restore points (newest first): logs date / id / name, and returns them. */
+function listLedgerBackups() {
+  const out = [];
+  const it = ledgerBackupFolder_().getFiles();
+  while (it.hasNext()) { const f = it.next(); out.push({ id: f.getId(), name: f.getName(), created: f.getDateCreated(), url: f.getUrl() }); }
+  out.sort((a, b) => b.created.getTime() - a.created.getTime());
+  out.forEach(b => console.log(
+    Utilities.formatDate(b.created, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') + '  ' + b.id + '  ' + b.name));
+  return out;
+}
+
+/**
+ * ROLL BACK the live ledger to a chosen backup — NON-DESTRUCTIVE. Makes a fresh
+ * working copy of the backup and repoints the system (LEDGER_ID) at it; the
+ * previously-live (possibly corrupted) ledger is LEFT UNTOUCHED in Drive so you
+ * can still inspect it. Get the id from listLedgerBackups(). Editor-only, manual.
+ */
+function restoreLedgerFromBackup(backupId) {
+  if (!backupId) throw new Error('Pass a backup file id from listLedgerBackups().');
+  const backup = DriveApp.getFileById(backupId);
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd_HHmm');
+  const restored = backup.makeCopy(PORTAL.LEDGER_NAME + ' (restored ' + stamp + ')',
+                                   DriveApp.getFolderById(PORTAL.LEDGER_FOLDER_ID));
+  const props = PropertiesService.getScriptProperties();
+  const prevId = props.getProperty('LEDGER_ID');
+  props.setProperty('LEDGER_ID', restored.getId());
+  const msg = 'Restored from backup. LIVE ledger is now: ' + restored.getUrl() +
+              '  — the previous ledger (id ' + prevId + ') was left untouched in Drive.';
+  console.log(msg);
+  return msg;
+}
+
+/**
+ * Install the backup schedule — run ONCE from the editor. Weekly (Sun ~03:00) +
+ * monthly (1st ~03:00, BEFORE the ~04:00 data-retention purge, so a monthly
+ * snapshot always captures the pre-purge history). Takes one snapshot right now.
+ */
+function installLedgerBackupTriggers() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    const f = t.getHandlerFunction();
+    if (f === 'backupLedgerWeekly' || f === 'backupLedgerMonthly') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('backupLedgerWeekly').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(3).create();
+  ScriptApp.newTrigger('backupLedgerMonthly').timeBased().onMonthDay(1).atHour(3).create();
+  const url = snapshotLedger_('manual');
+  return 'Ledger backups installed: weekly (Sun ~03:00) + monthly (1st ~03:00). First snapshot: ' + url;
+}
+
 
 function readRates_() {
   const ss = ledgerSS_();
