@@ -883,6 +883,12 @@ function apiTours_(p) {
     return Object.keys(g);
   };
   const ledger = _t('ledger', function () {
+    // GUIDES go FEED-ONLY: a guide only ever sees their own tours, every one of
+    // which has a feed row, so the feed already carries all their check-ins — the
+    // ledger union would add nothing but costs a ~1s ledger-file open on every
+    // cold load (exactly when a guide reloads before / during a tour). Skip it for
+    // guides; the MANAGER cross-guide view keeps the ledger backstop.
+    if (!isManager) return { checkins: {}, reservations: {} };
     try {
       const guides = guidesForLedger();
       // The ledger is only a BACKSTOP: the feed is the primary check-in source
