@@ -241,6 +241,23 @@ __RRX.weekly = [{ day:'Sunday', time:'10:30', language:'English', guidesNeeded:1
 check('weeklyDefaultGuide_: usual guide is NOT auto-filled on their vacation Sunday', weeklyDefaultGuide_(_vKey(_vSunA),'10:30','English')==='', weeklyDefaultGuide_(_vKey(_vSunA),'10:30','English'));
 check('weeklyDefaultGuide_: usual guide IS filled on a Sunday they are not off', weeklyDefaultGuide_(_vKey(_vSunB),'10:30','English')==='Polina', weeklyDefaultGuide_(_vKey(_vSunB),'10:30','English'));
 
+console.log('--- Private weekly defaults: English 10:30 private = Carlos, 15:30 private = Albert (the OTHER guide) ---');
+const _pMon = (function(){ const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()+7); while(d.getDay()!==1) d.setDate(d.getDate()+1); return d; })();
+const _pKey = Utilities.formatDate(_pMon, Session.getScriptTimeZone(),'yyyy-MM-dd');
+__RRX = {};
+__RRX.guidesRaw = { header: ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Manager','Email','Password','Vacation dates'],
+  rows: [['Albert', true, 2, true, false, false, false, false, true, 'a@x.com','pw',''],
+         ['Carlos', true, 1, true, false, false, false, false, false, 'c@x.com','pw','']] };
+__RRX.weekly = [
+  { day:'Monday', time:'10:30', language:'English', guidesNeeded:1, isPrivate:false, activeFrom:null, activeUntil:null, guide:'Albert', hideFromAvailability:false, hideFromWebsite:false },
+  { day:'Monday', time:'15:30', language:'English', guidesNeeded:1, isPrivate:false, activeFrom:null, activeUntil:null, guide:'Carlos', hideFromAvailability:false, hideFromWebsite:false },
+  { day:'Monday', time:'10:30', language:'English', guidesNeeded:1, isPrivate:true,  activeFrom:null, activeUntil:null, guide:'Carlos', hideFromAvailability:true,  hideFromWebsite:true },
+  { day:'Monday', time:'15:30', language:'English', guidesNeeded:1, isPrivate:true,  activeFrom:null, activeUntil:null, guide:'Albert', hideFromAvailability:true,  hideFromWebsite:true }];
+check('private 10:30 takes the PRIVATE rule guide (Carlos)', weeklyDefaultGuide_(_pKey,'10:30','English',false,true)==='Carlos', weeklyDefaultGuide_(_pKey,'10:30','English',false,true));
+check('private 15:30 takes the PRIVATE rule guide (Albert)', weeklyDefaultGuide_(_pKey,'15:30','English',false,true)==='Albert', weeklyDefaultGuide_(_pKey,'15:30','English',false,true));
+check('regular 10:30 takes the REGULAR guide (Albert), NOT the private Carlos', weeklyDefaultGuide_(_pKey,'10:30','English',false,false)==='Albert', weeklyDefaultGuide_(_pKey,'10:30','English',false,false));
+check('regular default is unchanged when isPrivate omitted (back-compat)', weeklyDefaultGuide_(_pKey,'15:30','English')==='Carlos', weeklyDefaultGuide_(_pKey,'15:30','English'));
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

@@ -131,6 +131,19 @@ check('private + regular check-ins land in different guide tabs (no wipe)',
   Object.keys(ledA).length >= 0 && Object.keys(readLedgerForGuides_(['Albert']).checkins).some(k => k.indexOf('B-P') !== -1) &&
   Object.keys(readLedgerForGuides_(['Carlos']).checkins).some(k => k.indexOf('B-R') !== -1), null);
 
+console.log('=== STRESS: a PRIVATE card only shows when someone is signed up ===');
+__RRX = {};
+// A private guide pre-assigned to an EMPTY slot (no private booking) must NOT
+// surface a card — private tours appear only once booked.
+apiAssign_({ token: token, dateKey: DATE, time: '12:00', language: 'English', isPrivate: '1', guide: 'Albert', force: '1' });
+__RRX = {}; r = tours();
+check('an empty private slot (assigned, no booking) shows NO card',
+  !(r.allTours || []).some(x => x.dateKey === DATE && x.time === '12:00' && x.isPrivate), null);
+// The regular 17:00 private DOES show (B-P is a real private booking).
+check('a private slot WITH a booking still shows', (r.allTours || []).some(x => x.dateKey === DATE && x.time === '17:00' && x.isPrivate), null);
+apiAssign_({ token: token, dateKey: DATE, time: '12:00', language: 'English', isPrivate: '1', guide: '', force: '1' });   // cleanup
+PropertiesService.getScriptProperties().deleteProperty('PORTAL_CLEARED_SLOTS');
+
 console.log('=== STRESS: malformed feed rows must not crash the read ===');
 __RRX = {};
 feed.getRange(6, 1, 3, 16).setValues([

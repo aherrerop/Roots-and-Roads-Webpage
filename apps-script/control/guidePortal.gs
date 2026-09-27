@@ -952,6 +952,13 @@ function apiTours_(p) {
       bookingsForShift_(bookingsByKey, s).length > 0);        // closed but has a real booking -> resurface
   });
 
+  // PRIVATE tours only appear once someone is SIGNED UP: a private slot is never a
+  // standing "empty card" (a manager may pre-assign the private guide, but the card
+  // stays hidden until a real private booking exists). Regular/SF tours are
+  // unaffected. Maxim: cannot miss a booking — a private card with a booking always
+  // shows.
+  schedule = schedule.filter(s => !s.private || bookingsForShift_(bookingsByKey, s).length > 0);
+
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
   const tours = _t('mine', function () { return mine.map(shift => {
@@ -2729,7 +2736,7 @@ function syncFeedGuides_() {
     const priv = !isSf && /privat/i.test(String(meta[i][10] || ''));
     const k = shiftKey_(dateKey, minutes, language) + (isSf ? '|SF' : (priv ? '|P' : '|R'));
     let want = byKey[k];
-    if (want == null) want = priv ? '' : weeklyDefaultGuide_(dateKey, normTime24_(meta[i][1]), language, isSf);
+    if (want == null) want = weeklyDefaultGuide_(dateKey, normTime24_(meta[i][1]), language, isSf, priv);
     if (String(col[i][0] || '') !== String(want || '')) { col[i][0] = want || ''; changed++; }
   }
   if (changed) sh.getRange(2, 15, n, 1).setValues(col);
@@ -2874,7 +2881,7 @@ function weeklyRules_() {
  * the grid cell, else this weekly default. Respects the rule's active window and
  * requires the guide to be active and to actually speak the language.
  */
-function weeklyDefaultGuide_(dateKey, time, language, isSf) {
+function weeklyDefaultGuide_(dateKey, time, language, isSf, isPrivate) {
   const rules = weeklyRules_();
   if (!rules.length || !dateKey) return '';
   const day = dayNameFromKey_(dateKey).toLowerCase();
@@ -2882,7 +2889,7 @@ function weeklyDefaultGuide_(dateKey, time, language, isSf) {
   const langL = String(language || '').toLowerCase();
   for (const r of rules) {
     if (!r.guide) continue;
-    if (r.isPrivate) continue;                 // defaults are for regular slots
+    if (!!r.isPrivate !== !!isPrivate) continue;  // a Private rule staffs only private shifts, and vice versa
     if (!!r.sfExt !== !!isSf) continue;        // an SF rule staffs only SF shifts, and vice versa
     if (String(r.day).toLowerCase() !== day) continue;
     if (String(r.language).toLowerCase() !== langL) continue;
@@ -2951,10 +2958,13 @@ function applyWeeklyDefaults_(schedule) {
     (busy[nk] = busy[nk] || []).push({ ms: shiftStartMs_(dateKey, minutes), k: shiftKeyFull_(s) });
   };
   schedule.forEach(s => {
-    if (s.private) return;                              // defaults are for regular slots
+    // Private tours ALSO take a weekly default now (a Private row in Weekly_Schedule
+    // names the guide who runs the private at that slot — e.g. English 10:30 private
+    // = Carlos, 15:30 private = Albert). It only fills a private card that already
+    // exists (i.e. has a booking); it never creates one.
     if (s.cleared) return;                              // manager explicitly cleared -> stays empty ("my clear wins")
     if (s.assigned && s.assigned.length) return;        // a real assignment always wins
-    const guide = weeklyDefaultGuide_(s.dateKey, s.time, s.language, s.sfExt);
+    const guide = weeklyDefaultGuide_(s.dateKey, s.time, s.language, s.sfExt, s.private);
     if (!guide) return;
     const st = shiftStartMs_(s.dateKey, s.minutes);
     const gb = busy[guide.trim().toLowerCase()] || [];
@@ -4570,7 +4580,7 @@ function guideForShift_(schedule, dateKey, time, language, isPrivate, isSf) {
   // tour staffed only by the weekly pattern (e.g. the weekday English slots that
   // are never hand-assigned) would show blank here and get mis-flagged as
   // "ran with no guide". Private shifts have no weekly default.
-  return isPrivate ? '' : weeklyDefaultGuide_(dateKey, time, language, isSf);
+  return weeklyDefaultGuide_(dateKey, time, language, isSf, isPrivate);
 }
 
 function updateNoShowQueues_() {
