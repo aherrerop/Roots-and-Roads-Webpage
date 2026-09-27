@@ -166,6 +166,9 @@ check('an inactive guide is rejected', inactive && inactive.ok === false, inacti
 
 console.log('=== STRESS: a weekly default must NOT block reassigning that guide (flexibility) ===');
 __RRX = {};
+// 10:00 English was unassigned (cleared) earlier as cleanup; reset the cleared
+// marker so it is a NEUTRAL slot for the default test below.
+PropertiesService.getScriptProperties().deleteProperty('PORTAL_CLEARED_SLOTS');
 // Albert is the weekly default for 10:00 English on DATE's weekday.
 control.getSheetByName('Weekly_Schedule').getRange(2, 1, 1, 7).setValues([[dayNameFromKey_(DATE), '10:00', 'English', 1, '', '', 'Albert']]);
 __RRX = {}; let rw = tours();
@@ -180,6 +183,22 @@ s10 = (rw.allTours || []).find(x => x.dateKey === DATE && x.time === '10:00' && 
 const s11 = (rw.allTours || []).find(x => x.dateKey === DATE && x.time === '11:00' && x.language === 'English');
 check('Albert is really assigned to 11:00', s11 && (s11.assigned || []).indexOf('Albert') !== -1, s11 && s11.assigned);
 check('the 10:00 default YIELDS to his real 11:00 (no double-book)', s10 && (s10.assigned || []).indexOf('Albert') === -1, s10 && s10.assigned);
+
+console.log('=== STRESS: a manager "Not assigned" STICKS over a weekly default (unassign sticks) ===');
+// Now that 10:00 English has a weekly default (Albert), an explicit clear must
+// still win — the feed path must not silently re-fill it. (This is the regression
+// fix: manager clears are recorded and overlaid before applyWeeklyDefaults_.)
+apiAssign_({ token: token, dateKey: DATE, time: '10:00', language: 'English', isPrivate: '', guide: '', force: '1' });
+__RRX = {}; rw = tours();
+s10 = (rw.allTours || []).find(x => x.dateKey === DATE && x.time === '10:00' && x.language === 'English' && !x.isPrivate);
+check('a cleared 10:00 stays Not assigned DESPITE the weekly default', s10 && (s10.assigned || []).length === 0, s10 && s10.assigned);
+apiAssign_({ token: token, dateKey: DATE, time: '10:00', language: 'English', isPrivate: '', guide: 'Albert', force: '1' });
+__RRX = {}; rw = tours();
+s10 = (rw.allTours || []).find(x => x.dateKey === DATE && x.time === '10:00' && x.language === 'English' && !x.isPrivate);
+check('re-assigning drops the clear (slot holds a guide again)', s10 && (s10.assigned || []).indexOf('Albert') !== -1, s10 && s10.assigned);
+// reset for the following sections
+apiAssign_({ token: token, dateKey: DATE, time: '10:00', language: 'English', isPrivate: '', guide: '', force: '1' });
+PropertiesService.getScriptProperties().deleteProperty('PORTAL_CLEARED_SLOTS');
 
 console.log('=== STRESS: a 0-guest check-in flags a PAID tour as a no-show (do not miss reporting) ===');
 __RRX = {};

@@ -860,6 +860,7 @@ function apiTours_(p) {
         // the cost, not just the total. Keys sort under `assemble` in the detail.
         const s = _t('asm.build', function () { return buildScheduleFromFeed_(bookingsByKey, offerHorizonDays); });
         _t('asm.weekly', function () { appendWeeklyScheduleShifts_(s, offerHorizonDays); return 0; });
+        _t('asm.cleared', function () { applyClearedOverlay_(s); return 0; });   // manager clears survive the feed path
         _t('asm.def', function () { applyWeeklyDefaults_(s); return 0; });
         _t('asm.sort', function () { sortSchedule_(s); return 0; });
         return s;
@@ -870,6 +871,7 @@ function apiTours_(p) {
     _t('assemble', function () {
       appendOrphanBookingShifts_(schedule, bookingsByKey);
       appendWeeklyScheduleShifts_(schedule, offerHorizonDays);
+      applyClearedOverlay_(schedule);
       applyWeeklyDefaults_(schedule);
       sortSchedule_(schedule);
       return 0;
@@ -1455,6 +1457,11 @@ function apiAssign_(p) {
         removeFeedShiftRow_(dateKey, time, language, isPriv, isSf);
       }
       bumpFeedCacheVersion_();
+    }
+    // Record/clear the manager's explicit "Not assigned" so it survives the feed
+    // path (the feed carries no "(cleared)" marker). Empty guide => cleared.
+    if (out && out.ok) {
+      setClearedSlot_(shiftKey_(dateKey, timeToMinutes_(time), language) + '|' + variantKey_(isSf, isPriv, privIndex), !guide);
     }
     SpreadsheetApp.flush();   // commit before returning, so the phone's next read is guaranteed fresh
     bumpCacheVersion_();      // the schedule changed -> next read must not serve a cached grid
@@ -2890,6 +2897,44 @@ function weeklyDefaultGuide_(dateKey, time, language, isSf) {
     return (g && g.active && g.languages[language] === true) ? r.guide : '';
   }
   return '';
+}
+
+/* Manager "Not assigned" clears that must survive the FEED path. The grid marks a
+ * clear as "Not assigned (cleared)" (readSchedule_ reads it), but the portal now
+ * builds from the FEED, which carries no such marker — so once a Weekly_Schedule
+ * default guide exists for a slot, applyWeeklyDefaults_ would re-fill a slot the
+ * manager explicitly cleared. We therefore ALSO record each clear in a Script
+ * Property keyed by shiftKeyFull_, and overlay it before defaults run. apiAssign_
+ * adds the key on a clear and drops it on a real assignment. */
+function clearedSlotsSet_() {
+  if (typeof __RRX !== 'undefined' && __RRX && __RRX.clearedSet) return __RRX.clearedSet;
+  let o = {};
+  try { o = JSON.parse(PropertiesService.getScriptProperties().getProperty('PORTAL_CLEARED_SLOTS') || '{}') || {}; }
+  catch (e) { o = {}; }
+  if (!o || typeof o !== 'object') o = {};
+  if (typeof __RRX !== 'undefined' && __RRX) __RRX.clearedSet = o;
+  return o;
+}
+function setClearedSlot_(key, cleared) {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    let o = {}; try { o = JSON.parse(p.getProperty('PORTAL_CLEARED_SLOTS') || '{}') || {}; } catch (e) { o = {}; }
+    if (!o || typeof o !== 'object') o = {};
+    const today = todayKey_();
+    Object.keys(o).forEach(k => { if (String(k).split('|')[0] < today) delete o[k]; });   // prune past
+    if (cleared) o[key] = 1; else delete o[key];
+    p.setProperty('PORTAL_CLEARED_SLOTS', JSON.stringify(o));
+    if (typeof __RRX !== 'undefined' && __RRX) __RRX.clearedSet = o;
+  } catch (e) { /* best-effort; a missed write only means the clear may re-fill until re-cleared */ }
+}
+/** Mark every shift the manager explicitly cleared so applyWeeklyDefaults_ leaves
+ *  it "Not assigned" instead of re-filling it with the Weekly_Schedule default. */
+function applyClearedOverlay_(schedule) {
+  const set = clearedSlotsSet_();
+  if (!set || !Object.keys(set).length) return;
+  schedule.forEach(s => {
+    if (set[shiftKeyFull_(s)] && !(s.assigned && s.assigned.length)) { s.cleared = true; s.status = 'Not assigned'; }
+  });
 }
 
 function applyWeeklyDefaults_(schedule) {
