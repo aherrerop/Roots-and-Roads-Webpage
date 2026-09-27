@@ -258,6 +258,15 @@ check('private 15:30 takes the PRIVATE rule guide (Albert)', weeklyDefaultGuide_
 check('regular 10:30 takes the REGULAR guide (Albert), NOT the private Carlos', weeklyDefaultGuide_(_pKey,'10:30','English',false,false)==='Albert', weeklyDefaultGuide_(_pKey,'10:30','English',false,false));
 check('regular default is unchanged when isPrivate omitted (back-compat)', weeklyDefaultGuide_(_pKey,'15:30','English')==='Carlos', weeklyDefaultGuide_(_pKey,'15:30','English'));
 
+console.log('--- Auto-scheduling master switch (Control tab) ---');
+PropertiesService.getScriptProperties().deleteProperty('AUTO_SCHEDULE');
+check('auto-scheduling defaults ON', autoScheduleEnabled_()===true, null);
+setAutoScheduling(false);
+check('turning it OFF sticks', autoScheduleEnabled_()===false, null);
+setAutoScheduling(true);
+check('turning it back ON sticks', autoScheduleEnabled_()===true, null);
+PropertiesService.getScriptProperties().deleteProperty('AUTO_SCHEDULE');
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

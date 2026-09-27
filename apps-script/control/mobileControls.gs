@@ -50,9 +50,16 @@ function mcActions_() {
     { label: 'Generate schedules', fn: makeSchedule },
     { label: 'Refresh ledger & queues', fn: updateManagementQueues },
     { label: 'Weekly full run (avail + schedule + email)', fn: runWeeklyScheduling },
-    { label: 'Full operational refresh', fn: mcFullRefresh_ }
+    { label: 'Full operational refresh', fn: mcFullRefresh_ },
+    { label: 'Automatic scheduling: turn ON', fn: mcAutoSchedulingOn_ },
+    { label: 'Automatic scheduling: turn OFF (manual only)', fn: mcAutoSchedulingOff_ }
   ];
 }
+
+/** Tick to flip the availability-based auto-assignment master switch. The current
+ *  state is shown in the SYSTEM HEALTH block below (updateControlHealth_). */
+function mcAutoSchedulingOn_()  { setAutoScheduling(true);  updateControlHealth_(); }
+function mcAutoSchedulingOff_() { setAutoScheduling(false); updateControlHealth_(); }
 
 /**
  * Full refresh that stays inside execution limits: booking update runs

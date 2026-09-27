@@ -4772,8 +4772,11 @@ function updateControlHealth_() {
       }
     } catch (e) { /* leave 0 */ }
 
+    let autoSched = 'ON';
+    try { autoSched = (String(props.getProperty('AUTO_SCHEDULE') || 'ON').toUpperCase() === 'OFF') ? 'OFF (manual only)' : 'ON'; } catch (e) {}
     const rows = [
       ['SYSTEM HEALTH', 'Updated ' + Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm')],
+      ['Automatic scheduling', autoSched],
       ['Booking system last run', bookingBeat],
       ['Last schedule generation', props.getProperty('HB_SCHEDULE') || '(never)'],
       ['Last queue/ledger refresh', props.getProperty('HB_QUEUES') || '(never)'],

@@ -123,6 +123,27 @@ const VALUE_PRIVATE_FLAT = ASSIGN_CFG.VALUE_PRIVATE_FLAT;
 const PAID_SOURCES_ASSIGN = ASSIGN_CFG.PAID_SOURCES;
 
 
+/**
+ * Master switch for makeSchedule's AVAILABILITY-BASED auto-assignment. Managers
+ * flip it from the Control tab (the "Automatic scheduling: ON/OFF" rows) or by
+ * running setAutoScheduling(true/false). Default ON. When OFF, makeSchedule seats
+ * only manager LOCKS; the portal's weekly defaults (regular + private) still fill
+ * the display, so nobody is auto-picked from availability.
+ */
+function autoScheduleEnabled_() {
+  try {
+    const v = PropertiesService.getScriptProperties().getProperty('AUTO_SCHEDULE');
+    return String(v == null ? 'ON' : v).trim().toUpperCase() !== 'OFF';
+  } catch (e) { return true; }
+}
+function setAutoScheduling(on) {
+  try { PropertiesService.getScriptProperties().setProperty('AUTO_SCHEDULE', on ? 'ON' : 'OFF'); } catch (e) {}
+  return 'Automatic scheduling is now ' + (on ? 'ON' : 'OFF') + '.';
+}
+function enableAutoScheduling()  { return setAutoScheduling(true); }
+function disableAutoScheduling() { return setAutoScheduling(false); }
+
+
 function makeSchedule() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
@@ -239,7 +260,8 @@ function makeSchedule() {
     });
   });
 
-  // PASS 2 — auto-assign the remaining seats.
+  // PASS 2 — auto-assign the remaining seats (availability-based).
+  const autoOn = autoScheduleEnabled_();   // Control-tab master switch (default ON)
   const assignedShifts = [];
   order.forEach(shift => {
     // A manager-cleared slot with no lock stays empty: skip auto-assignment.
@@ -249,7 +271,11 @@ function makeSchedule() {
     // someone else in); the manager restaffs it. Same "no auto-staff" as a clear.
     const vacBlocked = !!(shift.vacationDropped && shift.vacationDropped.length) &&
                        !(shift.lockedGuides && shift.lockedGuides.length);
-    const noStaff = shift.cleared || vacBlocked;
+    // Never auto-assign a PRIVATE tour from availability (that is what put Birthe on
+    // an English private) — a private takes ONLY its Weekly_Schedule default guide,
+    // applied by the portal. And when the manager has turned automatic scheduling
+    // OFF, nothing auto-fills — only manager locks stay.
+    const noStaff = shift.cleared || vacBlocked || !autoOn || shift.isPrivate;
 
     const eligible = noStaff ? [] : guides.filter(g =>
       g.active &&
