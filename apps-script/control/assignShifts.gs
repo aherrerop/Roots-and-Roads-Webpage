@@ -245,8 +245,13 @@ function makeSchedule() {
     // A manager-cleared slot with no lock stays empty: skip auto-assignment.
     const lkC = lockKey_(shift.dateText, normalizeTime_(shift.time), shift.language, shift.isPrivate, shift.privIndex, shift.sfExt);
     shift.cleared = !!clearedSlots[lkC] && !(shift.lockedGuides && shift.lockedGuides.length);
+    // The regular guide is on vacation -> leave THEIR tour UNASSIGNED (do not sub
+    // someone else in); the manager restaffs it. Same "no auto-staff" as a clear.
+    const vacBlocked = !!(shift.vacationDropped && shift.vacationDropped.length) &&
+                       !(shift.lockedGuides && shift.lockedGuides.length);
+    const noStaff = shift.cleared || vacBlocked;
 
-    const eligible = shift.cleared ? [] : guides.filter(g =>
+    const eligible = noStaff ? [] : guides.filter(g =>
       g.active &&
       g.languages[shift.language] === true &&
       shift.availableGuides.includes(g.name) &&
@@ -255,7 +260,7 @@ function makeSchedule() {
       !hasConflict_(assignedByGuide[g.name], shift.dateTimeObj)
     );
 
-    const need = shift.cleared ? 0 : Math.max(0, (shift.guidesNeeded || 1) - shift.lockedGuides.length);
+    const need = noStaff ? 0 : Math.max(0, (shift.guidesNeeded || 1) - shift.lockedGuides.length);
     const assigned = [];
     const pool = [...eligible];
     while (assigned.length < need && pool.length) {
@@ -299,7 +304,7 @@ function makeSchedule() {
         shift.sfExt ? "SF" : "",
         shift.isPrivate ? "Private" : "",
         (shift.vacationDropped && shift.vacationDropped.length)
-          ? (shift.vacationDropped.join(", ") + " on vacation — restaffed") : "",
+          ? (shift.vacationDropped.join(", ") + " on vacation") : "",
         shift.extra ? "Extra tour (not in Weekly_Schedule)" : "",
         shift.lockedGuides.length ? "Locked: " + shift.lockedGuides.join(", ") : "",
         hasConflictFlag ? "LOCK CONFLICT (see Errors tab)" : "",
@@ -597,7 +602,7 @@ function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDat
     const noteParts = [];
     if (cleared) noteParts.push('Cleared by manager');
     else if (kept.length) noteParts.push('Locked: ' + kept.join(', '));
-    if (vac.length) noteParts.push(vac.join(', ') + ' on vacation — restaff');
+    if (vac.length) noteParts.push(vac.join(', ') + ' on vacation');
     assignedShifts.push({
       week: 'Week ' + getISOWeek_(dateObj),
       dateText: dateText, day: fullDayName_(dateObj), time: time, language: language,

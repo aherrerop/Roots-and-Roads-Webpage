@@ -211,8 +211,8 @@ preserveManagerGridState_(_vShifts, _vLocks, {}, _today, _vByName);
 const _vf = d => _vShifts.find(s => s.dateText===d && s.time==='17:00' && s.language==='English');
 check('a vacationing guide is DROPPED from their preserved far-future lock',
   !!_vf(_vFar) && _vf(_vFar).assignedGuides.length===0 && _vf(_vFar).lockedGuides.length===0, _vf(_vFar));
-check('the emptied slot shows "Not assigned" + a restaff note (never miss it)',
-  !!_vf(_vFar) && _vf(_vFar).status==='Not assigned' && /Polina on vacation — restaff/.test(_vf(_vFar).notes),
+check('the emptied slot shows "Not assigned" + an on-vacation note (never miss it)',
+  !!_vf(_vFar) && _vf(_vFar).status==='Not assigned' && /Polina on vacation/.test(_vf(_vFar).notes),
   _vf(_vFar) && [_vf(_vFar).status, _vf(_vFar).notes]);
 check('a guide NOT on vacation keeps their preserved lock',
   !!_vf(_vFar2) && _vf(_vFar2).assignedGuides.join()==='Carlos' && _vf(_vFar2).status==='OK', _vf(_vFar2));
