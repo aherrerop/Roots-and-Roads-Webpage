@@ -4772,11 +4772,11 @@ function updateControlHealth_() {
       }
     } catch (e) { /* leave 0 */ }
 
-    let autoSched = 'ON';
-    try { autoSched = (String(props.getProperty('AUTO_SCHEDULE') || 'ON').toUpperCase() === 'OFF') ? 'OFF (manual only)' : 'ON'; } catch (e) {}
+    let autoOn = true;
+    try { autoOn = String(props.getProperty('AUTO_SCHEDULE') || 'ON').toUpperCase() !== 'OFF'; } catch (e) {}
     const rows = [
       ['SYSTEM HEALTH', 'Updated ' + Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm')],
-      ['Automatic scheduling', autoSched],
+      ['Automatic scheduling (tick = ON)', ''],   // col B becomes a live checkbox below
       ['Booking system last run', bookingBeat],
       ['Last schedule generation', props.getProperty('HB_SCHEDULE') || '(never)'],
       ['Last queue/ledger refresh', props.getProperty('HB_QUEUES') || '(never)'],
@@ -4801,6 +4801,13 @@ function updateControlHealth_() {
     sh.getRange(healthFirstRow, 1, rows.length, 2).setValues(rows);
     sh.getRange(healthFirstRow, 1, 1, 2).setFontWeight('bold').setBackground('#2563eb').setFontColor('#ffffff');
     sh.getRange(healthFirstRow + 1, 1, rows.length - 1, 1).setFontWeight('bold');
+    // The "Automatic scheduling" row (index 1) is a LIVE toggle: a real checkbox in
+    // col B (ticked = ON) that the manager flips, plus the state text in col C. The
+    // onEdit handler (handleMobileControlsEdit) writes AUTO_SCHEDULE from the tick.
+    const autoRow = healthFirstRow + 1;
+    sh.getRange(autoRow, MC.COL_RUN).insertCheckboxes();
+    sh.getRange(autoRow, MC.COL_RUN).setValue(!!autoOn);
+    sh.getRange(autoRow, MC.COL_STATUS).setValue(autoOn ? 'ON' : 'OFF — manual only');
     sh.setColumnWidth(1, 300);
     sh.setColumnWidth(2, 150);
   } catch (e) { console.log('updateControlHealth_: ' + e); }

@@ -50,16 +50,9 @@ function mcActions_() {
     { label: 'Generate schedules', fn: makeSchedule },
     { label: 'Refresh ledger & queues', fn: updateManagementQueues },
     { label: 'Weekly full run (avail + schedule + email)', fn: runWeeklyScheduling },
-    { label: 'Full operational refresh', fn: mcFullRefresh_ },
-    { label: 'Automatic scheduling: turn ON', fn: mcAutoSchedulingOn_ },
-    { label: 'Automatic scheduling: turn OFF (manual only)', fn: mcAutoSchedulingOff_ }
+    { label: 'Full operational refresh', fn: mcFullRefresh_ }
   ];
 }
-
-/** Tick to flip the availability-based auto-assignment master switch. The current
- *  state is shown in the SYSTEM HEALTH block below (updateControlHealth_). */
-function mcAutoSchedulingOn_()  { setAutoScheduling(true);  updateControlHealth_(); }
-function mcAutoSchedulingOff_() { setAutoScheduling(false); updateControlHealth_(); }
 
 /**
  * Full refresh that stays inside execution limits: booking update runs
@@ -119,6 +112,18 @@ function handleMobileControlsEdit(e) {
     if (sh.getName() !== MC.TAB) return;
     if (e.range.getColumn() !== MC.COL_RUN || e.range.getNumColumns() !== 1) return;
     const row = e.range.getRow();
+
+    // STATE checkbox (not a momentary action): the "Automatic scheduling" row in
+    // the SYSTEM HEALTH block. Ticked = ON, empty = OFF. It PERSISTS (never reset),
+    // and reacts to both tick and untick — so it always shows the real state.
+    const rowLabel = String(sh.getRange(row, MC.COL_ACTION).getValue() || '').trim();
+    if (/^automatic scheduling/i.test(rowLabel)) {
+      const on = (e.range.getValue() === true);
+      setAutoScheduling(on);
+      sh.getRange(row, MC.COL_STATUS).setValue(on ? 'ON' : 'OFF — manual only');
+      return;
+    }
+
     const actions = mcActions_();
     const idx = row - MC.FIRST_ACTION_ROW;
     if (idx < 0 || idx >= actions.length) return;
