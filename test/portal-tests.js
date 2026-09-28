@@ -189,6 +189,9 @@ check('choosing in a SELECT also holds the poll', /INPUT\|TEXTAREA\|SELECT/.test
 check('the create-tour form fields count as editing', /\.of-date,\.of-time,\.of-lang,\.of-guide/.test(html), null);
 check('a version-check hard-reload will not fire mid-action', /openform\[open\]"\) \|\| Date\.now\(\)-LAST_EDIT<8000\) return;/.test(html), null);
 check('a move holds the poll (MUTATING) so it cannot race the write', /go\.textContent="Moving…"; MUTATING\+\+/.test(html), null);
+check('an OPEN tour card stays open across a poll re-render (OPEN_CARDS restore)',
+  /OPEN_CARDS\.has\(card\.dataset\.tour\)/.test(html) && /b\.style\.display = open \? "" : "none"/.test(html), null);
+check('toggling a card updates the remembered open set', /nowOpen\) OPEN_CARDS\.add\(card\.dataset\.tour\); else OPEN_CARDS\.delete\(card\.dataset\.tour\)/.test(html), null);
 
 console.log('--- Typed tour time: bare afternoon hours read as PM (4:30 = 16:30) ---');
 const ptStart = html.indexOf('function parseTypedTime(raw){');

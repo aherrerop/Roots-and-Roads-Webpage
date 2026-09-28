@@ -242,7 +242,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-27-3day-window";
+const PORTAL_VERSION = "2026-09-28-keep-card-open";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -378,6 +378,11 @@ const store = {
   set tab(v){ try{ localStorage.setItem("rr_tab", v||""); }catch(e){} }
 };
 let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
+// Which tour cards are EXPANDED, by tour id — so an auto-refresh (poll) never
+// collapses a card the manager is watching. Backed by localStorage so a
+// version-reload keeps it open too; self-prunes to cards still on screen.
+let OPEN_CARDS=(function(){ try{ return new Set(JSON.parse(localStorage.getItem("rr_open")||"[]")); }catch(e){ return new Set(); } })();
+function saveOpenCards(){ try{ localStorage.setItem("rr_open", JSON.stringify([...OPEN_CARDS])); }catch(e){} }
 let HAS_MORE=false, WINDOW_DAYS=3, MANAGER_DAYS=0; const MORE_DAYS=3;   // default load window (both roles); "Load 3 more days"
 let LAST_FRESH="";                                                       // last successful refresh time
 let LOAD_FAILS=0;                        // consecutive failed loads — gates the "can't reach" banner
@@ -940,8 +945,23 @@ function stepper(tourId,ref,val,max,total,kids){
 }
 function bindTours(tours){
   TOURS_CACHE=tours;
-  document.querySelectorAll(".tour:not(.static) .bookings").forEach(b=>{ b.style.display="none"; }); // start collapsed
-  document.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{ const b=h.parentElement.querySelector(".bookings"); b.style.display = b.style.display==="none"?"":"none"; }; });
+  // Restore each card's open/closed state (a poll re-renders the DOM, so without
+  // this every card would collapse). A card the manager left OPEN stays open.
+  const stillOpen=new Set();
+  document.querySelectorAll(".tour:not(.static)").forEach(card=>{
+    const b=card.querySelector(".bookings"); if(!b) return;
+    const open=OPEN_CARDS.has(card.dataset.tour);
+    b.style.display = open ? "" : "none";
+    if(open) stillOpen.add(card.dataset.tour);
+  });
+  OPEN_CARDS=stillOpen; saveOpenCards();   // drop ids for cards no longer on screen
+  document.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{
+    const card=h.closest(".tour"); const b=card&&card.querySelector(".bookings"); if(!b) return;
+    const nowOpen = b.style.display==="none";
+    b.style.display = nowOpen ? "" : "none";
+    if(nowOpen) OPEN_CARDS.add(card.dataset.tour); else OPEN_CARDS.delete(card.dataset.tour);
+    saveOpenCards();
+  }; });
   document.querySelectorAll(".stepper").forEach(st=>{
     const val=st.querySelector(".val"), max=Number(st.dataset.max);
     st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); recount(st.dataset.tour); };
