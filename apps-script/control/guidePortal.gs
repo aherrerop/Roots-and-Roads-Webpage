@@ -1036,6 +1036,7 @@ function apiTours_(p) {
       checkedGuests,
       full,
       needsSecondGuide: full && shift.assigned.length < 2,
+      guide: shift.assigned[0] || '',   // slot-1 guide, so a co-guide's save credits the right tab
       secondGuide: shift.secondGuide || '',
       noShow: !!shift.noShow,
       noShowGuide: shift.noShowGuide || '',
@@ -1950,6 +1951,11 @@ function apiSave_(p) {
   // guideIndex, so everything stays on targetGuide, exactly as before.
   const secondGuide = String(d.secondGuide || '').trim();
   const g2valid = !!(secondGuide && findGuideByName_(secondGuide));
+  // On a 2-guide tour, slot 1 pays the PRIMARY guide (d.guide) — not whoever saved —
+  // so a co-guide (slot 2) checking in a slot-1 guest still credits the right tab.
+  // On a single-guide tour this is targetGuide, so behaviour is unchanged.
+  const dGuide = String(d.guide || '').trim();
+  const primaryGuide = (g2valid && dGuide && findGuideByName_(dGuide)) ? dGuide : targetGuide;
   const byGuide = {};
   let savedCount = 0;
   (d.bookings || []).forEach(b => {
@@ -1964,7 +1970,7 @@ function apiSave_(p) {
       bookingId: b.bookingId || '', note: b.manualNote || ''
     });
     const idx = Number(b.guideIndex) || 1;
-    const bg = (idx === 2 && g2valid) ? secondGuide : targetGuide;
+    const bg = (idx === 2 && g2valid) ? secondGuide : primaryGuide;
     (byGuide[bg] = byGuide[bg] || []).push(row);
     savedCount++;
   });

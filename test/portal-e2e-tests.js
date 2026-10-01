@@ -171,6 +171,13 @@ apiUncheckin_({ token: token, bookingId: 'GYGSPLIT2' });
 const bPair2 = ((apiTours_({ token: token }).allTours || []).find(s => s.dateKey === DATE && s.time === '14:00' && s.language === 'English') || {}).bookings;
 const bP2 = bPair2 && bPair2.find(b => b.bookingId === 'GYGSPLIT2');
 check('undo clears the guide-2 marker + removes the ledger row', bP2 && bP2.guideIndex === 1 && idsIn('Albert').indexOf('GYGSPLIT2') === -1, [bP2 && bP2.guideIndex, idsIn('Albert')]);
+// Co-guide fix: a slot-1 guest is paid to the PRIMARY guide (d.guide), even when a
+// NON-manager co-guide (slot 2) is the one saving — not the saver's own tab.
+const coSave = { dateKey: DATE, time: '14:00', timeLabel: '2:00 PM', day: dayNameFromKey_(DATE),
+  language: 'English', guide: 'Albert', secondGuide: 'Carlos', bookings: [
+    { bookingId: 'GYGCO1', source: 'GetYourGuide', name: 'Primary Guest', guests: 2, income: 30, isPrivate: false, checked: true, checkedIn: 2, guideIndex: 1 } ] };
+apiSave_({ token: makeToken_('Carlos'), data: JSON.stringify(coSave) });   // Carlos (non-manager co-guide) saves
+check('a slot-1 guest is credited to the PRIMARY guide, not the saver', idsIn('Albert').indexOf('GYGCO1') !== -1 && idsIn('Carlos').indexOf('GYGCO1') === -1, [idsIn('Albert').indexOf('GYGCO1'), idsIn('Carlos').indexOf('GYGCO1')]);
 
 console.log('--- Full no-show (D): flat €10 to the guide when nobody shows ---');
 en.getRange(en.getLastRow() + 1, 1, 1, 9).setValues([
