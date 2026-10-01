@@ -182,6 +182,27 @@ check('a guide on vacation shows the 🌴 dot (and stays selectable)', /vacation
 check('the assign option value stays the plain guide name (dot is display-only)', /value="'\+esc\(o\.name\)\+'"[\s\S]*?>'\+d\+esc\(o\.name\)/.test(html), null);
 check('a day move is offered (date input) and passed to the move call', /class="mvsel mv-date"/.test(html) && /toDate: dateChange\? toDate : ""/.test(html), null);
 check('guides (not managers) get a green tour with guests, red when empty', /const peopleCls = MANAGER \? '' : \(Number\(t\.bookedGuests\)>0 \? ' has-people' : ' no-people'\)/.test(html) && /\.tour\.has-people\{/.test(html) && /\.tour\.no-people\{/.test(html), null);
+// A FULL (20+) tour gets a red outline + a "Full — add 2nd guide, reopen" badge,
+// on BOTH the guide portal cards and the manager tour cards (both use tourCard).
+check('a full (20+) tour gets a red outline class + Full badge',
+  /const fullCls = t\.full \? ' full' : ''/.test(html) && /\.tour\.full\{/.test(html) &&
+  /if\(t\.full\) chips = '<span class="chip fullbadge"/.test(html), null);
+// B: a full card offers a SECOND guide dropdown (slot 2); it posts slot:2, and the
+// slot-2 overlay is held clear of the slot-1 optimistic hold.
+check('a full card renders a 2nd-guide dropdown (slot 2) that posts slot:2',
+  /function assignSelect\(t, slot\)\{/.test(html) && /if\(canAssign && t\.full\) chips\+=assignSelect\(t,2\)/.test(html) &&
+  /sfExt:t\.sfExt\?1:"",slot:slot/.test(html), null);
+check('the 2nd-guide change uses the overlay path (no optimistic hold / conflict)',
+  /if\(info\.slot===2\)\{/.test(html) && /s\.secondGuide && !s\.assigned\.some\(a=>a&&a\.toLowerCase\(\)===s\.secondGuide\.toLowerCase\(\)\)/.test(html), null);
+// C: a 2-guide tour shows two check-in buttons (1/2); the tap carries guideIndex, the
+// sibling locks during save, and the save payload carries guideIndex + secondGuide.
+check('a 2-guide tour renders two check-in buttons (1/2) that carry guideIndex',
+  /function checkinButtons\(tourId,b,i,tour\)\{/.test(html) && /if\(tour && tour\.secondGuide\)\{/.test(html) &&
+  /ckBtn\(tourId,i,b,1,/.test(html) && /ckBtn\(tourId,i,b,2,/.test(html) &&
+  /const gi=parts\.length>2\?\(\+parts\[2\]\|\|1\):1;/.test(html) && /b\.guideIndex=gi;/.test(html), null);
+check('the split save sends guideIndex per booking + secondGuide, and locks the sibling button',
+  /guideIndex:Number\(b\.guideIndex\)\|\|1/.test(html) && /secondGuide:t\.secondGuide\|\|""/.test(html) &&
+  /wrap\.querySelectorAll\('\.ckin'\)\.forEach\(x=>\{ if\(x!==btn\) x\.disabled=true; \}\)/.test(html), null);
 
 console.log('--- Auto-refresh never interrupts a mid-action user (no wiped forms) ---');
 check('the poll pauses while the "Open a schedule" form is open', /details\.openform\[open\]"\)\) return false;/.test(html), null);

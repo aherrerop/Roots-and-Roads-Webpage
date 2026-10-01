@@ -118,6 +118,60 @@ const carlosRows = carlosTab ? carlosTab.getRange(2, 1, Math.max(0, carlosTab.ge
 const ivanRow = carlosRows.find(x => String(x[LEDGER_BOOKINGID_COL] || '') === 'GYGE2E002');
 check('the ledger records the children count from the save payload', ivanRow && Number(ivanRow[8]) === 2, ivanRow && ivanRow[8]);
 
+console.log('--- FULL (20+) tour: red-outline signal + needs-2nd-guide flag ---');
+// Run BEFORE the feed-only stage below (which creates the Portal Feed); here the
+// portal still builds from the booking tabs, so a new en-tab booking surfaces.
+en.getRange(en.getLastRow() + 1, 1, 1, 9).setValues([
+  ['Big Group', '+34600999000', 20, new Date(DATE + 'T12:00:00'), '2:00 PM', 'GetYourGuide', 300, 'GYGFULL20', '']]);
+const rFull = apiTours_({ token: token });
+const shFull = (rFull.allTours || []).find(s => s.dateKey === DATE && s.time === '14:00' && s.language === 'English');
+check('a 20-guest group tour is flagged full (red outline)', shFull && shFull.full === true, shFull && [shFull && shFull.bookedGuests, shFull && shFull.full]);
+check('a full tour with <2 guides flags needsSecondGuide', shFull && shFull.needsSecondGuide === true, shFull && shFull.needsSecondGuide);
+const shSmall = (rFull.allTours || []).find(s => s.dateKey === DATE && s.time === '12:00' && s.language === 'English');
+check('a small (<20) group tour is NOT full', shSmall && shSmall.full === false, shSmall && [shSmall && shSmall.bookedGuests, shSmall && shSmall.full]);
+
+console.log('--- Second guide (B): a portal overlay, never touches grid/feed/scheduler ---');
+const aSg = apiAssign_({ token: token, dateKey: DATE, time: '14:00', language: 'English', guide: 'Albert', slot: 2 });
+check('apiAssign_ slot 2 returns ok', aSg && aSg.ok === true && aSg.slot === 2, aSg);
+const rSg = apiTours_({ token: token });
+const shSg = (rSg.allTours || []).find(s => s.dateKey === DATE && s.time === '14:00' && s.language === 'English');
+check('the 2nd guide shows as secondGuide + joins assigned', shSg && shSg.secondGuide === 'Albert' && (shSg.assigned || []).indexOf('Albert') !== -1, shSg && [shSg && shSg.secondGuide, shSg && shSg.assigned]);
+check('the 2nd-guide assign is overlay-only (did NOT create the feed; still grid mode)', rSg.timings && rSg.timings.sched !== undefined, rSg.timings);
+// The co-guide SEES the tour in their own My-tours (assigned includes them).
+const rAlbert = apiTours_({ token: makeToken_('Albert') });
+check('the second guide sees the full tour in their own tours', (rAlbert.tours || []).some(s => s.dateKey === DATE && s.time === '14:00' && s.language === 'English'), (rAlbert.tours || []).map(s => s.time));
+// Private tours have a single guide — slot 2 is refused.
+const rPrivSg = apiAssign_({ token: token, dateKey: DATE, time: '14:00', language: 'English', guide: 'Albert', slot: 2, isPrivate: '1' });
+check('a 2nd guide is refused on a private tour', rPrivSg && rPrivSg.ok === false, rPrivSg);
+// Clearing the 2nd guide (empty) removes it.
+apiAssign_({ token: token, dateKey: DATE, time: '14:00', language: 'English', guide: '', slot: 2 });
+const shSg0 = (apiTours_({ token: token }).allTours || []).find(s => s.dateKey === DATE && s.time === '14:00' && s.language === 'English');
+check('clearing the 2nd guide removes secondGuide', shSg0 && !shSg0.secondGuide, shSg0 && shSg0.secondGuide);
+
+console.log('--- Split check-in (C): each guide paid for who THEY check in ---');
+apiAssign_({ token: token, dateKey: DATE, time: '14:00', language: 'English', guide: 'Albert', slot: 2 });   // 2nd guide = Albert
+en.getRange(en.getLastRow() + 1, 1, 1, 9).setValues([
+  ['Split Pair', '+34600888000', 2, new Date(DATE + 'T12:00:00'), '2:00 PM', 'GetYourGuide', 30, 'GYGSPLIT2', '']]);
+// GYGFULL20 -> guide 1 (Carlos); GYGSPLIT2 -> guide 2 (Albert).
+const splitSave = { dateKey: DATE, time: '14:00', timeLabel: '2:00 PM', day: dayNameFromKey_(DATE),
+  language: 'English', guide: 'Carlos', secondGuide: 'Albert', bookings: [
+    { bookingId: 'GYGFULL20', source: 'GetYourGuide', name: 'Big Group', guests: 20, income: 300, isPrivate: false, checked: true, checkedIn: 20, guideIndex: 1 },
+    { bookingId: 'GYGSPLIT2', source: 'GetYourGuide', name: 'Split Pair', guests: 2, income: 30, isPrivate: false, checked: true, checkedIn: 2, guideIndex: 2 } ] };
+const rSplit = apiSave_({ token: token, data: JSON.stringify(splitSave) });
+check('apiSave_ split returns ok (2 rows written)', rSplit && rSplit.ok === true && rSplit.saved === 2, rSplit);
+const idsIn = n => { const sh = ledgerSS_().getSheetByName(n); return sh ? sh.getRange(2, 1, Math.max(0, sh.getLastRow() - 1), LEDGER_HEADERS.length).getValues().map(r => String(r[LEDGER_BOOKINGID_COL] || '')) : []; };
+check('guide 1 (Carlos) ledger has ONLY his guest', idsIn('Carlos').indexOf('GYGFULL20') !== -1 && idsIn('Carlos').indexOf('GYGSPLIT2') === -1, idsIn('Carlos'));
+check('guide 2 (Albert) ledger has ONLY his guest', idsIn('Albert').indexOf('GYGSPLIT2') !== -1 && idsIn('Albert').indexOf('GYGFULL20') === -1, idsIn('Albert'));
+const shSplit = (apiTours_({ token: token }).allTours || []).find(s => s.dateKey === DATE && s.time === '14:00' && s.language === 'English');
+const bFull = shSplit && shSplit.bookings.find(b => b.bookingId === 'GYGFULL20');
+const bPair = shSplit && shSplit.bookings.find(b => b.bookingId === 'GYGSPLIT2');
+check('the card marks each guest under the right guide (1 vs 2)', bFull && bFull.guideIndex === 1 && bPair && bPair.guideIndex === 2, [bFull && bFull.guideIndex, bPair && bPair.guideIndex]);
+// Undo clears the guide-2 marker AND removes the ledger row from guide 2's tab.
+apiUncheckin_({ token: token, bookingId: 'GYGSPLIT2' });
+const bPair2 = ((apiTours_({ token: token }).allTours || []).find(s => s.dateKey === DATE && s.time === '14:00' && s.language === 'English') || {}).bookings;
+const bP2 = bPair2 && bPair2.find(b => b.bookingId === 'GYGSPLIT2');
+check('undo clears the guide-2 marker + removes the ledger row', bP2 && bP2.guideIndex === 1 && idsIn('Albert').indexOf('GYGSPLIT2') === -1, [bP2 && bP2.guideIndex, idsIn('Albert')]);
+
 console.log('--- Per-phase timings + seniority-ordered eligible list ---');
 const rt = apiTours_({ token: token });
 check('response reports per-phase timings (sched/book/ledger)', rt.timings && typeof rt.timings.sched === 'number' && typeof rt.timings.book === 'number' && typeof rt.timings.ledger === 'number', rt.timings);

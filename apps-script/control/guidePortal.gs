@@ -133,6 +133,14 @@ const PORTAL = {
   // Show tours from today up to this many days ahead.
   UPCOMING_DAYS: 45,
 
+  // A GROUP tour is "full" at this head-count (adults + children). At the cap the
+  // portal outlines the card red and prompts a second guide + reopen — the SAME
+  // 20-person cap the booking project alerts on (its TOUR_FULL_THRESHOLD). Private
+  // tours are never capped. Re-declared here because the portal is a SEPARATE Apps
+  // Script project and cannot read the booking project's property, so it recomputes
+  // "full" from the feed's per-shift head-count (same number, no cross-project coupling).
+  TOUR_FULL_THRESHOLD: 20,
+
   // DEFAULT load window for EVERYONE (guides + managers): today .. this many days
   // ahead. Guides used to load the full UPCOMING_DAYS horizon (45 days of their
   // tours, with every booking's detail) on every load — the biggest avoidable
@@ -862,6 +870,7 @@ function apiTours_(p) {
         _t('asm.weekly', function () { appendWeeklyScheduleShifts_(s, offerHorizonDays); return 0; });
         _t('asm.cleared', function () { applyClearedOverlay_(s); return 0; });   // manager clears survive the feed path
         _t('asm.def', function () { applyWeeklyDefaults_(s); return 0; });
+        _t('asm.2nd', function () { applySecondGuideOverlay_(s); return 0; });   // full-tour second guide (portal overlay)
         _t('asm.sort', function () { sortSchedule_(s); return 0; });
         return s;
       });
@@ -873,6 +882,7 @@ function apiTours_(p) {
       appendWeeklyScheduleShifts_(schedule, offerHorizonDays);
       applyClearedOverlay_(schedule);
       applyWeeklyDefaults_(schedule);
+      applySecondGuideOverlay_(schedule);   // full-tour second guide (portal overlay)
       sortSchedule_(schedule);
       return 0;
     });
@@ -920,6 +930,7 @@ function apiTours_(p) {
     }
   });
   let priorCheckins = ledger.checkins;              // key|bookingId -> {n, at}
+  const g2ck = checkinGuide2Set_();                 // bookingId -> dateKey for guests checked in under guide 2
 
   // A completed tour's rows age out of the feed at 23:00, so a tour that already
   // ran and lost its feed rows falls back to the Completed Log for its guests.
@@ -987,13 +998,17 @@ function apiTours_(p) {
           checked: isCk,
           checkedIn: feedCk ? Number(b.feedCheckedIn)
                             : (ck ? Number(ck.n) : Number(b.guests || 0)), // feed, else ledger, else booked default
-          checkedAt: feedCk ? String(b.feedCheckedAt || '') : (ck ? (ck.at || '') : '')
+          checkedAt: feedCk ? String(b.feedCheckedAt || '') : (ck ? (ck.at || '') : ''),
+          guideIndex: g2ck[b.bookingId] ? 2 : 1          // which guide checked them in (2-guide tours)
         };
       });
 
     const bookedGuests = bookings.reduce((s, b) => s + Number(b.guests || 0), 0);
     const bookedChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
     const checkedGuests = bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0);
+    // "Full" GROUP tour: at the cap the card is outlined red (assign a 2nd guide +
+    // reopen). Private tours are never capped. Head-count = adults + children.
+    const full = !shift.private && (bookedGuests + bookedChildren) >= PORTAL.TOUR_FULL_THRESHOLD;
 
     const id = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
     return {
@@ -1011,6 +1026,9 @@ function apiTours_(p) {
       bookedGuests,
       bookedChildren,
       checkedGuests,
+      full,
+      needsSecondGuide: full && shift.assigned.length < 2,
+      secondGuide: shift.secondGuide || '',
       bookings
     };
   }); });
@@ -1097,9 +1115,14 @@ function apiTours_(p) {
             manualNote: String(b.manualNote || ''),
             checked: isCk,
             checkedIn: feedCk ? Number(b.feedCheckedIn) : (cke ? Number(cke.n) : Number(b.guests || 0)),
-            checkedAt: feedCk ? String(b.feedCheckedAt || '') : (cke ? (cke.at || '') : '')
+            checkedAt: feedCk ? String(b.feedCheckedAt || '') : (cke ? (cke.at || '') : ''),
+            guideIndex: g2ck[b.bookingId] ? 2 : 1          // which guide checked them in (2-guide tours)
           };
         });
+      const bGuests = bookings.reduce((s, b) => s + Number(b.guests || 0), 0);
+      const bChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
+      // "Full" GROUP tour: outline red + prompt a 2nd guide. Private never capped.
+      const full = !shift.private && (bGuests + bChildren) >= PORTAL.TOUR_FULL_THRESHOLD;
       const aid = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
       return {
         id: aid,
@@ -1111,9 +1134,12 @@ function apiTours_(p) {
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
         sfExt: !!shift.sfExt, tourName: shift.tourName || (shift.sfExt ? 'SF' : '3h'),
-        bookedGuests: bookings.reduce((s, b) => s + Number(b.guests || 0), 0),
-        bookedChildren: bookings.reduce((s, b) => s + Number(b.children || 0), 0),
+        bookedGuests: bGuests,
+        bookedChildren: bChildren,
         checkedGuests: bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0),
+        full,
+        needsSecondGuide: full && shift.assigned.length < 2,
+        secondGuide: shift.secondGuide || '',
         bookings
       };
     });
@@ -1422,6 +1448,7 @@ function apiAssign_(p) {
   const isPriv = !isSf && String(p.isPrivate || '') === '1';
   const privIndex = Number(p.privIndex) || 1;
   const guide = String(p.guide || '').trim();   // '' -> unassign
+  const slot = Number(p.slot) || 1;             // 2 = the full-tour second guide (portal overlay)
 
   if (!dateKey || !language || !time) return { ok: false, error: 'Missing shift info' };
 
@@ -1443,6 +1470,16 @@ function apiAssign_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
+    // SLOT 2 = the full-tour SECOND guide. Stored as a PORTAL-ONLY overlay (Script
+    // Property, like a cleared slot), so it never touches the grid cell, the feed
+    // Guide column, or the weekly scheduler — guide 1's path is completely unchanged.
+    if (slot === 2) {
+      if (isPriv) return { ok: false, error: 'Private tours have a single guide' };
+      const key2 = shiftKey_(dateKey, timeToMinutes_(time), language) + '|' + variantKey_(isSf, isPriv, privIndex);
+      setSecondGuide_(key2, guide);
+      bumpCacheVersion_();   // the assembled schedule (assigned array) changed -> next read rebuilds
+      return { ok: true, assigned: guide || '', slot: 2 };
+    }
     const out = writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide, isSf);
     // Mirror the assignment onto the feed's Guide column so the portal can read it
     // there (the grid stays the authority; this is the denormalised copy). If the
@@ -1891,21 +1928,33 @@ function apiSave_(p) {
   const targetGuide = (isManager && d.guide) ? d.guide : name;
 
   const rates = readRates_();
-  const rows = [];
   const day = d.day || dayNameFromKey_(d.dateKey);
   const timeLabel = d.timeLabel || d.time || '';
 
+  // TWO-GUIDE SPLIT: on a full tour each guest is checked in under guide 1 or guide 2
+  // (the 1/2 buttons -> b.guideIndex). Each guide is paid for the guests THEY checked
+  // in, so a guest's ledger row goes to THAT guide's tab. guide 1 = targetGuide;
+  // guide 2 = d.secondGuide (only if it's a real guide). Single-guide tours send no
+  // guideIndex, so everything stays on targetGuide, exactly as before.
+  const secondGuide = String(d.secondGuide || '').trim();
+  const g2valid = !!(secondGuide && findGuideByName_(secondGuide));
+  const byGuide = {};
+  let savedCount = 0;
   (d.bookings || []).forEach(b => {
     if (!b.checked) return; // only checked-in reservations get a ledger row; absence = not checked in
     const checkedIn = Math.max(0, Number(b.checkedIn || 0));
     const m = computeMoney_(b.source, checkedIn, b.isPrivate, b.income, rates);
-    rows.push(makeLedgerRow_({
+    const row = makeLedgerRow_({
       dateKey: d.dateKey, day, timeLabel, language: d.language,
       bookingName: b.name || '', phone: b.phone || '', source: b.source || '',
       guests: Number(b.guests || 0), children: Number(b.children || 0), checkedIn,
       weOwe: m.weOwe, theyOwe: m.theyOwe, rrMakes: m.rrMakes, type: m.type,
       bookingId: b.bookingId || '', note: b.manualNote || ''
-    }));
+    });
+    const idx = Number(b.guideIndex) || 1;
+    const bg = (idx === 2 && g2valid) ? secondGuide : targetGuide;
+    (byGuide[bg] = byGuide[bg] || []).push(row);
+    savedCount++;
   });
 
   // Walk-ins were removed: OTA tours are prepaid, and a free-tour walk-in would
@@ -1926,7 +1975,14 @@ function apiSave_(p) {
   if (!lock.tryLock(15000)) return { ok: false, error: 'Server busy, try again in a moment' };
   ST.lock = Date.now() - lt;
   try {
-    _s('ledger', function () { writeGuideLedger_(targetGuide, d.dateKey, d.time || timeLabel, d.language, rows); return 0; });
+    _s('ledger', function () {
+      // One upsert per guide tab (guide 1 and, on a split tour, guide 2). Each tab
+      // keeps only its OWN guests, so pay is exactly "who each guide checked in".
+      Object.keys(byGuide).forEach(function (g) {
+        writeGuideLedger_(g, d.dateKey, d.time || timeLabel, d.language, byGuide[g]);
+      });
+      return 0;
+    });
     // Mirror the check-ins onto the Portal Feed (its M/N columns) so the portal
     // reads them from the one tab. Written together with the ledger, both under
     // this lock: if a guest shows as checked-in in EITHER, they are checked in.
@@ -1938,6 +1994,11 @@ function apiSave_(p) {
         .filter(b => b.checked && b.bookingId)
         .map(b => ({ bookingId: b.bookingId, checkedIn: Math.max(0, Number(b.checkedIn || 0)) })), at);
       return 0;
+    });
+    // Remember which guests went to guide 2, so a reload shows the right 1/2 button
+    // (display only — the per-guide ledger tab above is the pay record).
+    (d.bookings || []).filter(b => b.checked && b.bookingId).forEach(b => {
+      setCheckinGuide2_(b.bookingId, d.dateKey, (Number(b.guideIndex) || 1) === 2 && g2valid);
     });
     _s('flush', function () { SpreadsheetApp.flush(); return 0; });   // commit before returning, so a reload can't read stale
     // NOTE: the GuruWalk queue used to be rebuilt HERE, on every save. That read
@@ -1955,7 +2016,7 @@ function apiSave_(p) {
   // next load reads it — and the schedule/guides/weekly caches stay warm, so the
   // load right after a check-in is not needlessly slow.
   bumpFeedCacheVersion_();
-  return { ok: true, saved: rows.length, guide: targetGuide, timings: ST };
+  return { ok: true, saved: savedCount, guide: targetGuide, timings: ST };
 }
 
 
@@ -2597,8 +2658,9 @@ function apiUncheckin_(p) {
   if (!lock.tryLock(15000)) return { ok: false, error: 'Server busy, try again in a moment' };
   let removed = 0;
   try {
-    removed = removeLedgerCheckin_(bookingId);   // money record gone
+    removed = removeLedgerCheckin_(bookingId);   // money record gone (all guide tabs)
     writeFeedUncheckin_(bookingId);              // feed M/N cleared
+    setCheckinGuide2_(bookingId, '', false);     // drop the guide-2 display marker
     SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
@@ -2942,6 +3004,81 @@ function applyClearedOverlay_(schedule) {
   schedule.forEach(s => {
     if (set[shiftKeyFull_(s)] && !(s.assigned && s.assigned.length)) { s.cleared = true; s.status = 'Not assigned'; }
   });
+}
+
+/* SECOND GUIDE overlay. A full (20+) GROUP tour can run with two guides. Guide 1
+ * is the normal assignment (grid cell + feed Guide column + makeSchedule lock,
+ * ALL unchanged). Guide 2 is a PORTAL-ONLY concept — exactly like the cleared-slot
+ * overlay above — stored in a Script Property keyed by shiftKeyFull_ and layered on
+ * after the weekly defaults, so it never touches the grid, the feed, or the weekly
+ * scheduler. apiAssign_ with slot=2 writes it; applySecondGuideOverlay_ reads it and
+ * appends the second name to the shift's `assigned` array (so that guide also SEES
+ * the tour) and exposes it as `secondGuide`. Private tours never get a second guide. */
+function secondGuidesMap_() {
+  if (typeof __RRX !== 'undefined' && __RRX && __RRX.secondGuides) return __RRX.secondGuides;
+  let o = {};
+  try { o = JSON.parse(PropertiesService.getScriptProperties().getProperty('PORTAL_SECOND_GUIDES') || '{}') || {}; }
+  catch (e) { o = {}; }
+  if (!o || typeof o !== 'object') o = {};
+  if (typeof __RRX !== 'undefined' && __RRX) __RRX.secondGuides = o;
+  return o;
+}
+function setSecondGuide_(key, guide) {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    let o = {}; try { o = JSON.parse(p.getProperty('PORTAL_SECOND_GUIDES') || '{}') || {}; } catch (e) { o = {}; }
+    if (!o || typeof o !== 'object') o = {};
+    const today = todayKey_();
+    Object.keys(o).forEach(k => { if (String(k).split('|')[0] < today) delete o[k]; });   // prune past
+    if (guide) o[key] = String(guide); else delete o[key];
+    p.setProperty('PORTAL_SECOND_GUIDES', JSON.stringify(o));
+    if (typeof __RRX !== 'undefined' && __RRX) __RRX.secondGuides = o;
+  } catch (e) { /* best-effort; a missed write only means the 2nd guide must be re-picked */ }
+}
+/** Append the manager-chosen second guide to each matching GROUP shift. Runs AFTER
+ *  applyWeeklyDefaults_ so guide 1 is already in place; guide 2 becomes `secondGuide`
+ *  and (if not already present) assigned[1], so the co-guide sees the tour too. */
+function applySecondGuideOverlay_(schedule) {
+  const map = secondGuidesMap_();
+  if (!map || !Object.keys(map).length) return;
+  schedule.forEach(s => {
+    if (s.private) return;                                 // private tours never get a 2nd guide
+    const g2 = map[shiftKeyFull_(s)];
+    if (!g2) return;
+    s.secondGuide = g2;
+    if (!s.assigned) s.assigned = [];
+    if (!s.assigned.some(a => sameName_(a, g2))) s.assigned.push(g2);
+  });
+}
+
+/* On a two-guide tour, each guest is checked in under guide 1 or guide 2 (the 1/2
+ * buttons) and paid to THAT guide's ledger tab. The ledger IS the money record; this
+ * small overlay just remembers which guests went to guide 2 so a RELOAD shows the
+ * right button active (the feed M/N is guide-agnostic). Same Script-Property pattern
+ * as the second guide / cleared slots. Value = the booking's dateKey (for pruning).
+ * Guide 1 is the default, so only guide-2 guests are stored. */
+function checkinGuide2Set_() {
+  if (typeof __RRX !== 'undefined' && __RRX && __RRX.ckG2) return __RRX.ckG2;
+  let o = {};
+  try { o = JSON.parse(PropertiesService.getScriptProperties().getProperty('PORTAL_CHECKIN_GUIDE2') || '{}') || {}; }
+  catch (e) { o = {}; }
+  if (!o || typeof o !== 'object') o = {};
+  if (typeof __RRX !== 'undefined' && __RRX) __RRX.ckG2 = o;
+  return o;
+}
+function setCheckinGuide2_(bookingId, dateKey, isG2) {
+  const id = String(bookingId || '').trim();
+  if (!id) return;
+  try {
+    const p = PropertiesService.getScriptProperties();
+    let o = {}; try { o = JSON.parse(p.getProperty('PORTAL_CHECKIN_GUIDE2') || '{}') || {}; } catch (e) { o = {}; }
+    if (!o || typeof o !== 'object') o = {};
+    const today = todayKey_();
+    Object.keys(o).forEach(k => { if (String(o[k] || '') < today) delete o[k]; });   // prune past
+    if (isG2) o[id] = String(dateKey || today); else delete o[id];
+    p.setProperty('PORTAL_CHECKIN_GUIDE2', JSON.stringify(o));
+    if (typeof __RRX !== 'undefined' && __RRX) __RRX.ckG2 = o;
+  } catch (e) { /* best-effort; a miss only means a reload may show the wrong 1/2 button until re-tapped (pay is correct in the ledger) */ }
 }
 
 function applyWeeklyDefaults_(schedule) {

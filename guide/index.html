@@ -77,6 +77,7 @@
      colored left stripe plus a faint tint so it's obvious at a glance. */
   .tour.has-people{border-left:6px solid #16a34a;background:linear-gradient(90deg,rgba(22,163,74,.08),var(--card) 140px)}
   .tour.no-people{border-left:6px solid #dc2626;background:linear-gradient(90deg,rgba(220,38,38,.09),var(--card) 140px)}
+  .tour.full{box-shadow:inset 0 0 0 2px var(--danger), var(--shadow)}  /* FULL (20+): red outline, add a 2nd guide */
   .head{display:flex;align-items:center;gap:10px;padding:15px 16px;cursor:pointer}
   .tour .head{padding-right:38px}
   .tour.static .head{cursor:default}
@@ -114,6 +115,8 @@
   .stepper button:disabled{opacity:.4;cursor:default}
   .ckin{border:1px solid var(--ink);background:var(--ink);color:#fff;font-weight:800;font-size:12px;padding:8px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;margin-left:2px}
   .ckin.done{background:#e2e6ea;border-color:#e2e6ea;color:#9aa1ac;cursor:default}
+  .ckin.g1,.ckin.g2{padding:8px 9px;min-width:42px;text-align:center}  /* the 1/2 buttons on a 2-guide tour */
+  .ckin.lockedother{opacity:.4}  /* this guest is on the OTHER guide; undo first to move them */
 
   .walkins{padding:8px 2px 2px;border-top:1px dashed var(--line);margin-top:2px}
   .walkins .wl{display:flex;align-items:center;gap:8px;padding:7px 2px}
@@ -133,8 +136,10 @@
   .loaderr .retry{margin-top:14px;padding:11px 26px;border:none;border-radius:11px;background:var(--ink);color:#fff;font-weight:800;font-size:14px;cursor:pointer}
   .testlink{display:inline-block;margin-top:12px;color:var(--blue);font-weight:700;font-size:13px}
   .asgsel{margin-left:6px;padding:6px 8px;border:1px solid #dfe3e8;border-radius:9px;font-size:13px;font-weight:700;color:var(--ink);background:#fff;max-width:150px}
+  .asglbl{margin-left:8px;font-size:11px;font-weight:700;color:var(--muted)}  /* "2nd guide" label before the slot-2 dropdown */
   .chip.miss{background:#fff7ed;color:#b45309;font-style:italic}
   .chip.needs{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4}
+  .chip.fullbadge{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4;padding:3px 9px}
   .bnote{font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
   .mvsel{margin-top:4px;padding:3px 6px;border:1px solid #e2e6ea;border-radius:7px;font-size:11px;color:var(--muted);background:#fff}
   .mvbox{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;margin-left:4px}
@@ -242,7 +247,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-09-28-keep-card-open";
+const PORTAL_VERSION = "2026-10-01-split-checkin";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -703,6 +708,9 @@ function applyPendingAssigns(r){
     // time every replica has converged on the new value.
     s.assigned=p.guide?[p.guide]:[]; s.guide=p.guide||"";
     s.coGuides=p.guide?[p.guide]:[]; s.status=p.guide?"OK":"Not assigned";
+    // The second guide is a separate overlay (no replica lag), so a slot-1 hold must
+    // not hide it: keep it on `assigned` so its chip/dropdown stay put.
+    if(s.secondGuide && !s.assigned.some(a=>a&&a.toLowerCase()===s.secondGuide.toLowerCase())) s.assigned.push(s.secondGuide);
   };
   (r.allTours||[]).forEach(overlay);
   (r.tours||[]).forEach(overlay);
@@ -852,7 +860,10 @@ function bindOpenForm(){
 }
 /* Manager-only: dropdown of guides who SPEAK the tour's language. Picking one
    writes it into the Schedule_<Language> grid in bold (= a management lock). */
-function assignSelect(t){
+function assignSelect(t, slot){
+  // slot 1 = the normal guide (assigned[0]); slot 2 = the full-tour SECOND guide
+  // (t.secondGuide, a portal overlay). A guide can't be picked for BOTH slots.
+  slot = slot||1;
   // EVERY guide who speaks the language is assignable — the dot is only INFO, never
   // a block. Server sends guideOptions [{name,status}] where status is:
   //   free 🟢 (available) · overlap 🟡 (a tour within 5h) · busy 🔴 (a tour at the
@@ -862,11 +873,15 @@ function assignSelect(t){
   let opts = (Array.isArray(t.guideOptions)&&t.guideOptions.length)
     ? t.guideOptions.slice()
     : (t.eligible||GUIDES_BY_LANG[t.language]||[]).map(n=>({name:n,status:""}));
-  const cur=(t.assigned&&t.assigned[0])||"";
+  const g1=(t.assigned&&t.assigned[0])||"", g2=t.secondGuide||"";
+  const cur = slot===2 ? g2 : g1;
+  const other = slot===2 ? g1 : g2;               // already on the other slot -> not offered here
+  if(other) opts=opts.filter(o=>o.name!==other);
   if(cur && !opts.some(o=>o.name===cur)) opts=[{name:cur,status:""}].concat(opts);
   const legend="🟢 available · 🟡 overlapping tour · 🔴 already booked this time · 🌴 on vacation — you can still pick anyone";
-  let html='<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:""}))+'\'>';
-  html+='<option value=""'+(cur?'':' selected')+'>Not assigned</option>';
+  let html=(slot===2?'<span class="asglbl">2nd guide</span>':'')
+    +'<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",slot:slot}))+'\'>';
+  html+='<option value=""'+(cur?'':' selected')+'>'+(slot===2?'Not assigned (2nd)':'Not assigned')+'</option>';
   opts.forEach(o=>{ const d=DOT[o.status]?DOT[o.status]+" ":""; html+='<option value="'+esc(o.name)+'"'+(o.name===cur?' selected':'')+'>'+d+esc(o.name)+'</option>'; });
   return html+'</select>';
 }
@@ -881,6 +896,11 @@ function tourCard(t, canAssign, dayTimes){
     ? '<span class="chip needs">⚠ Needs a guide</span>'
     : '<span class="chip miss">Not assigned</span>';
   if(canAssign) chips+=assignSelect(t);
+  // FULL tour (20+): a manager can add a SECOND guide (default Not assigned).
+  if(canAssign && t.full) chips+=assignSelect(t,2);
+  // FULL tour (20+ guests): prompt a second guide + reopen. The red outline is on
+  // the card (.tour.full); this badge spells out the action.
+  if(t.full) chips = '<span class="chip fullbadge" title="This tour is full (20+ guests). Assign a second guide and reopen it if you can.">🔴 Full'+(canAssign?' — add 2nd guide, reopen':'')+'</span>'+chips;
   let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language,t,dayTimes)).join("");
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   // Small round ✕ in the card's top-right corner — DELETES the tour (frees its guide).
@@ -888,7 +908,8 @@ function tourCard(t, canAssign, dayTimes){
   // GUIDES (not management) get a green tour when people are signed up, red when
   // it's empty. Managers keep the plain card (they have the counts + assign UI).
   const peopleCls = MANAGER ? '' : (Number(t.bookedGuests)>0 ? ' has-people' : ' no-people');
-  return '<div class="tour'+peopleCls+'" data-tour="'+esc(t.id)+'">'+ closeBtn +
+  const fullCls = t.full ? ' full' : '';   // red outline on a full (20+) tour
+  return '<div class="tour'+peopleCls+fullCls+'" data-tour="'+esc(t.id)+'">'+ closeBtn +
     '<div class="head js-toggle">'+
       '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+ flagImg(t.language)+
       (t.sfExt?'<span class="pill sf">SF</span>':'<span class="pill h3">3h</span>')+
@@ -934,8 +955,28 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
     '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mvbox+noteBtn+'</div>'+
     wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
-    '<button class="ckin'+(b.checked?' done':'')+'" data-ck="'+esc(tourId)+'~'+i+'"'+((b.checked && !(MANAGER && !b.pending))?' disabled':'')+'>'+(b.checked?(b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))):'Check in')+'</button>'+
+    checkinButtons(tourId,b,i,tour)+
     '</div>'+ noteEditor + '</div>';
+}
+/* ONE check-in button, OR — on a full tour that has a 2nd guide — two buttons "1/2"
+   (labelled by each guide's initials) so a guest is checked in under, and PAID to,
+   the guide who took them. gi=0 single-guide; gi=1/2 which guide. */
+function ckBtn(tourId,i,b,gi,label,title){
+  const ref = esc(tourId)+'~'+i+(gi?'~'+gi:'');
+  const onThis = !gi || (Number(b.guideIndex)||1)===gi;   // this guest is on THIS guide
+  const done = !!b.checked && onThis;
+  const lockedOther = !!b.checked && !!gi && !onThis;      // checked on the OTHER guide -> locked until undo
+  const dis = (done && !(MANAGER && !b.pending)) || lockedOther;
+  const txt = done ? (b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))) : (gi?esc(label):'Check in');
+  return '<button class="ckin'+(done?' done':'')+(gi?' g'+gi:'')+(lockedOther?' lockedother':'')+'" data-ck="'+ref+'"'+
+    (dis?' disabled':'')+(title?' title="'+esc(title)+'"':'')+'>'+txt+'</button>';
+}
+function checkinButtons(tourId,b,i,tour){
+  if(tour && tour.secondGuide){
+    const g1=(tour.assigned&&tour.assigned[0])||tour.guide||"", g2=tour.secondGuide;
+    return ckBtn(tourId,i,b,1,initials(g1)||'1', g1||'Guide 1')+ckBtn(tourId,i,b,2,initials(g2)||'2', g2);
+  }
+  return ckBtn(tourId,i,b,0,'','');
 }
 function stepper(tourId,ref,val,max,total,kids){
   const kidsHtml = kids?'<span class="kids">+'+kids+'</span>':'';
@@ -973,6 +1014,18 @@ function bindTours(tours){
       let info; try{ info=JSON.parse(sel.dataset.assign); }catch(e){ return; }
       const newGuide=sel.value;
       MUTATING++; LAST_EDIT=Date.now();
+      // SECOND GUIDE (slot 2): a portal overlay — immediately consistent, so no
+      // optimistic hold and no conflict path (two guides on one tour is always OK).
+      if(info.slot===2){
+        let msg="";
+        try{ const r=await api("assign",Object.assign({token:store.token, guide:newGuide},info));
+          if(!r||!r.ok) msg=(r&&r.error)||"Could not set the second guide"; }
+        catch(err){ msg=err.message||"Network problem — try again"; }
+        MUTATING--;
+        try{ await loadTours(); }catch(e){}
+        if(msg) alert(msg);
+        return;
+      }
       setPendingAssign(info, newGuide);          // remember the choice; render shows it now
       if(store.cache) renderAll(store.cache);     // instant, and stale reads can't undo it
       let ok=true, hard=false, errMsg="";
@@ -1093,7 +1146,7 @@ function bindTours(tours){
   // Check-in button per reservation: set the count, lock the row, save.
   document.querySelectorAll(".ckin:not(.done)").forEach(btn=>{
     btn.onclick=async ()=>{
-      const parts=btn.dataset.ck.split("~"); const tid=parts[0], idx=+parts[1];
+      const parts=btn.dataset.ck.split("~"); const tid=parts[0], idx=+parts[1]; const gi=parts.length>2?(+parts[2]||1):1;
       const t=TOURS_CACHE.find(x=>x.id===tid); if(!t) return;
       const card=btn.closest('.tour');
       const sval=card.querySelector('.stepper[data-ref="bk|'+idx+'"] .val');
@@ -1102,9 +1155,11 @@ function bindTours(tours){
       const n=+(sval?sval.textContent:b.checkedIn);
       const _n=new Date(); const hhmm=String(_n.getHours()).padStart(2,"0")+":"+String(_n.getMinutes()).padStart(2,"0");
       // Show a SAVING state (not a confirmed ✓) and lock the row while it writes.
-      b.checked=true; b.checkedIn=n;
+      b.checked=true; b.checkedIn=n; b.guideIndex=gi;
       setPendingCheckin(b.bookingId, t.dateKey, n);   // HOLD it so the next (possibly stale) read can't flip it back
       btn.disabled=true; btn.textContent="Saving…";
+      // Lock the sibling 1/2 button during the save so a guest can't be tapped onto BOTH guides.
+      const wrap=btn.closest('.bkwrap'); if(wrap) wrap.querySelectorAll('.ckin').forEach(x=>{ if(x!==btn) x.disabled=true; });
       const steps=card.querySelectorAll('.stepper[data-ref="bk|'+idx+'"] button'); steps.forEach(x=>x.disabled=true);
       recount(tid);
       const ok=await saveTour(tid);
@@ -1158,8 +1213,8 @@ function buildTourData(tourId){
   const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return null;
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
   const bookings=t.bookings.map((b,i)=>{ const st=card?card.querySelector('.stepper[data-ref="bk|'+i+'"] .val'):null;
-    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,children:b.children||0,income:b.income,isPrivate:b.isPrivate,manualNote:b.manualNote||"",checked:!!b.checked,checkedIn:+(st?st.textContent:b.checkedIn)}; });
-  return {dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,guide:t.guide||""};
+    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,children:b.children||0,income:b.income,isPrivate:b.isPrivate,manualNote:b.manualNote||"",checked:!!b.checked,checkedIn:+(st?st.textContent:b.checkedIn),guideIndex:Number(b.guideIndex)||1}; });
+  return {dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,guide:t.guide||"",secondGuide:t.secondGuide||""};
 }
 /* ===== Offline-safe check-in queue =====
    A check-in whose save doesn't reach the server is kept on the PHONE and
