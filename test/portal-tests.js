@@ -205,8 +205,9 @@ check('the split save sends guideIndex per booking + secondGuide, and locks the 
   /wrap\.querySelectorAll\('\.ckin'\)\.forEach\(x=>\{ if\(x!==btn\) x\.disabled=true; \}\)/.test(html), null);
 // D: a "No-one showed · €10" control appears when guests were expected and none are
 // checked in; it posts action=noshow (and clear:1 to undo), and hides check-ins.
-check('a full no-show control offers "No-one showed · €10" and undo',
-  /function noShowControl\(t, canAssign\)\{/.test(html) && /No-one showed · €10/.test(html) &&
+// The amount is deliberately NOT shown to guides (policy may change) — label reads "Total no-show".
+check('a full no-show control offers "Total no-show" and undo, with no € amount shown',
+  /function noShowControl\(t, canAssign\)\{/.test(html) && /Total no-show/.test(html) && !/€10/.test(html) &&
   /if\(!t\.bookedGuests \|\| t\.checkedGuests>0 \|\| !nsGuide\) return "";/.test(html) &&
   /if\(tour && tour\.noShow\) return '';/.test(html), null);
 check('the no-show control posts action=noshow (set + clear) and shows a badge',

@@ -252,7 +252,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-01-noshow";
+const PORTAL_VERSION = "2026-10-01-noshow-label";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -907,7 +907,7 @@ function tourCard(t, canAssign, dayTimes){
   // the card (.tour.full); this badge spells out the action.
   if(t.full) chips = '<span class="chip fullbadge" title="This tour is full (20+ guests). Assign a second guide and reopen it if you can.">🔴 Full'+(canAssign?' — add 2nd guide, reopen':'')+'</span>'+chips;
   // Full no-show (nobody turned up): a badge even on a collapsed card.
-  if(t.noShow) chips = '<span class="chip noshowchip" title="Nobody showed up — €10 to '+esc(t.noShowGuide||"the guide")+'">🚫 No-one showed</span>'+chips;
+  if(t.noShow) chips = '<span class="chip noshowchip" title="Total no-show — '+esc(t.noShowGuide||"the guide")+'">🚫 Total no-show</span>'+chips;
   let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language,t,dayTimes)).join("");
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   // Small round ✕ in the card's top-right corner — DELETES the tour (frees its guide).
@@ -928,22 +928,23 @@ function tourCard(t, canAssign, dayTimes){
       '<div class="savebar"><span class="msg" data-msg="'+esc(t.id)+'"></span></div>'+
     '</div></div>';
 }
-/* FULL NO-SHOW control (shown inside the open card). Offer "No-one showed · €10"
-   only when guests were expected and NONE are checked in; once flagged, show who
-   gets the €10 + an Undo. The €10 goes to the tour's guide (a manager acts for the
-   primary guide; a guide acts for their own card). */
+/* FULL NO-SHOW control (shown inside the open card). Offer "Total no-show" only
+   when guests were expected and NONE are checked in; once flagged, show who it pays
+   + an Undo. The flat fee (PORTAL.NO_SHOW_PAY on the server) is deliberately NOT
+   shown to guides — the policy may change. A manager acts for the primary guide; a
+   guide acts for their own card. */
 function nsInfo(t, guide){
   return {dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",guide:guide||t.noShowGuide||""};
 }
 function noShowControl(t, canAssign){
   if(t.noShow){
     const canUndo = MANAGER || !canAssign;   // manager, or the guide on their own card
-    return '<div class="noshowbar on"><span class="noshowtag">🚫 No-one showed — €10 to '+esc(t.noShowGuide||"the guide")+'</span>'+
+    return '<div class="noshowbar on"><span class="noshowtag">🚫 Total no-show — '+esc(t.noShowGuide||"the guide")+'</span>'+
       (canUndo?'<button class="noshowundo" data-noshow=\''+esc(JSON.stringify(nsInfo(t)))+'\'>Undo</button>':'')+'</div>';
   }
   const nsGuide = canAssign ? ((t.assigned&&t.assigned[0])||t.guide||"") : (store.name||"");
   if(!t.bookedGuests || t.checkedGuests>0 || !nsGuide) return "";   // guests expected, none checked in, a guide to pay
-  return '<div class="noshowbar"><button class="noshowbtn" data-noshow=\''+esc(JSON.stringify(nsInfo(t,nsGuide)))+'\'>No-one showed · €10</button></div>';
+  return '<div class="noshowbar"><button class="noshowbtn" data-noshow=\''+esc(JSON.stringify(nsInfo(t,nsGuide)))+'\'>Total no-show</button></div>';
 }
 function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   const wa = digits(b.phone) ? '<a class="wa" target="_blank" href="https://wa.me/'+digits(b.phone)+'">'+WA_ICON+'</a>' : '';
@@ -1168,7 +1169,7 @@ function bindTours(tours){
       }catch(err){ alert("Network problem"); loadTours(); }
     };
   });
-  // FULL NO-SHOW: flag a tour where nobody turned up (-> €10 to the guide), or undo it.
+  // FULL NO-SHOW: flag a tour where nobody turned up (the guide is still paid), or undo it.
   const noShowCall = async (btn, extra, verb)=>{
     let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(e){ return; }
     btn.disabled=true; btn.textContent=verb+"…"; MUTATING++; LAST_EDIT=Date.now();
@@ -1180,7 +1181,7 @@ function bindTours(tours){
   document.querySelectorAll(".noshowbtn").forEach(btn=>{
     btn.onclick=async (e)=>{ e.stopPropagation();
       let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(err){ return; }
-      if(!confirm("Mark this tour as a full no-show?\nWe'll owe "+(info.guide||"the guide")+" €10.")) return;
+      if(!confirm("Mark this tour as a total no-show?\nNobody in the group came.")) return;
       noShowCall(btn, {}, "Saving");
     };
   });
