@@ -77,7 +77,7 @@
      colored left stripe plus a faint tint so it's obvious at a glance. */
   .tour.has-people{border-left:6px solid #16a34a;background:linear-gradient(90deg,rgba(22,163,74,.08),var(--card) 140px)}
   .tour.no-people{border-left:6px solid #dc2626;background:linear-gradient(90deg,rgba(220,38,38,.09),var(--card) 140px)}
-  .tour.full{box-shadow:inset 0 0 0 2px var(--danger), var(--shadow)}  /* FULL (20+): red outline, add a 2nd guide */
+  .tour.full{outline:2px solid var(--danger);outline-offset:-2px}  /* FULL (20+): red outline around the WHOLE card (open or closed), add a 2nd guide */
   .head{display:flex;align-items:center;gap:10px;padding:15px 16px;cursor:pointer}
   .tour .head{padding-right:38px}
   .tour.static .head{cursor:default}
@@ -247,7 +247,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-01-split-checkin";
+const PORTAL_VERSION = "2026-10-01-full-outline-open";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
