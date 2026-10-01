@@ -203,6 +203,15 @@ check('a 2-guide tour renders two check-in buttons (1/2) that carry guideIndex',
 check('the split save sends guideIndex per booking + secondGuide, and locks the sibling button',
   /guideIndex:Number\(b\.guideIndex\)\|\|1/.test(html) && /secondGuide:t\.secondGuide\|\|""/.test(html) &&
   /wrap\.querySelectorAll\('\.ckin'\)\.forEach\(x=>\{ if\(x!==btn\) x\.disabled=true; \}\)/.test(html), null);
+// D: a "No-one showed · €10" control appears when guests were expected and none are
+// checked in; it posts action=noshow (and clear:1 to undo), and hides check-ins.
+check('a full no-show control offers "No-one showed · €10" and undo',
+  /function noShowControl\(t, canAssign\)\{/.test(html) && /No-one showed · €10/.test(html) &&
+  /if\(!t\.bookedGuests \|\| t\.checkedGuests>0 \|\| !nsGuide\) return "";/.test(html) &&
+  /if\(tour && tour\.noShow\) return '';/.test(html), null);
+check('the no-show control posts action=noshow (set + clear) and shows a badge',
+  /api\("noshow",Object\.assign\(\{token:store\.token\},extra,info\)\)/.test(html) &&
+  /noShowCall\(btn, \{clear:1\}, "Undoing"\)/.test(html) && /\.chip\.noshowchip\{/.test(html), null);
 
 console.log('--- Auto-refresh never interrupts a mid-action user (no wiped forms) ---');
 check('the poll pauses while the "Open a schedule" form is open', /details\.openform\[open\]"\)\) return false;/.test(html), null);

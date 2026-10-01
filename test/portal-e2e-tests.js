@@ -172,6 +172,23 @@ const bPair2 = ((apiTours_({ token: token }).allTours || []).find(s => s.dateKey
 const bP2 = bPair2 && bPair2.find(b => b.bookingId === 'GYGSPLIT2');
 check('undo clears the guide-2 marker + removes the ledger row', bP2 && bP2.guideIndex === 1 && idsIn('Albert').indexOf('GYGSPLIT2') === -1, [bP2 && bP2.guideIndex, idsIn('Albert')]);
 
+console.log('--- Full no-show (D): flat €10 to the guide when nobody shows ---');
+en.getRange(en.getLastRow() + 1, 1, 1, 9).setValues([
+  ['Ghost Group', '+34600777000', 4, new Date(DATE + 'T12:00:00'), '4:00 PM', 'GetYourGuide', 60, 'GYGNOS1', '']]);
+const nsOk = apiNoShow_({ token: token, dateKey: DATE, time: '16:00', language: 'English', guide: 'Carlos' });
+check('apiNoShow_ returns ok (paying Carlos)', nsOk && nsOk.ok === true && nsOk.guide === 'Carlos', nsOk);
+const nsRows = () => { const sh = ledgerSS_().getSheetByName('Carlos'); return sh ? sh.getRange(2, 1, Math.max(0, sh.getLastRow() - 1), LEDGER_HEADERS.length).getValues().filter(r => /^NOSHOW\|/.test(String(r[LEDGER_BOOKINGID_COL] || ''))) : []; };
+check('a flat €10 "No-show" ledger line is written to the guide', (function () { const rs = nsRows(); return rs.length === 1 && Number(rs[0][10]) === 10 && String(rs[0][13]) === 'No-show'; })(), nsRows().map(r => [r[10], r[13]]));
+const nsView = (apiTours_({ token: token }).allTours || []).find(s => s.dateKey === DATE && s.time === '16:00' && s.language === 'English');
+check('the card shows the no-show state + guide', nsView && nsView.noShow === true && nsView.noShowGuide === 'Carlos', nsView && [nsView && nsView.noShow, nsView && nsView.noShowGuide]);
+apiNoShow_({ token: token, dateKey: DATE, time: '16:00', language: 'English', guide: 'Carlos' });   // re-flag
+check('re-flagging does NOT duplicate the €10 line (once per tour)', nsRows().length === 1, nsRows().length);
+const nsDeny = apiNoShow_({ token: makeToken_('Carlos'), dateKey: DATE, time: '16:00', language: 'English', guide: 'Albert' });
+check('a non-manager cannot flag a no-show paying ANOTHER guide', nsDeny && nsDeny.ok === false, nsDeny);
+apiNoShow_({ token: token, dateKey: DATE, time: '16:00', language: 'English', clear: '1' });
+const nsCleared = (apiTours_({ token: token }).allTours || []).find(s => s.dateKey === DATE && s.time === '16:00' && s.language === 'English');
+check('clearing a no-show removes the line + the state', nsRows().length === 0 && nsCleared && !nsCleared.noShow, [nsRows().length, nsCleared && nsCleared.noShow]);
+
 console.log('--- Per-phase timings + seniority-ordered eligible list ---');
 const rt = apiTours_({ token: token });
 check('response reports per-phase timings (sched/book/ledger)', rt.timings && typeof rt.timings.sched === 'number' && typeof rt.timings.book === 'number' && typeof rt.timings.ledger === 'number', rt.timings);

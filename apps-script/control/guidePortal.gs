@@ -141,6 +141,11 @@ const PORTAL = {
   // "full" from the feed's per-shift head-count (same number, no cross-project coupling).
   TOUR_FULL_THRESHOLD: 20,
 
+  // Flat € we owe a guide who showed up and ran a tour where NOBODY in the whole
+  // group turned up (a full no-show). Any tour type / platform. Logged once per
+  // tour as a 'No-show' ledger line via apiNoShow_. Editable here.
+  NO_SHOW_PAY: 10,
+
   // DEFAULT load window for EVERYONE (guides + managers): today .. this many days
   // ahead. Guides used to load the full UPCOMING_DAYS horizon (45 days of their
   // tours, with every booking's detail) on every load — the biggest avoidable
@@ -238,7 +243,7 @@ var __RRX = {};
 // so a manager can see, after the fact, how long each save took, whether it
 // worked, and what went wrong. Reads (tours/login/ping) are not logged, to keep
 // the frequent auto-refresh cheap.
-const PORTAL_MUTATIONS = { assign: 1, save: 1, move: 1, setNote: 1, closeShift: 1, uncheckin: 1 };
+const PORTAL_MUTATIONS = { assign: 1, save: 1, move: 1, setNote: 1, closeShift: 1, uncheckin: 1, noshow: 1 };
 
 // Same dispatch as doGet, so sensitive actions (login) can be sent as a POST —
 // the password rides in the request body instead of the URL query string.
@@ -262,6 +267,7 @@ function doGet(e) {
       case 'setNote': out = apiSetNote_(p); break;
       case 'closeShift': out = apiCloseShift_(p); break;
       case 'uncheckin': out = apiUncheckin_(p); break;
+      case 'noshow': out = apiNoShow_(p); break;
       case 'ping':   out = { ok: true, pong: true }; break;
       case 'clientlog': out = apiClientLog_(p); break;
       case 'health': out = apiHealth_(); break;
@@ -871,6 +877,7 @@ function apiTours_(p) {
         _t('asm.cleared', function () { applyClearedOverlay_(s); return 0; });   // manager clears survive the feed path
         _t('asm.def', function () { applyWeeklyDefaults_(s); return 0; });
         _t('asm.2nd', function () { applySecondGuideOverlay_(s); return 0; });   // full-tour second guide (portal overlay)
+        _t('asm.nos', function () { applyNoShowOverlay_(s); return 0; });        // full no-show (portal overlay)
         _t('asm.sort', function () { sortSchedule_(s); return 0; });
         return s;
       });
@@ -883,6 +890,7 @@ function apiTours_(p) {
       applyClearedOverlay_(schedule);
       applyWeeklyDefaults_(schedule);
       applySecondGuideOverlay_(schedule);   // full-tour second guide (portal overlay)
+      applyNoShowOverlay_(schedule);        // full no-show (portal overlay)
       sortSchedule_(schedule);
       return 0;
     });
@@ -1029,6 +1037,8 @@ function apiTours_(p) {
       full,
       needsSecondGuide: full && shift.assigned.length < 2,
       secondGuide: shift.secondGuide || '',
+      noShow: !!shift.noShow,
+      noShowGuide: shift.noShowGuide || '',
       bookings
     };
   }); });
@@ -1140,6 +1150,8 @@ function apiTours_(p) {
         full,
         needsSecondGuide: full && shift.assigned.length < 2,
         secondGuide: shift.secondGuide || '',
+        noShow: !!shift.noShow,
+        noShowGuide: shift.noShowGuide || '',
         bookings
       };
     });
@@ -2670,6 +2682,65 @@ function apiUncheckin_(p) {
 }
 
 /**
+ * action=noshow — mark (or clear) a FULL NO-SHOW: nobody in the group turned up,
+ * so the guide who ran it is owed a flat €10 (PORTAL.NO_SHOW_PAY). A manager, or
+ * the guide the tour is assigned to, can flag it. Writes a 'No-show' ledger line
+ * (the pay record, idempotent by a synthetic booking id) and records it in the
+ * PORTAL_NOSHOW overlay so the card shows the state. clear=1 removes both.
+ *   params: token, dateKey, time, language, isPrivate, privIndex, sfExt, guide, clear
+ */
+function apiNoShow_(p) {
+  __RRX = {};
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  const isManager = !!(me && me.manager);
+
+  const dateKey = String(p.dateKey || '').trim();
+  const language = String(p.language || '').trim();
+  const time = normTime24_(String(p.time || ''));
+  const isSf = String(p.sfExt || '') === '1';
+  const isPriv = !isSf && String(p.isPrivate || '') === '1';
+  const privIndex = Number(p.privIndex) || 1;
+  const clear = String(p.clear || '') === '1';
+  const guide = String(p.guide || '').trim() || name;   // the guide who ran it (gets the €10)
+  if (!dateKey || !language || !time) return { ok: false, error: 'Missing tour info' };
+  // A manager, or the guide the tour pays (their own card), may flag it.
+  if (!isManager && !sameName_(guide, name)) return { ok: false, error: 'Only the tour guide or a manager' };
+
+  const key = shiftKey_(dateKey, timeToMinutes_(time), language) + '|' + variantKey_(isSf, isPriv, privIndex);
+  const synthId = 'NOSHOW|' + key;   // one no-show line per tour (upsert dedupes)
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return { ok: false, error: 'Server busy, try again in a moment' };
+  try {
+    if (clear) {
+      removeLedgerCheckin_(synthId);      // remove the €10 line from whichever tab holds it
+      setNoShow_(key, '');
+    } else {
+      if (!findGuideByName_(guide)) return { ok: false, error: 'Assign a guide first' };
+      const timeLabel = to12h_(time);
+      const day = dayNameFromKey_(dateKey);
+      const row = makeLedgerRow_({
+        dateKey: dateKey, day: day, timeLabel: timeLabel, language: language,
+        bookingName: '(no-one showed)', phone: '', source: 'No-show',
+        guests: 0, children: 0, checkedIn: 0,
+        weOwe: PORTAL.NO_SHOW_PAY, theyOwe: 0, rrMakes: -PORTAL.NO_SHOW_PAY, type: 'No-show',
+        bookingId: synthId, note: 'Nobody in the group showed up'
+      });
+      removeLedgerCheckin_(synthId);      // drop any stale copy (e.g. a different guide earlier) first
+      writeGuideLedger_(guide, dateKey, time, language, [row]);
+      setNoShow_(key, guide);
+    }
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+  bumpCacheVersion_();   // the schedule overlay (card.noShow) changed -> next read rebuilds
+  return { ok: true, cleared: clear, guide: guide };
+}
+
+/**
  * Write the assigned GUIDE onto the Portal Feed rows of a shift (column O). The
  * portal reads assignments from the feed, so every assign/unassign mirrors here.
  * Matches every row of the shift — its bookings AND its shift placeholder — of
@@ -3079,6 +3150,42 @@ function setCheckinGuide2_(bookingId, dateKey, isG2) {
     p.setProperty('PORTAL_CHECKIN_GUIDE2', JSON.stringify(o));
     if (typeof __RRX !== 'undefined' && __RRX) __RRX.ckG2 = o;
   } catch (e) { /* best-effort; a miss only means a reload may show the wrong 1/2 button until re-tapped (pay is correct in the ledger) */ }
+}
+
+/* FULL NO-SHOW overlay. When nobody in a tour's group turns up, the guide who ran
+ * it is still owed a flat €10 (PORTAL.NO_SHOW_PAY). apiNoShow_ logs that as a
+ * 'No-show' ledger line (the pay record) AND records the tour here so the card
+ * shows the no-show state. Same Script-Property pattern as the others; keyed by
+ * shiftKeyFull_, value = the paid guide's name, pruned by date. */
+function noShowMap_() {
+  if (typeof __RRX !== 'undefined' && __RRX && __RRX.noShow) return __RRX.noShow;
+  let o = {};
+  try { o = JSON.parse(PropertiesService.getScriptProperties().getProperty('PORTAL_NOSHOW') || '{}') || {}; }
+  catch (e) { o = {}; }
+  if (!o || typeof o !== 'object') o = {};
+  if (typeof __RRX !== 'undefined' && __RRX) __RRX.noShow = o;
+  return o;
+}
+function setNoShow_(key, guide) {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    let o = {}; try { o = JSON.parse(p.getProperty('PORTAL_NOSHOW') || '{}') || {}; } catch (e) { o = {}; }
+    if (!o || typeof o !== 'object') o = {};
+    const today = todayKey_();
+    Object.keys(o).forEach(k => { if (String(k).split('|')[0] < today) delete o[k]; });   // prune past
+    if (guide) o[key] = String(guide); else delete o[key];
+    p.setProperty('PORTAL_NOSHOW', JSON.stringify(o));
+    if (typeof __RRX !== 'undefined' && __RRX) __RRX.noShow = o;
+  } catch (e) { /* best-effort; the ledger line is the pay record either way */ }
+}
+/** Mark each tour a manager/guide flagged as a full no-show, so the card shows it. */
+function applyNoShowOverlay_(schedule) {
+  const map = noShowMap_();
+  if (!map || !Object.keys(map).length) return;
+  schedule.forEach(s => {
+    const g = map[shiftKeyFull_(s)];
+    if (g) { s.noShow = true; s.noShowGuide = g; }
+  });
 }
 
 function applyWeeklyDefaults_(schedule) {

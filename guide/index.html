@@ -117,6 +117,10 @@
   .ckin.done{background:#e2e6ea;border-color:#e2e6ea;color:#9aa1ac;cursor:default}
   .ckin.g1,.ckin.g2{padding:8px 9px;min-width:42px;text-align:center}  /* the 1/2 buttons on a 2-guide tour */
   .ckin.lockedother{opacity:.4}  /* this guest is on the OTHER guide; undo first to move them */
+  .noshowbar{display:flex;align-items:center;gap:10px;padding:12px 2px 4px;flex-wrap:wrap}
+  .noshowbtn{border:1px solid #f0b4b4;background:#fff7f7;color:#c0392b;font-weight:800;font-size:12px;padding:8px 12px;border-radius:9px;cursor:pointer}
+  .noshowbar.on .noshowtag{color:#c0392b;font-weight:800;font-size:13px}
+  .noshowundo{border:1px solid #e2e6ea;background:#fff;color:var(--muted);font-weight:700;font-size:12px;padding:6px 10px;border-radius:8px;cursor:pointer}
 
   .walkins{padding:8px 2px 2px;border-top:1px dashed var(--line);margin-top:2px}
   .walkins .wl{display:flex;align-items:center;gap:8px;padding:7px 2px}
@@ -140,6 +144,7 @@
   .chip.miss{background:#fff7ed;color:#b45309;font-style:italic}
   .chip.needs{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4}
   .chip.fullbadge{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4;padding:3px 9px}
+  .chip.noshowchip{background:#fff7f7;color:#c0392b;font-weight:800;border:1px solid #f0b4b4;padding:3px 9px}
   .bnote{font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
   .mvsel{margin-top:4px;padding:3px 6px;border:1px solid #e2e6ea;border-radius:7px;font-size:11px;color:var(--muted);background:#fff}
   .mvbox{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;margin-left:4px}
@@ -247,7 +252,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-01-full-outline-open";
+const PORTAL_VERSION = "2026-10-01-noshow";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -544,7 +549,7 @@ let LAST_EDIT = 0;
 // check-ins within seconds, while someone mid-edit is still protected.
 // Any touch/type/change on an edit control (a note, the move dropdowns, or the
 // "Open a schedule" form) marks the user as mid-edit so the poll holds off.
-const EDIT_SEL = ".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-lang,.mv-time,.mv-date,.mv-go,.bnoteta,.bnotesave,.of-open,.of-date,.of-time,.of-lang,.of-guide,.openform";
+const EDIT_SEL = ".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-lang,.mv-time,.mv-date,.mv-go,.bnoteta,.bnotesave,.of-open,.of-date,.of-time,.of-lang,.of-guide,.openform,.noshowbtn,.noshowundo";
 document.addEventListener("input",  e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
 document.addEventListener("change", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
 document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
@@ -901,6 +906,8 @@ function tourCard(t, canAssign, dayTimes){
   // FULL tour (20+ guests): prompt a second guide + reopen. The red outline is on
   // the card (.tour.full); this badge spells out the action.
   if(t.full) chips = '<span class="chip fullbadge" title="This tour is full (20+ guests). Assign a second guide and reopen it if you can.">🔴 Full'+(canAssign?' — add 2nd guide, reopen':'')+'</span>'+chips;
+  // Full no-show (nobody turned up): a badge even on a collapsed card.
+  if(t.noShow) chips = '<span class="chip noshowchip" title="Nobody showed up — €10 to '+esc(t.noShowGuide||"the guide")+'">🚫 No-one showed</span>'+chips;
   let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language,t,dayTimes)).join("");
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   // Small round ✕ in the card's top-right corner — DELETES the tour (frees its guide).
@@ -917,9 +924,26 @@ function tourCard(t, canAssign, dayTimes){
       '<div class="count"><div class="big"><span class="ck">'+t.checkedGuests+'</span> / '+t.bookedGuests+(t.bookedChildren?'<span class="kids">+'+t.bookedChildren+'</span>':'')+'</div>'+sub+'</div>'+
     '</div>'+
     '<div class="chips">'+chips+'</div>'+
-    '<div class="bookings">'+bk+
+    '<div class="bookings">'+bk+ noShowControl(t,canAssign)+
       '<div class="savebar"><span class="msg" data-msg="'+esc(t.id)+'"></span></div>'+
     '</div></div>';
+}
+/* FULL NO-SHOW control (shown inside the open card). Offer "No-one showed · €10"
+   only when guests were expected and NONE are checked in; once flagged, show who
+   gets the €10 + an Undo. The €10 goes to the tour's guide (a manager acts for the
+   primary guide; a guide acts for their own card). */
+function nsInfo(t, guide){
+  return {dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",guide:guide||t.noShowGuide||""};
+}
+function noShowControl(t, canAssign){
+  if(t.noShow){
+    const canUndo = MANAGER || !canAssign;   // manager, or the guide on their own card
+    return '<div class="noshowbar on"><span class="noshowtag">🚫 No-one showed — €10 to '+esc(t.noShowGuide||"the guide")+'</span>'+
+      (canUndo?'<button class="noshowundo" data-noshow=\''+esc(JSON.stringify(nsInfo(t)))+'\'>Undo</button>':'')+'</div>';
+  }
+  const nsGuide = canAssign ? ((t.assigned&&t.assigned[0])||t.guide||"") : (store.name||"");
+  if(!t.bookedGuests || t.checkedGuests>0 || !nsGuide) return "";   // guests expected, none checked in, a guide to pay
+  return '<div class="noshowbar"><button class="noshowbtn" data-noshow=\''+esc(JSON.stringify(nsInfo(t,nsGuide)))+'\'>No-one showed · €10</button></div>';
 }
 function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   const wa = digits(b.phone) ? '<a class="wa" target="_blank" href="https://wa.me/'+digits(b.phone)+'">'+WA_ICON+'</a>' : '';
@@ -972,6 +996,7 @@ function ckBtn(tourId,i,b,gi,label,title){
     (dis?' disabled':'')+(title?' title="'+esc(title)+'"':'')+'>'+txt+'</button>';
 }
 function checkinButtons(tourId,b,i,tour){
+  if(tour && tour.noShow) return '';   // nobody showed -> no check-in (undo the no-show first)
   if(tour && tour.secondGuide){
     const g1=(tour.assigned&&tour.assigned[0])||tour.guide||"", g2=tour.secondGuide;
     return ckBtn(tourId,i,b,1,initials(g1)||'1', g1||'Guide 1')+ckBtn(tourId,i,b,2,initials(g2)||'2', g2);
@@ -1142,6 +1167,25 @@ function bindTours(tours){
         setTimeout(loadTours,700);
       }catch(err){ alert("Network problem"); loadTours(); }
     };
+  });
+  // FULL NO-SHOW: flag a tour where nobody turned up (-> €10 to the guide), or undo it.
+  const noShowCall = async (btn, extra, verb)=>{
+    let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(e){ return; }
+    btn.disabled=true; btn.textContent=verb+"…"; MUTATING++; LAST_EDIT=Date.now();
+    let msg="";
+    try{ const r=await api("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
+    catch(err){ msg=err.message||"Network problem — try again"; }
+    MUTATING--; try{ await loadTours(); }catch(e){} if(msg) alert(msg);
+  };
+  document.querySelectorAll(".noshowbtn").forEach(btn=>{
+    btn.onclick=async (e)=>{ e.stopPropagation();
+      let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(err){ return; }
+      if(!confirm("Mark this tour as a full no-show?\nWe'll owe "+(info.guide||"the guide")+" €10.")) return;
+      noShowCall(btn, {}, "Saving");
+    };
+  });
+  document.querySelectorAll(".noshowundo").forEach(btn=>{
+    btn.onclick=(e)=>{ e.stopPropagation(); noShowCall(btn, {clear:1}, "Undoing"); };
   });
   // Check-in button per reservation: set the count, lock the row, save.
   document.querySelectorAll(".ckin:not(.done)").forEach(btn=>{
