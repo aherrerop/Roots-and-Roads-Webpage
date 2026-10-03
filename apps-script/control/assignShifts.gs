@@ -126,9 +126,10 @@ const PAID_SOURCES_ASSIGN = ASSIGN_CFG.PAID_SOURCES;
 /**
  * Master switch for makeSchedule's AVAILABILITY-BASED auto-assignment. Managers
  * flip it from the Control tab (the "Automatic scheduling: ON/OFF" rows) or by
- * running setAutoScheduling(true/false). Default ON. When OFF, makeSchedule seats
- * only manager LOCKS; the portal's weekly defaults (regular + private) still fill
- * the display, so nobody is auto-picked from availability.
+ * running setAutoScheduling(true/false). Default ON. When OFF, makeSchedule still
+ * seats manager LOCKS and the Weekly_Schedule recurring guide (col G) — the fixed
+ * weekly pattern — but does NOT fill the other seats from availability, and
+ * runWeeklyScheduling does NOT email the schedule.
  */
 function autoScheduleEnabled_() {
   try {
@@ -142,6 +143,29 @@ function setAutoScheduling(on) {
 }
 function enableAutoScheduling()  { return setAutoScheduling(true); }
 function disableAutoScheduling() { return setAutoScheduling(false); }
+
+/**
+ * Which guides may be auto-seated into a staffable shift's remaining seats.
+ *   AUTO ON  -> every guide who ticked availability for the slot (can speak it, not
+ *               on vacation, not already locked, no overlap) — the balancer picks.
+ *   AUTO OFF -> ONLY the Weekly_Schedule recurring guide (col G) for the slot, if
+ *               they can do it; availability is NOT required (it's their standing
+ *               weekly slot). So turning auto off keeps the fixed weekly pattern but
+ *               stops filling the other seats from availability.
+ * The caller has already excluded cleared / vacation-blocked / private shifts.
+ */
+function pickAutoEligible_(shift, autoOn, guides, byName, assignedByGuide) {
+  const locked = shift.lockedGuides || [];
+  const freeOf = g => g && g.active && g.languages[shift.language] === true &&
+    !isGuideOnVacation_(g, shift.dateText) &&
+    !locked.some(n => n.toLowerCase() === g.name.toLowerCase()) &&
+    !hasConflict_(assignedByGuide[g.name] || [], shift.dateTimeObj);
+  if (!autoOn) {
+    const wg = byName[String(shift.weeklyGuide || '').toLowerCase()];
+    return freeOf(wg) ? [wg] : [];
+  }
+  return guides.filter(g => freeOf(g) && shift.availableGuides.includes(g.name));
+}
 
 
 function makeSchedule() {
@@ -273,20 +297,10 @@ function makeSchedule() {
                        !(shift.lockedGuides && shift.lockedGuides.length);
     // Never auto-assign a PRIVATE tour from availability (that is what put Birthe on
     // an English private) — a private takes ONLY its Weekly_Schedule default guide,
-    // applied by the portal. And when the manager has turned automatic scheduling
-    // OFF, nothing auto-fills — only manager locks stay.
-    const noStaff = shift.cleared || vacBlocked || !autoOn || shift.isPrivate;
-
-    const eligible = noStaff ? [] : guides.filter(g =>
-      g.active &&
-      g.languages[shift.language] === true &&
-      shift.availableGuides.includes(g.name) &&
-      !isGuideOnVacation_(g, shift.dateText) &&                 // on vacation -> not auto-assigned
-      !shift.lockedGuides.some(n => n.toLowerCase() === g.name.toLowerCase()) &&
-      !hasConflict_(assignedByGuide[g.name], shift.dateTimeObj)
-    );
-
-    const need = noStaff ? 0 : Math.max(0, (shift.guidesNeeded || 1) - shift.lockedGuides.length);
+    // applied by the portal. Cleared / vacation / private never auto-staff at all.
+    const blocked = shift.cleared || vacBlocked || shift.isPrivate;
+    const eligible = blocked ? [] : pickAutoEligible_(shift, autoOn, guides, byName, assignedByGuide);
+    const need = blocked ? 0 : Math.max(0, (shift.guidesNeeded || 1) - shift.lockedGuides.length);
     const assigned = [];
     const pool = [...eligible];
     while (assigned.length < need && pool.length) {
@@ -957,7 +971,9 @@ function runWeeklyScheduling() {
     ensureWeekTabs_();      // delete past weeks, create the upcoming ones
     syncAvailabilityFile();
     makeSchedule();
-    emailWeeklySchedule();  // send the language tables to management
+    // AUTO OFF: build the schedule (weekly-pattern guides are still seated), but do
+    // NOT email it — the manager is scheduling by hand and doesn't want the blast.
+    if (autoScheduleEnabled_()) emailWeeklySchedule();  // send the language tables to management
   });
 }
 
@@ -1503,6 +1519,7 @@ function buildShifts_(availability, weeklySchedule, guideCalendar) {
         dateText, day: info.day, time: rule.time,
         language: rule.language, guidesNeeded: rule.guidesNeeded,
         sfExt: !!rule.sfExt,                                 // Tour Type = SF -> its own tour
+        weeklyGuide: String(rule.guide || '').trim(),        // Weekly_Schedule col G = the recurring guide for this slot
         availableGuides: availabilityMap[`${dateText}|${info.day}|${rule.time}`] || []
       });
     });

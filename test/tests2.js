@@ -267,6 +267,36 @@ setAutoScheduling(true);
 check('turning it back ON sticks', autoScheduleEnabled_()===true, null);
 PropertiesService.getScriptProperties().deleteProperty('AUTO_SCHEDULE');
 
+console.log('--- Auto OFF: still seat the Weekly_Schedule recurring guide, NOT availability ---');
+// buildShifts_ now carries the recurring guide (Weekly_Schedule col G) onto the shift.
+const _bsRule = [{ day:'Monday', time:'10:00', language:'English', guidesNeeded:1, guide:'Carlos', activeFrom:null, activeUntil:null }];
+const _bsCal = [{ dateText:'2026-10-05', dateObj:new Date('2026-10-05T12:00:00'), day:'Monday', week:'W' }];
+const _bsShifts = buildShifts_([], _bsRule, _bsCal);
+check('buildShifts_ carries the recurring guide (col G) onto the shift',
+  _bsShifts.length===1 && _bsShifts[0].weeklyGuide==='Carlos', _bsShifts[0]);
+// pickAutoEligible_: ON = availability-based; OFF = only the weekly recurring guide.
+const _mkG = (name, langs) => ({ name, active:true, seniority:1,
+  languages:{English:langs.indexOf('English')>-1, German:langs.indexOf('German')>-1, Spanish:false, French:false, Italian:false}, vacations:[] });
+const _carlos = _mkG('Carlos', ['English']), _ana = _mkG('Ana', ['English']), _hans = _mkG('Hans', ['German']);
+const _guides = [_carlos, _ana, _hans];
+const _byName = {}; _guides.forEach(g => _byName[g.name.toLowerCase()] = g);
+// Carlos is the weekly guide but did NOT tick availability; Ana ticked.
+const _shift = { language:'English', dateText:'2026-10-05', dateTimeObj:new Date('2026-10-05T10:00:00'),
+  weeklyGuide:'Carlos', availableGuides:['Ana'], lockedGuides:[] };
+const _elON = pickAutoEligible_(_shift, true, _guides, _byName, {}).map(g=>g.name);
+check('AUTO ON: availability-based (Ana ticked -> eligible; Carlos did not -> not)',
+  _elON.indexOf('Ana')>-1 && _elON.indexOf('Carlos')===-1, _elON);
+const _elOFF = pickAutoEligible_(_shift, false, _guides, _byName, {}).map(g=>g.name);
+check('AUTO OFF: ONLY the weekly recurring guide (Carlos), even without availability',
+  _elOFF.length===1 && _elOFF[0]==='Carlos', _elOFF);
+// OFF but the weekly guide can't do it (on vacation) -> nobody (no availability fallback).
+const _carlosVac = _mkG('Carlos', ['English']); _carlosVac.vacations = [{from:'2026-10-05', to:'2026-10-05'}];
+const _elOFFvac = pickAutoEligible_(_shift, false, [_carlosVac,_ana], {carlos:_carlosVac, ana:_ana}, {}).map(g=>g.name);
+check('AUTO OFF: a weekly guide on vacation is NOT seated, and nobody else fills in', _elOFFvac.length===0, _elOFFvac);
+// OFF but the weekly guide does not speak the language -> not seated.
+const _elOFFlang = pickAutoEligible_({...(_shift), weeklyGuide:'Hans'}, false, _guides, _byName, {}).map(g=>g.name);
+check('AUTO OFF: a weekly guide who does not speak the language is NOT seated', _elOFFlang.length===0, _elOFFlang);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
