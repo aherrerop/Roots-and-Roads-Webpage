@@ -230,6 +230,9 @@ check('history keeps no-show + undo live: stepper read-only, check-in button und
   /const dis = HISTORY_RENDER \? ' disabled' : '';/.test(html) &&
   /root\.querySelectorAll\("\.ckin\.done:not\(\[disabled\]\)"\)/.test(html) &&
   /api\("uncheckin",\{token:store\.token,bookingId:b\.bookingId\}\)/.test(html), null);
+check('history lets management REMOVE a no-show (explicit label, bound undo)',
+  /const undoLabel = HISTORY_RENDER \? 'Remove no-show' : 'Undo';/.test(html) &&
+  /root\.querySelectorAll\("\.noshowundo"\)\.forEach\(btn=>\{ btn\.onclick=\(e\)=>\{ e\.stopPropagation\(\); noShowCall\(btn,\{clear:1\},"Undoing"\)/.test(html), null);
 check('the live poll pauses while the History overlay is open',
   /if\(HISTORY_OPEN\) return false;/.test(html), null);
 check('closing History empties the pane so a poll never touches its cards',

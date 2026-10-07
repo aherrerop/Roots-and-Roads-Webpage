@@ -431,7 +431,12 @@ check('apiNoShow_ accepts a PAST tour (history window)', nsPast && nsPast.ok ===
 rHist = apiHistory_({ token: token });
 const h2b = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '15:00' && t.language === 'English');
 check('the past no-show shows on the history card (paid to Carlos)', h2b && h2b.noShow === true && h2b.noShowGuide === 'Carlos', h2b && [h2b && h2b.noShow, h2b && h2b.noShowGuide]);
-apiNoShow_({ token: token, dateKey: YDAY, time: '15:00', language: 'English', guide: 'Carlos', clear: '1' });
+// MANAGER REMOVES the past no-show -> it disappears from the history card.
+const nsClear = apiNoShow_({ token: token, dateKey: YDAY, time: '15:00', language: 'English', guide: 'Carlos', clear: '1' });
+check('apiNoShow_ clear ok for a manager on a PAST tour', nsClear && nsClear.ok === true && nsClear.cleared === true, nsClear);
+rHist = apiHistory_({ token: token });
+const h2c = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '15:00' && t.language === 'English');
+check('removing the no-show clears it from the history card', h2c && !h2c.noShow, h2c && h2c.noShow);
 // Undo the past check-in: clears the snapshot's M/N, so history shows it un-checked.
 const unPast = apiUncheckin_({ token: token, bookingId: 'HIST001' });
 check('apiUncheckin_ ok for a past-tour check-in', unPast && unPast.ok === true, unPast);

@@ -277,7 +277,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-07-history";
+const PORTAL_VERSION = "2026-10-07-history2";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -974,9 +974,12 @@ function nsInfo(t, guide){
 }
 function noShowControl(t, canAssign){
   if(t.noShow){
-    const canUndo = MANAGER || !canAssign;   // manager, or the guide on their own card
+    // A manager can always remove it; a guide only on their own card. In History the
+    // whole point is that management can take it off that day, so the label is explicit.
+    const canUndo = MANAGER || !canAssign;
+    const undoLabel = HISTORY_RENDER ? 'Remove no-show' : 'Undo';
     return '<div class="noshowbar on"><span class="noshowtag">🚫 Total no-show — '+esc(t.noShowGuide||"the guide")+'</span>'+
-      (canUndo?'<button class="noshowundo" data-noshow=\''+esc(JSON.stringify(nsInfo(t)))+'\'>Undo</button>':'')+'</div>';
+      (canUndo?'<button class="noshowundo" data-noshow=\''+esc(JSON.stringify(nsInfo(t)))+'\'>'+undoLabel+'</button>':'')+'</div>';
   }
   const nsGuide = canAssign ? ((t.assigned&&t.assigned[0])||t.guide||"") : (store.name||"");
   if(!t.bookedGuests || t.checkedGuests>0 || !nsGuide) return "";   // guests expected, none checked in, a guide to pay
