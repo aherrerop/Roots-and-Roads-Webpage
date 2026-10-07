@@ -439,6 +439,21 @@ rHist = apiHistory_({ token: token });
 const h1b = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '10:00' && t.language === 'English');
 check('undo clears the past check-in in the history view (snapshot M/N cleared)', h1b && h1b.bookings.some(b => b.bookingId === 'HIST001' && b.checked === false), h1b && h1b.bookings);
 
+// REGRESSION: a past tour whose check-in lives ONLY in the ledger (no Past2Days
+// snapshot row) must still show the check-in + the guide who ran it — the whole
+// point of History. Seed the Completed Log (roster) + a ledger check-in, NO snapshot.
+const clog = booking.insertSheet('Completed Log');
+clog.getRange(1, 1, 1, 12).setValues([['Date', 'Time', 'Language', 'Name', 'Phone', 'Adults', 'Children', 'Source', 'Income', 'Booking ID', 'Notes', 'Logged']]);
+clog.getRange(2, 2, 1, 1).setNumberFormat('@'); clog.getRange(2, 10, 1, 1).setNumberFormat('@');
+clog.getRange(2, 1, 1, 12).setValues([[new Date(YDAY + 'T12:00:00'), '11:00 AM', 'English', 'Ledger Only', '+34600000020', 2, 0, 'Guruwalk', 0, 'HISTLED1', '', '']]);
+writeGuideLedger_('Carlos', YDAY, '11:00', 'English', [makeLedgerRow_({ dateKey: YDAY, day: dayNameFromKey_(YDAY), timeLabel: '11:00 AM', language: 'English',
+  bookingName: 'Ledger Only', phone: '+34600000020', source: 'Guruwalk', guests: 2, children: 0, checkedIn: 2, weOwe: 0, theyOwe: 10, rrMakes: 10, type: 'Free', bookingId: 'HISTLED1', note: '' })]);
+rHist = apiHistory_({ token: token });
+const hL = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '11:00' && t.language === 'English');
+check('a ledger-only past tour surfaces (roster from Completed Log)', hL && hL.bookings.some(b => b.bookingId === 'HISTLED1'), hL && hL.bookings);
+check('its check-in shows from the LEDGER even with no snapshot row', hL && hL.bookings.some(b => b.bookingId === 'HISTLED1' && b.checked === true && b.checkedIn === 2), hL && hL.bookings);
+check('the tour guide is recovered from the ledger (Carlos)', hL && (hL.assigned || []).indexOf('Carlos') !== -1, hL && hL.assigned);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

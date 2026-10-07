@@ -41,8 +41,8 @@ const resetState = () => PropertiesService.getScriptProperties().deleteProperty(
 console.log('--- grouping: readUpcomingTourGroups_ (per date/time/language/variant, people = adults+children) ---');
 resetState();
 setFeed([
-  { time: '10:30 AM', source: 'GetYourGuide', adults: 12, guide: 'Carlos' },
-  { time: '10:30 AM', source: 'Viator', adults: 6, children: 2 },       // 8 people -> slot totals 20
+  { time: '10:30 AM', source: 'GetYourGuide', adults: 14, guide: 'Carlos' },
+  { time: '10:30 AM', source: 'Viator', adults: 6, children: 2 },       // slot totals 20 adults (+2 children)
   { time: '5:00 PM', source: 'GetYourGuide', adults: 5 },               // a quiet tour
   { time: '10:30 AM', source: 'GetYourGuide', adults: 25, notes: 'Private' }, // private -> excluded
   { time: '10:30 AM', source: 'GYG-SF', adults: 4 }                     // SF -> its OWN tour
@@ -51,11 +51,11 @@ const groups = readUpcomingTourGroups_();
 const k3h = D + '|10:30 AM|english|3h';
 const kSf = D + '|10:30 AM|english|SF';
 const k17 = D + '|5:00 PM|english|3h';
-check('3h 10:30 slot sums adults + children across bookings = 20', groups[k3h] && groups[k3h].people === 20, groups[k3h]);
-check('the SF booking is a SEPARATE tour (not merged into the 3h count)', groups[kSf] && groups[kSf].people === 4, groups[kSf]);
-check('the private 25-person booking is EXCLUDED from any group', !Object.values(groups).some(g => g.people === 25 || g.people === 45), Object.keys(groups));
-check('per-source breakdown is kept (GetYourGuide 12, Viator 8)', groups[k3h] && groups[k3h].sources['GetYourGuide'] === 12 && groups[k3h].sources['Viator'] === 8, groups[k3h] && groups[k3h].sources);
-check('the quiet 17:00 tour is tracked but well under the cap', groups[k17] && groups[k17].people === 5, groups[k17]);
+check('3h 10:30 slot sums ADULTS across bookings = 20 (children tracked separately)', groups[k3h] && groups[k3h].adults === 20 && groups[k3h].children === 2 && groups[k3h].people === 22, groups[k3h]);
+check('the SF booking is a SEPARATE tour (not merged into the 3h count)', groups[kSf] && groups[kSf].adults === 4, groups[kSf]);
+check('the private 25-person booking is EXCLUDED from any group', !Object.values(groups).some(g => g.adults === 25 || g.adults === 45), Object.keys(groups));
+check('per-source breakdown is kept (GetYourGuide 14, Viator 8)', groups[k3h] && groups[k3h].sources['GetYourGuide'] === 14 && groups[k3h].sources['Viator'] === 8, groups[k3h] && groups[k3h].sources);
+check('the quiet 17:00 tour is tracked but well under the cap', groups[k17] && groups[k17].adults === 5, groups[k17]);
 
 console.log('--- a tour reaching the cap sends ONE alert, all info in the subject ---');
 resetState(); sent = [];
@@ -65,11 +65,11 @@ const sub = (sent[0] || {}).subject || '';
 check('subject leads with the red dot then the language', /^🔴 English ·/.test(sub), sub);
 check('subject carries the date (no year) then the time', new RegExp(Utilities.formatDate(new Date(D + 'T12:00:00'), 'Europe/Madrid', 'EEE d MMM') + ' 10:30 AM').test(sub), sub);
 check('subject date has NO year', !/20\d\d/.test(sub), sub);
-check('subject flags it FULL with the people count', /FULL\s+20p/.test(sub), sub);
+check('subject flags it FULL with the ADULT count (+ children noted)', /FULL\s+20 adults \+2k/.test(sub), sub);
 check('subject states the action (close or add 2nd guide)', /close or add 2nd guide/i.test(sub), sub);
 const body = (sent[0] || {}).body || '';
-check('body carries the adults + children split', /20\s+\(18 adults \+ 2 children\)/.test(body), body);
-check('body carries the per-source breakdown', /GetYourGuide: 12/.test(body) && /Viator: 8/.test(body), body);
+check('body leads with adults (cap) and notes children + total', /Adults:\s+20\s+\(plus 2 children/.test(body) && /22 people total/.test(body), body);
+check('body carries the per-source breakdown', /GetYourGuide: 14/.test(body) && /Viator: 8/.test(body), body);
 check('body carries the assigned guide', /Guide:\s+Carlos/.test(body), body);
 check('the alert goes to the internal manager address', (sent[0] || {}).to === RNR.INTERNAL_ALERT_TO, sent[0] && sent[0].to);
 
@@ -98,11 +98,15 @@ sent = [];
 capacityAlerts_();
 check('refilling to the cap alerts again (re-armed)', sent.length === 1, sent.map(s => s.subject));
 
-console.log('--- children alone can push a tour to the cap ---');
+console.log('--- children do NOT count toward the cap (adults only, matches the portal) ---');
 resetState(); sent = [];
-setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 19, children: 1 }]);   // 20 people
+setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 19, children: 5 }]);   // 24 people but only 19 adults
 capacityAlerts_();
-check('adults 19 + children 1 = 20 people crosses the cap', sent.length === 1 && /FULL\s+20p/.test(sent[0].subject), sent.map(s => s.subject));
+check('19 adults + 5 children does NOT cross the cap (children excluded)', sent.length === 0, sent.map(s => s.subject));
+setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 20, children: 5 }]);   // now 20 adults
+sent = [];
+capacityAlerts_();
+check('20 adults crosses the cap regardless of children', sent.length === 1 && /FULL\s+20 adults \+5k/.test(sent[0].subject), sent.map(s => s.subject));
 
 console.log('--- SF and 3h at the same slot are counted SEPARATELY (neither crosses alone) ---');
 resetState(); sent = [];

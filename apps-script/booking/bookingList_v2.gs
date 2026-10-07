@@ -372,9 +372,11 @@ const RNR = {
    * ============================================================ */
   // When an upcoming GROUP tour (a date/time/language/variant card — private
   // tours are excluded, they are their own single group) reaches this many
-  // PEOPLE (adults + children), email management ONCE so they can close it on
-  // the platforms or add a second guide. Fires again only if it drops back
-  // below and later refills. Set to 21 if you want "strictly more than 20".
+  // ADULTS, email management ONCE so they can close it on the platforms or add a
+  // second guide. Children do NOT count toward the cap — the SAME rule as the
+  // guide portal's red "Full" outline (PORTAL.TOUR_FULL_THRESHOLD), so the email
+  // and the portal always agree. Fires again only if it drops back below and later
+  // refills. Set to 21 if you want "strictly more than 20".
   TOUR_FULL_THRESHOLD: 20,
   // Script Property holding the JSON map { tourKey: peopleWhenAlerted } of tours
   // already alerted, so we never spam the same full tour every 5 minutes.
@@ -3922,9 +3924,11 @@ function capacityAlerts_() {
   const crossed = [];
   Object.keys(groups).forEach(key => {
     const g = groups[key];
-    if (g.people >= THRESH) {
+    // ADULTS are the cap (children don't count) — SAME rule as the guide portal's
+    // red "Full" outline, so the email and the portal always agree.
+    if (g.adults >= THRESH) {
       if (prev[key] == null) crossed.push(g);   // was below the cap / unseen -> just crossed it
-      next[key] = g.people;                     // remember we've alerted at this level
+      next[key] = g.adults;                     // remember we've alerted at this level
     }
     // below the cap -> not carried into `next`, so a later refill re-alerts
   });
@@ -3944,20 +3948,21 @@ function capacityAlerts_() {
  *  🔴 {language}[ · SF] · {date, no year} {time} · FULL {people}p — close or add 2nd guide */
 function sendCapacityAlertEmail_(g, thresh) {
   const sfTag = g.variant === 'SF' ? ' · SF' : '';
+  const kids = g.children ? ' +' + g.children + 'k' : '';
   const subject = '🔴 ' + g.language + sfTag + ' · ' + tourDayLabel_(g.dateKey) + ' ' + g.time +
-                  ' · FULL ' + g.people + 'p — close or add 2nd guide';
+                  ' · FULL ' + g.adults + ' adults' + kids + ' — close or add 2nd guide';
   MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: capacityAlertBody_(g, thresh) });
 }
 
 function capacityAlertBody_(g, thresh) {
   const L = [];
-  L.push('This tour has reached the ' + thresh + '-person cap.');
+  L.push('This tour has reached the ' + thresh + '-adult cap (children do not count toward it).');
   L.push('CLOSE it (pause its availability on the platforms / website) OR schedule a second guide.');
   L.push('');
   L.push('Tour:    ' + tourDayLabel_(g.dateKey) + ' at ' + g.time +
          '  (' + g.language + (g.variant === 'SF' ? ' · Sagrada exterior' : '') + ')');
-  L.push('People:  ' + g.people + '  (' + g.adults + ' adult' + (g.adults === 1 ? '' : 's') +
-         ' + ' + g.children + ' child' + (g.children === 1 ? '' : 'ren') + ')');
+  L.push('Adults:  ' + g.adults + '  (plus ' + g.children + ' child' + (g.children === 1 ? '' : 'ren') +
+         ' — ' + g.people + ' people total)');
   L.push('Guide:   ' + (g.guide || 'Not assigned yet'));
   L.push('');
   L.push('By source:');
@@ -3979,10 +3984,10 @@ function sendCapacityDigestEmail_(list, thresh) {
   const blocks = list.map(g => {
     const sfTag = g.variant === 'SF' ? ' · SF' : '';
     return '• ' + g.language + sfTag + ' · ' + tourDayLabel_(g.dateKey) + ' ' + g.time +
-           ' — ' + g.people + ' people (' + g.adults + ' + ' + g.children + ' children)' +
+           ' — ' + g.adults + ' adults (+' + g.children + ' children, ' + g.people + ' total)' +
            ' — guide: ' + (g.guide || 'none');
   });
-  const body = list.length + ' upcoming tours have reached the ' + thresh + '-person cap. ' +
+  const body = list.length + ' upcoming tours have reached the ' + thresh + '-adult cap. ' +
     'Close each on the platforms / website, or add a second guide:\n\n' + blocks.join('\n') +
     '\n\n(One alert per tour — they will not repeat unless they drop below ' + thresh + ' and refill.)';
   MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: body });

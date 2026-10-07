@@ -2822,18 +2822,32 @@ function apiHistory_(p) {
   });
 
   let schedule = buildHistoryFromFeed_(feed, loKey, today);
+
+  // Ledger = the money truth for who was checked in (and what undo mutates), and
+  // the reliable record of who RAN each past tour. Scan ALL active guides for the
+  // window: the Past2Days snapshot can be empty right after rollout, so check-ins
+  // must come from the ledger, not only the snapshot's M/N.
+  let priorCheckins = {}, guideByShift = {};
+  try {
+    const raw = readGuidesRaw_();
+    const cols = guideColumns_(raw.header);
+    const allGuides = raw.rows.map(row => parseGuideRow_(row, cols))
+      .filter(g => g.name && g.active).map(g => g.name);
+    const lh = readLedgerHistory_(allGuides, loKey);
+    priorCheckins = lh.checkins || {};
+    guideByShift = lh.guideByShift || {};
+  } catch (e) { priorCheckins = {}; guideByShift = {}; }
+
+  // Fill the tour's guide from the ledger when the snapshot didn't carry it, so the
+  // card shows who ran it (and the no-show control has a guide to pay) even on day 1.
+  schedule.forEach(s => {
+    if ((!s.assigned || !s.assigned.length)) {
+      const g = guideByShift[shiftKey_(s.dateKey, s.minutes, s.language)];
+      if (g) { s.assigned = [g]; s.status = 'OK'; }
+    }
+  });
   applyNoShowOverlay_(schedule);                                  // surface a no-show already flagged
   sortSchedule_(schedule);
-
-  // Ledger union — the money truth for who was checked in, and what undo mutates.
-  // Read only the guides that ran these tours (a small set).
-  let priorCheckins = {};
-  try {
-    const gset = {};
-    schedule.forEach(s => (s.assigned || []).forEach(g => { if (g) gset[g] = true; }));
-    const guides = Object.keys(gset);
-    if (guides.length) priorCheckins = (readLedgerForGuides_(guides) || {}).checkins || {};
-  } catch (e) { priorCheckins = {}; }
   const g2ck = checkinGuide2Set_();
 
   const tours = schedule.map(shift => {
@@ -3888,6 +3902,46 @@ function readLedgerForGuides_(names) {
       if (!prev || updated >= prev._u) {
         out.checkins[ckKey] = { n: Number(r[LEDGER_CHECKEDIN_COL] || 0),
                                 at: hhmmFromStamp_(r[LEDGER_UPDATED_COL]), _u: updated };
+      }
+    });
+  });
+  return out;
+}
+
+/**
+ * For the MANAGER HISTORY view: scan EVERY guide's ledger tab for rows on/after
+ * loKey and return (a) the check-ins keyed shiftKey|bookingId, and (b) which guide
+ * ran each shift (the tab the rows live in). The ledger is the money truth and the
+ * only reliable record of who was checked in on a PAST tour — the Past2Days feed
+ * snapshot may be empty right after rollout, so history must not depend on it for
+ * check-ins. A history open is a rare, manual manager action, so reading all tabs
+ * once is fine. Synthetic 'No-show' rows set the guide (they ran it) but are not
+ * guest check-ins.
+ */
+function readLedgerHistory_(guides, loKey) {
+  const out = { checkins: {}, guideByShift: {} };
+  let ss; try { ss = ledgerSS_(); } catch (e) { return out; }
+  (guides || []).filter(Boolean).forEach(name => {
+    const sh = ss.getSheetByName(String(name).substring(0, 90));
+    if (!sh || sh.getLastRow() < 2) return;
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
+    v.forEach(r => {
+      const dateKey = toDateKey_(r[0]);
+      if (!dateKey || (loKey && dateKey < loKey)) return;            // window: on/after loKey
+      const minutes = timeToMinutes_(normTime24_(r[2]));
+      const language = String(r[3] || '').trim();
+      const bookingId = String(r[LEDGER_BOOKINGID_COL] || '').trim();
+      if (!bookingId) return;
+      const key = shiftKey_(dateKey, minutes, language);
+      out.guideByShift[key] = name;                                  // this guide ran the shift
+      if (/^NOSHOW\|/.test(bookingId)) return;                       // pay row, not a guest check-in
+      const n = Number(r[LEDGER_CHECKEDIN_COL] || 0);
+      if (n <= 0) return;
+      const ckKey = key + '|' + bookingId;
+      const updated = String(r[LEDGER_UPDATED_COL] || '');
+      const prev = out.checkins[ckKey];
+      if (!prev || updated >= prev._u) {
+        out.checkins[ckKey] = { n: n, at: hhmmFromStamp_(r[LEDGER_UPDATED_COL]), _u: updated };
       }
     });
   });
