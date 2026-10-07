@@ -50,6 +50,16 @@
   .topbar .who{font-size:13px;color:var(--muted);margin-top:2px}
   .iconbtn{background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:6px 8px;border-radius:8px}
   .iconbtn:hover{background:#e4e7ec}
+  .topbar .actions{display:flex;align-items:center;gap:2px}
+  .histbtn{background:#eef2fb;border:1px solid #d3ddf2;color:#2547a0;font-weight:800;font-size:13px;cursor:pointer;padding:7px 12px;border-radius:9px}
+  .histbtn:hover{background:#e2e9f8}
+  /* HISTORY overlay: the last 2 days of tours, for marking no-shows + undoing check-ins. */
+  .histview{position:fixed;inset:0;z-index:50;background:var(--bg,#f4f6fa);overflow:auto;-webkit-overflow-scrolling:touch}
+  .histview .histwrap{max-width:720px;margin:0 auto;padding:14px 14px 40px}
+  .histhdr{display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--bg,#f4f6fa);padding:8px 2px 12px;margin-bottom:6px;border-bottom:1px solid #e2e6ee}
+  .histhdr h2{font-size:22px;font-weight:800;margin:0}
+  .histhdr .sub{font-size:12px;color:var(--muted);margin-top:2px}
+  .histclose{background:var(--ink);color:#fff;border:none;border-radius:999px;padding:8px 16px;font-weight:800;cursor:pointer}
 
   .tabs{display:flex;gap:8px;margin:0 2px 18px}
   .tab{flex:1;text-align:center;padding:11px;border-radius:12px;background:#e2e5ea;color:var(--muted);font-weight:700;cursor:pointer;border:none;font-size:14px}
@@ -175,7 +185,10 @@
   <div id="dashView" class="hidden">
     <div class="topbar">
       <div><h1>Tours</h1><div id="who" class="who"></div></div>
-      <button id="logoutBtn" class="iconbtn">Log out</button>
+      <div class="actions">
+        <button id="historyBtn" class="histbtn hidden" title="Tours from the last 2 days — mark no-shows, undo check-ins">History</button>
+        <button id="logoutBtn" class="iconbtn">Log out</button>
+      </div>
     </div>
     <div class="tabs">
       <button id="tabTours" class="tab active">My tours</button>
@@ -185,6 +198,18 @@
     <div id="toursPane"><div class="spin">Loading…</div></div>
     <div id="schedPane" class="hidden"></div>
     <div id="ver" class="ver"></div>
+  </div>
+
+  <!-- MANAGER history overlay: the last 2 days of tours, for marking Guruwalk/Freetour
+       no-shows and undoing check-ins after a tour ran. Opened by the History button. -->
+  <div id="historyView" class="histview hidden">
+    <div class="histwrap">
+      <div class="histhdr">
+        <div><h2>History</h2><div class="sub" id="histSub">Last 2 days</div></div>
+        <button id="histCloseBtn" class="histclose">Done</button>
+      </div>
+      <div id="historyPane"><div class="spin">Loading…</div></div>
+    </div>
   </div>
 
 </div>
@@ -252,7 +277,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-01-noshow-label";
+const PORTAL_VERSION = "2026-10-07-history";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -388,6 +413,12 @@ const store = {
   set tab(v){ try{ localStorage.setItem("rr_tab", v||""); }catch(e){} }
 };
 let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
+// HISTORY view (manager-only): the last 2 days of tours, rendered read-only except
+// for the no-show + undo-check-in controls. HISTORY_RENDER is true only while the
+// history cards' HTML is being built, so the shared card helpers drop the editing
+// UI (assign/move/close/new check-in). Its own cache + binding keep it isolated
+// from the live poll, which pauses while the overlay is open.
+let HISTORY_RENDER=false, HISTORY_OPEN=false, HISTORY_CACHE=[];
 // Which tour cards are EXPANDED, by tour id — so an auto-refresh (poll) never
 // collapses a card the manager is watching. Backed by localStorage so a
 // version-reload keeps it open too; self-prunes to cards still on screen.
@@ -505,6 +536,8 @@ async function doLogin(){
   }
 }
 $("logoutBtn").onclick=()=>{ store.token=""; location.reload(); };
+$("historyBtn").onclick=()=>{ openHistory(); };
+$("histCloseBtn").onclick=()=>{ closeHistory(); };
 
 /* ================== TABS ================== */
 $("tabTours").onclick=()=>switchTab("tours");
@@ -556,6 +589,7 @@ document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.cl
 let MUTATING = 0;   // >0 while a write (assign/save/move/…) is in flight
 function canAutoRefresh(){
   if(!store.token || document.hidden) return false;
+  if(HISTORY_OPEN) return false;                          // the History overlay is open — don't churn under it
   if(MUTATING > 0) return false;                          // never poll mid-write
   // Never re-render while the "Open a schedule" form is open — a poll would wipe
   // the half-filled new tour before it can be submitted.
@@ -756,6 +790,7 @@ function renderAll(r){
   applyPendingAssigns(r);                // stale reads can never undo your last action
   applyPendingCheckins(r);               // a queued (offline) check-in still shows ✓ ⏳ after a reload
   MANAGER=!!r.manager;
+  const hb=$("historyBtn"); if(hb) hb.classList.toggle("hidden", !MANAGER);   // History is a manager tool
   HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||3;
   GUIDES_BY_LANG=r.guidesByLanguage||{};
   const all=r.allTours||[];
@@ -900,9 +935,9 @@ function tourCard(t, canAssign, dayTimes){
   if(!assigned.length && canAssign) chips = needsGuide
     ? '<span class="chip needs">⚠ Needs a guide</span>'
     : '<span class="chip miss">Not assigned</span>';
-  if(canAssign) chips+=assignSelect(t);
+  if(canAssign && !HISTORY_RENDER) chips+=assignSelect(t);
   // FULL tour (20+): a manager can add a SECOND guide (default Not assigned).
-  if(canAssign && t.full) chips+=assignSelect(t,2);
+  if(canAssign && !HISTORY_RENDER && t.full) chips+=assignSelect(t,2);
   // FULL tour (20+ guests): prompt a second guide + reopen. The red outline is on
   // the card (.tour.full); this badge spells out the action.
   if(t.full) chips = '<span class="chip fullbadge" title="This tour is full (20+ guests). Assign a second guide and reopen it if you can.">🔴 Full'+(canAssign?' — add 2nd guide, reopen':'')+'</span>'+chips;
@@ -911,7 +946,8 @@ function tourCard(t, canAssign, dayTimes){
   let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language,t,dayTimes)).join("");
   if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   // Small round ✕ in the card's top-right corner — DELETES the tour (frees its guide).
-  const closeBtn=canAssign?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Delete this tour">✕</button>':'';
+  // Never in History (a past tour isn't deleted from here).
+  const closeBtn=(canAssign && !HISTORY_RENDER)?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Delete this tour">✕</button>':'';
   // GUIDES (not management) get a green tour when people are signed up, red when
   // it's empty. Managers keep the plain card (they have the counts + assign UI).
   const peopleCls = MANAGER ? '' : (Number(t.bookedGuests)>0 ? ' has-people' : ' no-people');
@@ -953,8 +989,9 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   // Manager: move this booking to another LANGUAGE and/or TIME in ONE step. The
   // "Move" button appears only once a dropdown is changed, then applies BOTH
   // together — so a language + time change is a single move, no intermediate tour.
+  const canEdit = canAssign && !HISTORY_RENDER;   // History is read-only except no-show + undo
   let mvbox = '';
-  if(canAssign && b.bookingId && tour){
+  if(canEdit && b.bookingId && tour){
     const times=(dayTimes||[]).slice();
     if(!times.some(x=>x.time===tour.time)) times.unshift({time:tour.time,timeLabel:tour.timeLabel||tour.time});
     const info={bookingId:b.bookingId,fromLanguage:lang,fromTime:tour.time,fromDate:tour.dateKey,name:b.name||b.bookingId};
@@ -969,9 +1006,9 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   // Per-booking note: a small post-it icon next to the language dropdown.
   const ref = esc(tourId+'~'+i);
   const hasN = !!b.manualNote;
-  const noteBtn = (canAssign||hasN) && b.bookingId
+  const noteBtn = (canEdit||hasN) && b.bookingId
     ? '<button class="bnotebtn'+(hasN?' has':'')+'" data-bnote="'+ref+'" title="'+(hasN?esc(b.manualNote):'Add a note')+'">'+POSTIT+'</button>' : '';
-  const noteEditor = canAssign && b.bookingId
+  const noteEditor = canEdit && b.bookingId
     ? '<div class="bnotepanel" data-bnp="'+ref+'" hidden><textarea class="bnoteta" placeholder="Note for this booking…">'+esc(b.manualNote||'')+'</textarea>'+
       '<div class="noterow"><button class="bnotesave" data-bns="'+ref+'" data-bid="'+esc(b.bookingId)+'" data-blang="'+esc(lang)+'">Save</button>'+
       '<button class="bnoteclose">Close</button><span class="notemsg" data-bnm="'+ref+'"></span></div></div>'
@@ -991,7 +1028,9 @@ function ckBtn(tourId,i,b,gi,label,title){
   const onThis = !gi || (Number(b.guideIndex)||1)===gi;   // this guest is on THIS guide
   const done = !!b.checked && onThis;
   const lockedOther = !!b.checked && !!gi && !onThis;      // checked on the OTHER guide -> locked until undo
-  const dis = (done && !(MANAGER && !b.pending)) || lockedOther;
+  // In History: only a checked-in guest's button is active (tap = undo); new
+  // check-ins are disabled. Live: a done button is tappable only by a manager (undo).
+  const dis = HISTORY_RENDER ? (!done) : ((done && !(MANAGER && !b.pending)) || lockedOther);
   const txt = done ? (b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))) : (gi?esc(label):'Check in');
   return '<button class="ckin'+(done?' done':'')+(gi?' g'+gi:'')+(lockedOther?' lockedother':'')+'" data-ck="'+ref+'"'+
     (dis?' disabled':'')+(title?' title="'+esc(title)+'"':'')+'>'+txt+'</button>';
@@ -1006,9 +1045,10 @@ function checkinButtons(tourId,b,i,tour){
 }
 function stepper(tourId,ref,val,max,total,kids){
   const kidsHtml = kids?'<span class="kids">+'+kids+'</span>':'';
+  const dis = HISTORY_RENDER ? ' disabled' : '';   // History shows the count read-only (no new check-ins)
   return '<div class="stepper" data-ref="'+esc(ref)+'" data-tour="'+esc(tourId)+'" data-max="'+max+'">'+
-    '<button class="js-dec">−</button><span class="val">'+val+'</span>'+
-    (total?'<span class="of">/'+total+kidsHtml+'</span>':'')+'<button class="js-inc">+</button></div>';
+    '<button class="js-dec"'+dis+'>−</button><span class="val">'+val+'</span>'+
+    (total?'<span class="of">/'+total+kidsHtml+'</span>':'')+'<button class="js-inc"'+dis+'>+</button></div>';
 }
 function bindTours(tours){
   TOURS_CACHE=tours;
@@ -1356,6 +1396,94 @@ function renderSchedule(rows){
   pane.innerHTML=html;
   const lm=$("loadMoreBtn_sched");
   if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
+}
+
+/* ================== HISTORY (manager: last 2 days) ==================
+   A manager-only overlay of the tours that already ran (last PORTAL.HISTORY_DAYS
+   days), so no-shows (Guruwalk/Freetour) can be marked and a wrong check-in undone
+   after the fact. It fetches action=history and renders the SAME tour cards in a
+   read-only mode (no assign/move/close/new check-in) — only the no-show control and
+   the tap-✓-to-undo stay live. Isolated from the live poll: its own cache + binding,
+   and the poll pauses while it's open. */
+async function openHistory(){
+  if(!MANAGER) return;
+  HISTORY_OPEN=true;
+  $("historyView").classList.remove("hidden");
+  $("historyPane").innerHTML='<div class="spin">Loading…</div>';
+  await historyRefresh();
+}
+function closeHistory(){
+  HISTORY_OPEN=false;
+  $("historyView").classList.add("hidden");
+  $("historyPane").innerHTML="";          // drop the cards so a live poll never touches them
+  HISTORY_CACHE=[];
+}
+async function historyRefresh(){
+  let r; try{ r=await api("history",{token:store.token}); }
+  catch(err){ $("historyPane").innerHTML='<div class="loaderr"><b>Could not load history.</b>Check your connection and tap Done, then History again.</div>'; return; }
+  if(!r || !r.ok){
+    if(r && /expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
+    $("historyPane").innerHTML='<div class="empty">'+esc((r&&r.error)||"Could not load history.")+'</div>'; return;
+  }
+  const sub=$("histSub"); if(sub) sub.textContent="Last "+(r.days||2)+" days"+(r.now?" · updated "+esc(r.now):"");
+  renderHistory(r.tours||[]);
+}
+function renderHistory(tours){
+  HISTORY_CACHE=tours;
+  const pane=$("historyPane");
+  if(!tours.length){ pane.innerHTML='<div class="empty">No tours with bookings in the last 2 days.</div>'; return; }
+  // Build the cards in history mode so the shared helpers drop the editing UI.
+  HISTORY_RENDER=true;
+  let html="";
+  try{
+    groupByDay(tours).forEach(day=>{
+      html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
+      const dayTimes=[];
+      day.items.forEach(t=>{ if(!dayTimes.some(x=>x.time===t.time)) dayTimes.push({time:t.time,timeLabel:t.timeLabel||t.time}); });
+      day.items.sort((a,b)=>String(a.time).localeCompare(String(b.time)));
+      day.items.forEach(t=> html+=tourCard(t, true, dayTimes));   // canAssign=true -> manager no-show guide + undo
+    });
+  } finally { HISTORY_RENDER=false; }
+  pane.innerHTML=html;
+  bindHistoryCards();
+}
+function bindHistoryCards(){
+  const root=$("historyPane"); if(!root) return;
+  // Expand/collapse (open by default so a manager sees the rosters at a glance).
+  root.querySelectorAll(".tour .bookings").forEach(b=>{ b.style.display=""; });
+  root.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{
+    const card=h.closest(".tour"); const b=card&&card.querySelector(".bookings"); if(!b) return;
+    b.style.display = b.style.display==="none" ? "" : "none";
+  }; });
+  // FULL NO-SHOW — same action as the live view, then refresh history.
+  const noShowCall=async (btn,extra,verb)=>{
+    let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(e){ return; }
+    btn.disabled=true; btn.textContent=verb+"…"; MUTATING++;
+    let msg="";
+    try{ const r=await api("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
+    catch(err){ msg=err.message||"Network problem — try again"; }
+    MUTATING--; await historyRefresh(); if(msg) alert(msg);
+  };
+  root.querySelectorAll(".noshowbtn").forEach(btn=>{ btn.onclick=async (e)=>{ e.stopPropagation();
+    if(!confirm("Mark this tour as a total no-show?\nNobody in the group came.")) return; noShowCall(btn,{},"Saving"); }; });
+  root.querySelectorAll(".noshowundo").forEach(btn=>{ btn.onclick=(e)=>{ e.stopPropagation(); noShowCall(btn,{clear:1},"Undoing"); }; });
+  // UNDO a check-in — tap a ✓ (enabled only on checked guests in history).
+  root.querySelectorAll(".ckin.done:not([disabled])").forEach(btn=>{
+    btn.title="Tap to undo this check-in";
+    btn.onclick=async ()=>{
+      const parts=btn.dataset.ck.split("~"); const tid=parts[0], idx=+parts[1];
+      const t=HISTORY_CACHE.find(x=>x.id===tid); if(!t) return;
+      const b=t.bookings[idx]; if(!b||!b.bookingId) return;
+      if(!confirm("Undo the check-in for "+(b.name||"this guest")+"?\nThis removes it from the ledger and the feed.")) return;
+      const old=btn.textContent; btn.disabled=true; btn.textContent="Undoing…"; MUTATING++;
+      let ok=false, errMsg="";
+      try{ const r=await api("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
+      catch(err){ errMsg=err.message||"Network problem — try again"; }
+      MUTATING--;
+      if(ok){ await historyRefresh(); }
+      else { btn.disabled=false; btn.textContent=old; alert(errMsg||"Could not undo"); }
+    };
+  });
 }
 
 /* ================== BOOT ================== */

@@ -129,6 +129,14 @@ check('a 20-guest group tour is flagged full (red outline)', shFull && shFull.fu
 check('a full tour with <2 guides flags needsSecondGuide', shFull && shFull.needsSecondGuide === true, shFull && shFull.needsSecondGuide);
 const shSmall = (rFull.allTours || []).find(s => s.dateKey === DATE && s.time === '12:00' && s.language === 'English');
 check('a small (<20) group tour is NOT full', shSmall && shSmall.full === false, shSmall && [shSmall && shSmall.bookedGuests, shSmall && shSmall.full]);
+// CHILDREN DON'T COUNT toward the 20: 19 adults + 5 children = 24 people but only
+// 19 ADULTS, so the tour is NOT full (the cap is adults one guide can lead).
+en.getRange(en.getLastRow() + 1, 1, 1, 9).setValues([
+  ['Kids Group', '+34600777000', 19, new Date(DATE + 'T12:00:00'), '9:00 AM', 'GetYourGuide', 285, 'GYGKIDS19', 'Family · 5 children']]);
+const rKids = apiTours_({ token: token });
+const shKids = (rKids.allTours || []).find(s => s.dateKey === DATE && s.time === '9:00' && s.language === 'English');
+check('children are counted and shown (bookedChildren=5)', shKids && shKids.bookedChildren === 5, shKids && [shKids && shKids.bookedGuests, shKids && shKids.bookedChildren]);
+check('19 adults + 5 children is NOT full (children excluded from the 20)', shKids && shKids.full === false, shKids && [shKids && shKids.bookedGuests, shKids && shKids.bookedChildren, shKids && shKids.full]);
 
 console.log('--- Second guide (B): a portal overlay, never touches grid/feed/scheduler ---');
 const aSg = apiAssign_({ token: token, dateKey: DATE, time: '14:00', language: 'English', guide: 'Albert', slot: 2 });
@@ -399,6 +407,37 @@ check('old guest PHONE is cleared', drs.getRange(2, 2).getValue() === '', drs.ge
 check('old row KEEPS its anonymized count (2)', Number(drs.getRange(2, 3).getValue()) === 2, drs.getRange(2, 3).getValue());
 check('recent guest is UNTOUCHED', drs.getRange(3, 1).getValue() === 'Recent Guest', drs.getRange(3, 1).getValue());
 check('a second purge is a no-op (idempotent)', purgeSheetPII_(drs, 3, [0, 1], drCut, false) === 0, null);
+
+console.log('--- MANAGER HISTORY: last 2 days from Past2Days (mark no-shows, undo check-ins) ---');
+const YDAY = dayKey(-1);
+const past = booking.insertSheet('Past2Days');
+past.getRange(1, 1, 1, 16).setValues([['Date', 'Time', 'Language', 'Name', 'Phone', 'Adults', 'Children',
+  'Source', 'Income', 'Booking ID', 'Notes', 'Manager note', 'Checked-in', 'Check-in time', 'Guide', 'Type']]);
+past.getRange(2, 2, 2, 1).setNumberFormat('@'); past.getRange(2, 10, 2, 1).setNumberFormat('@'); past.getRange(2, 14, 2, 1).setNumberFormat('@');
+past.getRange(2, 1, 2, 16).setValues([
+  [YDAY, '10:00 AM', 'English', 'Hist One', '+34600000010', 3, 0, 'GetYourGuide', 45, 'HIST001', '', '', 3, '10:05', 'Carlos', 'booking'],
+  [YDAY, '03:00 PM', 'English', 'Hist Two', '+34600000011', 4, 0, 'Guruwalk', 0, 'HIST002', '', '', '', '', 'Carlos', 'booking']]);
+let rHist = apiHistory_({ token: token });
+check('apiHistory_ ok for a manager, flagged history, window = 2 days', rHist && rHist.ok === true && rHist.history === true && rHist.days === 2, rHist && rHist.error);
+const h1 = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '10:00' && t.language === 'English');
+const h2 = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '15:00' && t.language === 'English');
+check('a past tour surfaces with its guide (Carlos) from the snapshot', h1 && (h1.assigned || []).indexOf('Carlos') !== -1, h1 && h1.assigned);
+check('the past tour shows its check-in from the snapshot M/N', h1 && h1.bookings.some(b => b.bookingId === 'HIST001' && b.checked === true && b.checkedIn === 3), h1 && h1.bookings);
+check('the un-checked past tour shows its guest as not checked in', h2 && h2.bookings.some(b => b.bookingId === 'HIST002' && b.checked === false), h2 && h2.bookings);
+check('a non-manager cannot open history (managers only)', (function () { const r = apiHistory_({ token: makeToken_('Carlos') }); return r && r.ok === false && /manager/i.test(r.error || ''); })(), null);
+// Mark the un-checked past tour as a total no-show (the guide is still paid).
+const nsPast = apiNoShow_({ token: token, dateKey: YDAY, time: '15:00', language: 'English', guide: 'Carlos' });
+check('apiNoShow_ accepts a PAST tour (history window)', nsPast && nsPast.ok === true, nsPast);
+rHist = apiHistory_({ token: token });
+const h2b = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '15:00' && t.language === 'English');
+check('the past no-show shows on the history card (paid to Carlos)', h2b && h2b.noShow === true && h2b.noShowGuide === 'Carlos', h2b && [h2b && h2b.noShow, h2b && h2b.noShowGuide]);
+apiNoShow_({ token: token, dateKey: YDAY, time: '15:00', language: 'English', guide: 'Carlos', clear: '1' });
+// Undo the past check-in: clears the snapshot's M/N, so history shows it un-checked.
+const unPast = apiUncheckin_({ token: token, bookingId: 'HIST001' });
+check('apiUncheckin_ ok for a past-tour check-in', unPast && unPast.ok === true, unPast);
+rHist = apiHistory_({ token: token });
+const h1b = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '10:00' && t.language === 'English');
+check('undo clears the past check-in in the history view (snapshot M/N cleared)', h1b && h1b.bookings.some(b => b.bookingId === 'HIST001' && b.checked === false), h1b && h1b.bookings);
 
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');

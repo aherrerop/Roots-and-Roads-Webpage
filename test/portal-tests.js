@@ -190,7 +190,7 @@ check('a full (20+) tour gets a red outline class + Full badge',
 // B: a full card offers a SECOND guide dropdown (slot 2); it posts slot:2, and the
 // slot-2 overlay is held clear of the slot-1 optimistic hold.
 check('a full card renders a 2nd-guide dropdown (slot 2) that posts slot:2',
-  /function assignSelect\(t, slot\)\{/.test(html) && /if\(canAssign && t\.full\) chips\+=assignSelect\(t,2\)/.test(html) &&
+  /function assignSelect\(t, slot\)\{/.test(html) && /if\(canAssign && !HISTORY_RENDER && t\.full\) chips\+=assignSelect\(t,2\)/.test(html) &&
   /sfExt:t\.sfExt\?1:"",slot:slot/.test(html), null);
 check('the 2nd-guide change uses the overlay path (no optimistic hold / conflict)',
   /if\(info\.slot===2\)\{/.test(html) && /s\.secondGuide && !s\.assigned\.some\(a=>a&&a\.toLowerCase\(\)===s\.secondGuide\.toLowerCase\(\)\)/.test(html), null);
@@ -213,6 +213,27 @@ check('a full no-show control offers "Total no-show" and undo, with no € amoun
 check('the no-show control posts action=noshow (set + clear) and shows a badge',
   /api\("noshow",Object\.assign\(\{token:store\.token\},extra,info\)\)/.test(html) &&
   /noShowCall\(btn, \{clear:1\}, "Undoing"\)/.test(html) && /\.chip\.noshowchip\{/.test(html), null);
+
+console.log('--- HISTORY (manager: last 2 days) — mark no-shows + undo check-ins after a tour ran ---');
+check('a manager-only History button + overlay exist',
+  /id="historyBtn" class="histbtn hidden"/.test(html) && /id="historyView" class="histview hidden"/.test(html) &&
+  /hb\.classList\.toggle\("hidden", !MANAGER\)/.test(html), null);
+check('opening History fetches action=history and renders cards in history mode',
+  /function openHistory\(\)\{/.test(html) && /api\("history",\{token:store\.token\}\)/.test(html) &&
+  /HISTORY_RENDER=true;/.test(html) && /tourCard\(t, true, dayTimes\)/.test(html), null);
+check('history mode drops the editing UI (close / assign / 2nd-guide) from the card',
+  /const closeBtn=\(canAssign && !HISTORY_RENDER\)\?/.test(html) &&
+  /if\(canAssign && !HISTORY_RENDER\) chips\+=assignSelect\(t\);/.test(html) &&
+  /const canEdit = canAssign && !HISTORY_RENDER;/.test(html), null);
+check('history keeps no-show + undo live: stepper read-only, check-in button undo-only',
+  /const dis = HISTORY_RENDER \? \(!done\) :/.test(html) &&
+  /const dis = HISTORY_RENDER \? ' disabled' : '';/.test(html) &&
+  /root\.querySelectorAll\("\.ckin\.done:not\(\[disabled\]\)"\)/.test(html) &&
+  /api\("uncheckin",\{token:store\.token,bookingId:b\.bookingId\}\)/.test(html), null);
+check('the live poll pauses while the History overlay is open',
+  /if\(HISTORY_OPEN\) return false;/.test(html), null);
+check('closing History empties the pane so a poll never touches its cards',
+  /\$\("historyPane"\)\.innerHTML="";/.test(html), null);
 
 console.log('--- Auto-refresh never interrupts a mid-action user (no wiped forms) ---');
 check('the poll pauses while the "Open a schedule" form is open', /details\.openform\[open\]"\)\) return false;/.test(html), null);

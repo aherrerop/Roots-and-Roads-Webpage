@@ -145,7 +145,13 @@ const RNR = {
     // opening and scanning six. Rebuilt every run. Columns L,M (Checked-in,
     // Check-in time) are the portal's alone — the rebuild preserves them by
     // Booking ID and never overwrites them.
-    PORTAL_FEED: 'Portal Feed'
+    PORTAL_FEED: 'Portal Feed',
+    // Rolling snapshot of the Portal Feed rows for the last PAST_FEED_DAYS days as
+    // they age out of the live feed. Same columns as the Portal Feed, incl. the
+    // check-in (M/N) and Guide (O) the Completed Log does NOT keep — so the
+    // manager "History" view in the portal can show who ran each past tour, who was
+    // checked in, and let a no-show / undo be recorded after the tour ran.
+    PAST_FEED: 'Past2Days'
   },
 
   // Portal Feed columns. A-L are reservation data (rebuilt); M-N are check-in
@@ -164,6 +170,10 @@ const RNR = {
   // How far ahead the feed carries reservations. Matches the portal's upcoming
   // window so My-tours (which can look weeks out) is fully served from the feed.
   PORTAL_FEED_DAYS: 45,
+  // How many days BACK the Past2Days snapshot keeps (today-N .. yesterday). Must
+  // match the portal's PORTAL.HISTORY_DAYS so the manager History view and the
+  // snapshot agree on the window.
+  PAST_FEED_DAYS: 2,
 
   ACTIVE_HEADERS: [
     'Name',
@@ -3650,10 +3660,12 @@ function rebuildPortalFeed_() {
   //    this the rebuild would wipe them every 5 minutes.
   const prev = {};
   const shiftRows = [];   // full 16-col Type='shift' rows to carry over
+  let oldRows = [];       // the pre-rebuild feed rows — the ones now aging out feed the Past2Days snapshot
   const last = sh.getLastRow();
   if (last >= 2) {
     const cols = Math.min(Math.max(sh.getLastColumn(), 10), 16);
     const v = sh.getRange(2, 1, last - 1, cols).getValues();
+    oldRows = v;
     v.forEach(r => {
       if (String(r[15] || '').trim().toLowerCase() === 'shift') {   // P = Type
         const row16 = r.slice(0, 16); while (row16.length < 16) row16.push('');
@@ -3670,6 +3682,11 @@ function rebuildPortalFeed_() {
       };
     });
   }
+
+  // 1b. Snapshot the rows now aging out (dateKey before today) into the Past2Days
+  //     tab, so the manager History view keeps each past tour's roster WITH its
+  //     check-in (M/N) and assigned guide (O) — detail the Completed Log drops.
+  updatePast2DaysFeed_(ss, oldRows);
 
   // 2. Gather in-window reservations from every active language tab. Read 10
   //    columns so the portal's per-booking Manager note (col J) rides along.
@@ -3743,6 +3760,73 @@ function rebuildPortalFeed_() {
     sh.getRange(2, 1, rows.length, H.length).setValues(rows);
   }
   return rows.length;
+}
+
+/**
+ * Maintain the Past2Days tab — a rolling snapshot of the Portal Feed rows for the
+ * last RNR.PAST_FEED_DAYS days. A tour on day D has live-feed rows only while
+ * D >= today; the first rebuild after midnight sees D's rows aging out (via the
+ * oldFeedRows the rebuild just read) and copies them here, WITH their check-in
+ * (M/N) and assigned guide (O). Merged with the rows already here and pruned to
+ * the window, so each past day's detail survives exactly PAST_FEED_DAYS days.
+ * This is what powers the portal's manager "History" view (mark Guruwalk/Freetour
+ * no-shows, undo a check-in) after a tour has run and left the live feed.
+ * `oldFeedRows` = the pre-rebuild Portal Feed rows (freshest M/N/O). Best-effort:
+ * a failure here never breaks the live-feed rebuild.
+ */
+function updatePast2DaysFeed_(ss, oldFeedRows) {
+  try {
+    const H = RNR.PORTAL_FEED_HEADERS;
+    const today = stripTime_(new Date());
+    const hiMs = today.getTime();                          // strictly before today
+    const loMs = hiMs - RNR.PAST_FEED_DAYS * 86400000;     // and no older than N days back
+    const inWindow = ms => ms >= loMs && ms < hiMs;
+
+    let sh = ss.getSheetByName(RNR.SHEETS.PAST_FEED);
+
+    // One row per booking per shift; a later writer (the fresh feed) wins over a
+    // stale snapshot copy, so M/N/O stay current right up to the moment of aging out.
+    const byKey = {};
+    const keyOf = r => String(r[9] || '').trim() + '|' +
+      dateKey_(normalizeDate_(r[0])) + '|' + normalizeTime_(r[1]) + '|' +
+      String(r[2] || '').toLowerCase() + '|' + (/privat/i.test(String(r[10] || '')) ? 'P' : 'R');
+    const pad16 = r => { const x = r.slice(0, 16); while (x.length < 16) x.push(''); return x; };
+    const consider = r => {
+      const d = normalizeDate_(r[0]); if (!d) return;
+      if (!inWindow(stripTime_(d).getTime())) return;                       // outside the 2-day window
+      if (String(r[15] || '').trim().toLowerCase() === 'shift') return;     // empty placeholder: nothing to review
+      if (!String(r[9] || '').trim()) return;                              // must have a Booking ID
+      byKey[keyOf(r)] = pad16(r);
+    };
+
+    if (sh && sh.getLastRow() >= 2) {
+      const cols = Math.min(Math.max(sh.getLastColumn(), 10), 16);
+      sh.getRange(2, 1, sh.getLastRow() - 1, cols).getValues().forEach(consider);   // keep in-window rows
+    }
+    (oldFeedRows || []).forEach(consider);                                 // overlay the freshest aging rows
+
+    if (!sh) { sh = ss.insertSheet(RNR.SHEETS.PAST_FEED); try { sh.hideSheet(); } catch (e) { /* fine visible */ } }
+    const head = sh.getRange(1, 1, 1, H.length).getValues()[0];
+    if (String(head[0] || '') !== H[0] || String(head[H.length - 1] || '') !== H[H.length - 1]) {
+      sh.getRange(1, 1, 1, H.length).setValues([H])
+        .setFontWeight('bold').setBackground('#64748b').setFontColor('#ffffff');
+      sh.setFrozenRows(1);
+    }
+    const lastNow = sh.getLastRow();
+    if (lastNow >= 2) sh.getRange(2, 1, lastNow - 1, H.length).clearContent();
+    const rows = Object.keys(byKey).map(k => byKey[k])
+      .sort((a, b) => (String(a[0]) + a[1]).localeCompare(String(b[0]) + b[1]));
+    if (rows.length) {
+      sh.getRange(2, 2, rows.length, 1).setNumberFormat('@');    // Time as text
+      sh.getRange(2, 10, rows.length, 1).setNumberFormat('@');   // Booking ID as text
+      sh.getRange(2, 14, rows.length, 1).setNumberFormat('@');   // Check-in time as text
+      sh.getRange(2, 1, rows.length, H.length).setValues(rows);
+    }
+    return rows.length;
+  } catch (e) {
+    logError_('updatePast2DaysFeed_', e, RNR.SHEETS.PAST_FEED);
+    return 0;
+  }
 }
 
 

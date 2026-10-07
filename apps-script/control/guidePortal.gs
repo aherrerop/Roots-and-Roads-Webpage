@@ -133,18 +133,26 @@ const PORTAL = {
   // Show tours from today up to this many days ahead.
   UPCOMING_DAYS: 45,
 
-  // A GROUP tour is "full" at this head-count (adults + children). At the cap the
-  // portal outlines the card red and prompts a second guide + reopen — the SAME
-  // 20-person cap the booking project alerts on (its TOUR_FULL_THRESHOLD). Private
-  // tours are never capped. Re-declared here because the portal is a SEPARATE Apps
-  // Script project and cannot read the booking project's property, so it recomputes
-  // "full" from the feed's per-shift head-count (same number, no cross-project coupling).
+  // A GROUP tour is "full" at this ADULT head-count. Children do NOT count toward
+  // the cap (a family of 2 adults + 3 kids is 2 toward the 20, not 5) — the cap is
+  // about how many walking adults one guide can manage. At the cap the portal
+  // outlines the card red and prompts a second guide + reopen. Private tours are
+  // never capped. Re-declared here because the portal is a SEPARATE Apps Script
+  // project and cannot read the booking project's property; it recomputes "full"
+  // from the feed's per-shift ADULT count. (The booking project's capacity-alert
+  // email still counts adults + children — that threshold is deliberately separate.)
   TOUR_FULL_THRESHOLD: 20,
 
   // Flat € we owe a guide who showed up and ran a tour where NOBODY in the whole
   // group turned up (a full no-show). Any tour type / platform. Logged once per
   // tour as a 'No-show' ledger line via apiNoShow_. Editable here.
   NO_SHOW_PAY: 10,
+
+  // MANAGER HISTORY: how many days BACK the "History" button shows (today-N .. yesterday),
+  // so a manager can mark no-shows (Guruwalk / Freetour) and undo check-ins after a tour
+  // ran. The Past2Days feed snapshot in the BookingSheet and the no-show overlay prune are
+  // both kept this wide. Keep it small — it governs how long past tour detail is retained.
+  HISTORY_DAYS: 2,
 
   // DEFAULT load window for EVERYONE (guides + managers): today .. this many days
   // ahead. Guides used to load the full UPCOMING_DAYS horizon (45 days of their
@@ -268,6 +276,7 @@ function doGet(e) {
       case 'closeShift': out = apiCloseShift_(p); break;
       case 'uncheckin': out = apiUncheckin_(p); break;
       case 'noshow': out = apiNoShow_(p); break;
+      case 'history': out = apiHistory_(p); break;
       case 'ping':   out = { ok: true, pong: true }; break;
       case 'clientlog': out = apiClientLog_(p); break;
       case 'health': out = apiHealth_(); break;
@@ -1015,8 +1024,9 @@ function apiTours_(p) {
     const bookedChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
     const checkedGuests = bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0);
     // "Full" GROUP tour: at the cap the card is outlined red (assign a 2nd guide +
-    // reopen). Private tours are never capped. Head-count = adults + children.
-    const full = !shift.private && (bookedGuests + bookedChildren) >= PORTAL.TOUR_FULL_THRESHOLD;
+    // reopen). Private tours are never capped. Children do NOT count — the cap is
+    // the number of adults one guide can lead (bookedChildren is still shown).
+    const full = !shift.private && bookedGuests >= PORTAL.TOUR_FULL_THRESHOLD;
 
     const id = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
     return {
@@ -1133,7 +1143,8 @@ function apiTours_(p) {
       const bGuests = bookings.reduce((s, b) => s + Number(b.guests || 0), 0);
       const bChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
       // "Full" GROUP tour: outline red + prompt a 2nd guide. Private never capped.
-      const full = !shift.private && (bGuests + bChildren) >= PORTAL.TOUR_FULL_THRESHOLD;
+      // Children do NOT count toward the cap (adults only).
+      const full = !shift.private && bGuests >= PORTAL.TOUR_FULL_THRESHOLD;
       const aid = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
       return {
         id: aid,
@@ -2425,6 +2436,23 @@ function bookingSS_() { return __RRX.bookingSS || (__RRX.bookingSS = Spreadsheet
 function readPortalFeed_() {
   let sh;
   try { sh = bookingSS_().getSheetByName('Portal Feed'); } catch (e) { return null; }
+  return parseFeedSheet_(sh);
+}
+
+/**
+ * The Past2Days snapshot (BookingSheet 'Past2Days' tab) — the Portal Feed rows for
+ * tours that already ran, kept 2 days WITH their check-in (M/N) and guide (O). Same
+ * row shape as the live feed, so it parses identically. Powers the manager History
+ * view. Null if the tab is absent/empty.
+ */
+function readPast2DaysFeed_() {
+  let sh;
+  try { sh = bookingSS_().getSheetByName('Past2Days'); } catch (e) { return null; }
+  return parseFeedSheet_(sh);
+}
+
+/** Parse a feed-shaped sheet (Portal Feed or Past2Days) into { shiftKey -> rows[] }. */
+function parseFeedSheet_(sh) {
   if (!sh || sh.getLastRow() < 2) return null;
   // Read up to 16 cols (adds O=Guide, P=Type). Older 14-col rows read short and
   // resolve those two to '' — safe during the schema transition.
@@ -2526,20 +2554,25 @@ function writeFeedCheckins_(updates, at) {
   } catch (e) { return false; }
 }
 
-/** Clear a booking's check-in on the Portal Feed (M/N -> blank). Used by undo. */
+/** Clear a booking's check-in (M/N -> blank) on the live Portal Feed AND on the
+ *  Past2Days snapshot. Used by undo — clearing BOTH is what makes a manager's undo
+ *  of a PAST tour's check-in show as un-checked in the History view right away (the
+ *  snapshot is that view's source), not just on the live feed. Best-effort each. */
 function writeFeedUncheckin_(bookingId) {
-  try {
-    const id = String(bookingId || '').trim();
-    if (!id) return false;
-    const sh = bookingSS_().getSheetByName('Portal Feed');
-    if (!sh || sh.getLastRow() < 2) return false;
-    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
-    let done = false;
-    for (let i = 0; i < ids.length; i++) {
-      if (String(ids[i][0] || '').trim() === id) { sh.getRange(i + 2, 13, 1, 2).setValues([['', '']]); done = true; }
-    }
-    return done;
-  } catch (e) { return false; }
+  const id = String(bookingId || '').trim();
+  if (!id) return false;
+  let done = false;
+  ['Portal Feed', 'Past2Days'].forEach(tab => {
+    try {
+      const sh = bookingSS_().getSheetByName(tab);
+      if (!sh || sh.getLastRow() < 2) return;
+      const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
+      for (let i = 0; i < ids.length; i++) {
+        if (String(ids[i][0] || '').trim() === id) { sh.getRange(i + 2, 13, 1, 2).setValues([['', '']]); done = true; }
+      }
+    } catch (e) { /* best-effort per tab */ }
+  });
+  return done;
 }
 
 /**
@@ -2744,6 +2777,107 @@ function apiNoShow_(p) {
   }
   bumpCacheVersion_();   // the schedule overlay (card.noShow) changed -> next read rebuilds
   return { ok: true, cleared: clear, guide: guide };
+}
+
+/**
+ * action=history — MANAGER ONLY. The tours of the last PORTAL.HISTORY_DAYS days
+ * (today-N .. yesterday), so a manager can mark Guruwalk/Freetour no-shows and undo
+ * a check-in AFTER the tour ran. Roster + check-in (M/N) + assigned guide (O) come
+ * from the Past2Days snapshot (the live feed has already dropped these days); the
+ * Completed Log fills any booking the snapshot missed (maxim: never miss a booking)
+ * and the ledger is unioned in as the money backstop. Cards are the SAME shape as
+ * the manager's live tours, so the existing no-show + undo-check-in controls work
+ * unchanged. Read-only endpoint; the actual no-show/undo are the normal mutations.
+ */
+function apiHistory_(p) {
+  __RRX = {};
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+
+  const today = todayKey_();
+  const days = Math.max(1, Number(PORTAL.HISTORY_DAYS) || 2);
+  const loKey = addDaysKey_(today, -days);
+
+  // Combined booking index for the window: Past2Days (carries check-in M/N + guide O)
+  // UNION the Completed Log (every completed booking). Dedupe by booking id per shift,
+  // the snapshot row winning (it has the check-in/guide the Completed Log lacks).
+  const feed = readPast2DaysFeed_() || {};
+  const done = readCompletedLogReservations_() || {};
+  Object.keys(done).forEach(k => {
+    const dk = k.split('|')[0];
+    if (!dk || dk < loKey || dk >= today) return;                 // window only
+    const arr = feed[k] = feed[k] || [];
+    (done[k] || []).forEach(b => {
+      if (arr.some(x => x.bookingId === b.bookingId)) return;      // snapshot already has it
+      arr.push({
+        name: b.name, phone: b.phone, guests: Number(b.guests || 0),
+        children: Number(b.children || 0), infants: 0, source: b.source,
+        income: Number(b.income || 0), bookingId: b.bookingId,
+        manualNote: '', note: b.note || '',
+        feedCheckedIn: null, feedCheckedAt: '', feedGuide: '', rowType: 'booking'
+      });
+    });
+  });
+
+  let schedule = buildHistoryFromFeed_(feed, loKey, today);
+  applyNoShowOverlay_(schedule);                                  // surface a no-show already flagged
+  sortSchedule_(schedule);
+
+  // Ledger union — the money truth for who was checked in, and what undo mutates.
+  // Read only the guides that ran these tours (a small set).
+  let priorCheckins = {};
+  try {
+    const gset = {};
+    schedule.forEach(s => (s.assigned || []).forEach(g => { if (g) gset[g] = true; }));
+    const guides = Object.keys(gset);
+    if (guides.length) priorCheckins = (readLedgerForGuides_(guides) || {}).checkins || {};
+  } catch (e) { priorCheckins = {}; }
+  const g2ck = checkinGuide2Set_();
+
+  const tours = schedule.map(shift => {
+    const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
+    const bookings = bookingsForShift_(feed, shift).map(b => {
+      const kk = key + '|' + b.bookingId;
+      const ck = priorCheckins[kk];
+      const feedCk = (b.feedCheckedIn != null);
+      const isCk = feedCk || !!ck;
+      return {
+        bookingId: b.bookingId, name: b.name, phone: b.phone, source: b.source,
+        guests: b.guests, children: Number(b.children || 0), infants: Number(b.infants || 0),
+        paid: isPaidSource_(b.source), income: Number(b.income || 0),
+        isPrivate: /privat/i.test(b.note || ''), note: String(b.note || ''),
+        manualNote: String(b.manualNote || ''),
+        checked: isCk,
+        checkedIn: feedCk ? Number(b.feedCheckedIn) : (ck ? Number(ck.n) : Number(b.guests || 0)),
+        checkedAt: feedCk ? String(b.feedCheckedAt || '') : (ck ? (ck.at || '') : ''),
+        guideIndex: g2ck[b.bookingId] ? 2 : 1
+      };
+    });
+    const bGuests = bookings.reduce((s, b) => s + Number(b.guests || 0), 0);
+    const bChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
+    const full = !shift.private && bGuests >= PORTAL.TOUR_FULL_THRESHOLD;   // adults only (children don't count)
+    const id = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
+    return {
+      id, dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
+      time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
+      privIndex: shift.privIndex || 1,
+      assigned: shift.assigned, guide: shift.assigned[0] || '', coGuides: shift.assigned,
+      status: shift.status, isPrivate: !!shift.private,
+      sfExt: !!shift.sfExt, tourName: shift.tourName || (shift.sfExt ? 'SF' : '3h'),
+      bookedGuests: bGuests, bookedChildren: bChildren,
+      checkedGuests: bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0),
+      full, needsSecondGuide: false,
+      secondGuide: shift.secondGuide || '',
+      noShow: !!shift.noShow, noShowGuide: shift.noShowGuide || '',
+      bookings
+    };
+  }).filter(t => t.bookings.length);                              // only tours that actually had bookings
+
+  return { ok: true, guide: name, manager: true, history: true, days: days,
+           tours: tours,
+           now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };
 }
 
 /**
@@ -3177,8 +3311,11 @@ function setNoShow_(key, guide) {
     const p = PropertiesService.getScriptProperties();
     let o = {}; try { o = JSON.parse(p.getProperty('PORTAL_NOSHOW') || '{}') || {}; } catch (e) { o = {}; }
     if (!o || typeof o !== 'object') o = {};
-    const today = todayKey_();
-    Object.keys(o).forEach(k => { if (String(k).split('|')[0] < today) delete o[k]; });   // prune past
+    // Keep the last HISTORY_DAYS days, not just today-forward: a no-show flagged from
+    // the History view sits on a PAST date, so pruning everything before today would
+    // drop it the moment the next no-show is recorded.
+    const floor = addDaysKey_(todayKey_(), -(Number(PORTAL.HISTORY_DAYS) || 2));
+    Object.keys(o).forEach(k => { if (String(k).split('|')[0] < floor) delete o[k]; });   // prune beyond the window
     if (guide) o[key] = String(guide); else delete o[key];
     p.setProperty('PORTAL_NOSHOW', JSON.stringify(o));
     if (typeof __RRX !== 'undefined' && __RRX) __RRX.noShow = o;
@@ -3303,6 +3440,46 @@ function buildScheduleFromFeed_(feedIndex, maxDaysAhead) {
     const time = Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0');
     (feedIndex[sk] || []).forEach(r => {
       const isSf = isSfExtSource_(r.source);                 // Sagrada exterior = its own tour
+      const isPriv = !isSf && /privat/i.test(r.note || '');
+      const kk = sk + '|' + variantKey_(isSf, isPriv, 1);
+      let sh = byKey[kk];
+      if (!sh) {
+        sh = byKey[kk] = {
+          dateKey, minutes, time, timeLabel: to12h_(time),
+          language, day: dayNameFromKey_(dateKey), dateText: prettyDate_(dateKey),
+          private: isPriv, privIndex: 1, sfExt: isSf, tourName: isSf ? 'SF' : '3h',
+          assigned: [], status: 'Not assigned'
+        };
+      }
+      if (r.feedGuide && !sh.assigned.length) { sh.assigned = [r.feedGuide]; sh.status = 'OK'; }
+    });
+  });
+  return Object.keys(byKey).map(k => byKey[k]);
+}
+
+/**
+ * Like buildScheduleFromFeed_ but for the PAST window the manager History view
+ * shows: dateKey in [loKey, hiKeyExclusive) (i.e. the last HISTORY_DAYS days, up to
+ * but not including today). Unlike the live build it does NOT drop shifts whose time
+ * has passed — every history tour is, by definition, over. Guide comes from the
+ * snapshot's feedGuide; combined-index rows with no guide (Completed Log backfill)
+ * leave the shift unassigned.
+ */
+function buildHistoryFromFeed_(feedIndex, loKey, hiKeyExclusive) {
+  const byKey = {};
+  Object.keys(feedIndex || {}).forEach(sk => {
+    const parts = sk.split('|');
+    const dateKey = parts[0];
+    const minutes = Number(parts[1]);
+    const langLower = parts[2] || '';
+    if (!dateKey || !Number.isFinite(minutes)) return;
+    if (dateKey < loKey || dateKey >= hiKeyExclusive) return;      // past window only
+    const language = LANGUAGES.find(l => l.toLowerCase() === langLower) ||
+                     (langLower.charAt(0).toUpperCase() + langLower.slice(1));
+    const time = Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0');
+    (feedIndex[sk] || []).forEach(r => {
+      if ((r.rowType || 'booking') === 'shift') return;            // placeholders aren't reviewable
+      const isSf = isSfExtSource_(r.source);
       const isPriv = !isSf && /privat/i.test(r.note || '');
       const kk = sk + '|' + variantKey_(isSf, isPriv, 1);
       let sh = byKey[kk];
