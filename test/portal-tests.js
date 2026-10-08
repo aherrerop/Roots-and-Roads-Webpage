@@ -238,6 +238,15 @@ check('the live poll pauses while the History overlay is open',
 check('closing History empties the pane so a poll never touches its cards',
   /\$\("historyPane"\)\.innerHTML="";/.test(html), null);
 
+console.log('--- Per-booking manager note shows INLINE (no tap), post-it is edit-only ---');
+check('a manager note renders inline below the name (like the source note)',
+  /const mnote = hasN \? '<div class="bnote mnote">'\+esc\(b\.manualNote\)\+'<\/div>' : '';/.test(html) &&
+  /\+ph\+note\+mnote\+mvbox\+noteBtn\+/.test(html) && /\.bnote\.mnote\{/.test(html), null);
+check('the post-it is now edit-only (managers), no read-only popup for guides',
+  /const noteBtn = canEdit && b\.bookingId/.test(html) &&
+  /title="'\+\(hasN\?'Edit note':'Add a note'\)\+'"/.test(html) &&
+  !/<div class="noteread">/.test(html), null);
+
 console.log('--- Auto-refresh never interrupts a mid-action user (no wiped forms) ---');
 check('the poll pauses while the "Open a schedule" form is open', /details\.openform\[open\]"\)\) return false;/.test(html), null);
 check('choosing in a SELECT also holds the poll', /INPUT\|TEXTAREA\|SELECT/.test(html), null);

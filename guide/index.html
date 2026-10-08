@@ -156,6 +156,8 @@
   .chip.fullbadge{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4;padding:3px 9px}
   .chip.noshowchip{background:#fff7f7;color:#c0392b;font-weight:800;border:1px solid #f0b4b4;padding:3px 9px}
   .bnote{font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
+  /* A manager's per-booking note, shown inline (amber) so it reads as a message. */
+  .bnote.mnote{color:#92610a;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:3px 7px;white-space:pre-wrap;display:inline-block}
   .mvsel{margin-top:4px;padding:3px 6px;border:1px solid #e2e6ea;border-radius:7px;font-size:11px;color:var(--muted);background:#fff}
   .mvbox{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;margin-left:4px}
   .mv-go{margin-top:4px;padding:3px 10px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer}
@@ -277,7 +279,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-07-history2";
+const PORTAL_VERSION = "2026-10-08-inline-note";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -1006,19 +1008,21 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
       '<input type="date" class="mvsel mv-date" value="'+esc(tour.dateKey||'')+'" title="Move to another day">'+
       '<button class="mv-go" hidden>Move</button></span>';
   }
-  // Per-booking note: a small post-it icon next to the language dropdown.
+  // Per-booking MANAGER note: shown INLINE below the name (visible without tapping),
+  // just like the source note. The post-it is now only an EDIT affordance for
+  // managers; guides simply read the note inline.
   const ref = esc(tourId+'~'+i);
   const hasN = !!b.manualNote;
-  const noteBtn = (canEdit||hasN) && b.bookingId
-    ? '<button class="bnotebtn'+(hasN?' has':'')+'" data-bnote="'+ref+'" title="'+(hasN?esc(b.manualNote):'Add a note')+'">'+POSTIT+'</button>' : '';
+  const mnote = hasN ? '<div class="bnote mnote">'+esc(b.manualNote)+'</div>' : '';
+  const noteBtn = canEdit && b.bookingId
+    ? '<button class="bnotebtn'+(hasN?' has':'')+'" data-bnote="'+ref+'" title="'+(hasN?'Edit note':'Add a note')+'">'+POSTIT+'</button>' : '';
   const noteEditor = canEdit && b.bookingId
     ? '<div class="bnotepanel" data-bnp="'+ref+'" hidden><textarea class="bnoteta" placeholder="Note for this booking…">'+esc(b.manualNote||'')+'</textarea>'+
       '<div class="noterow"><button class="bnotesave" data-bns="'+ref+'" data-bid="'+esc(b.bookingId)+'" data-blang="'+esc(lang)+'">Save</button>'+
       '<button class="bnoteclose">Close</button><span class="notemsg" data-bnm="'+ref+'"></span></div></div>'
-    : (hasN ? '<div class="bnotepanel" data-bnp="'+ref+'" hidden><div class="noteread">'+esc(b.manualNote)+'</div>'+
-      '<div class="noterow"><button class="bnoteclose">Close</button></div></div>' : '');
+    : '';
   return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mvbox+noteBtn+'</div>'+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mnote+mvbox+noteBtn+'</div>'+
     wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
     checkinButtons(tourId,b,i,tour)+
     '</div>'+ noteEditor + '</div>';
