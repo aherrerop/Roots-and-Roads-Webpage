@@ -229,9 +229,11 @@ const PORTAL = {
   // hard-kills an execution at ~6 min with "Exceeded maximum execution time" — a
   // termination that no try/catch can trap, so it always emails a failure summary.
   // Every queue step is idempotent and rebuilt hourly, so once we cross this budget
-  // we STOP cleanly and let the next hourly run finish. 4.5 min leaves margin for
-  // the step already in flight to complete under the 6-min kill.
-  QUEUES_BUDGET_MS: 270000
+  // we STOP cleanly and let the next hourly run finish. 3.5 min leaves a wide (2.5
+  // min) margin for the heavy step already in flight (a big ledger/feed read on a
+  // slow-I/O night) to finish under the 6-min hard kill — the one time it overran at
+  // 4.5 min it was a single step crossing the wall. Deferred work just lands next hour.
+  QUEUES_BUDGET_MS: 210000
 };
 
 // PER-EXECUTION memo. Apps Script re-creates globals on every request, so this
