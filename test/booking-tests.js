@@ -389,6 +389,39 @@ const ft1 = parseFreetourMessage_(makeFakeMsg_('Reserva de Freetour.com - Bookin
 check('FreeTour #1: tagged source "Free Tour" (main account, no marker)',
   ft1 && ft1.source===RNR.SOURCE.FREETOUR && ft1.source==='Free Tour', ft1 && ft1.source);
 
+// MODIFICATION emails render the date ISO ("Date of the Tour: 2026-10-09") and list
+// "Previous Guests: 3 … New Guests: 1" — unlike confirmations ("9 October 2026", one
+// adults line). The parser must read the NEW date + NEW guests, or a date/guest change
+// silently keeps the old values (regression: the booking fell back to the old,
+// now-past date and was skipped).
+const ftModBody = [
+  'Barcelona All-in-One Sagrada Família, Gaudí & Gothic Quarter',
+  'Edited Tour Reservation',
+  'Date of the Tour: 2026-10-09 10:30 AM',
+  'Language: French',
+  'Previous Guests: 3 personnes',
+  'New Guests: 1 personne',
+  'Children (≤15 y.o.): 0 enfants',
+  'Booking Name: Albert Herrero Parareda',
+  'Booking phone: +33642534497',
+  'Booking Reference Number: 112713-20261007065104-333',
+  'please reject this booking as soon as possible to inform the customer in advance about the cancellation.'
+].join('\n');
+const ftMod = parseFreetourMessage_(makeFakeMsg_('Modification to Reservation from Freetour.com  - Booking ID: 112713-20261007065104-333',
+  ftModBody, { from:'Freetour.com <noreply@freetour.com>', to:'rootsandroadstours@gmail.com' }), 'modify');
+check('FreeTour modification: ISO date reads as the NEW date (Oct 9), not skipped',
+  ftMod && dateKey_(ftMod.date)==='2026-10-09' && ftMod.hasExplicitDate===true,
+  ftMod && {d:ftMod.date&&dateKey_(ftMod.date), explicit:ftMod&&ftMod.hasExplicitDate});
+check('FreeTour modification: reads NEW guests (1), language + id, not previous',
+  ftMod && ftMod.guests===1 && ftMod.language==='French' && ftMod.bookingId==='112713-20261007065104-333', ftMod && {g:ftMod.guests, l:ftMod.language});
+// The "Previous Date / New Date of the Tour" pair must take the NEW date.
+const ftModPair = parseFreetourMessage_(makeFakeMsg_('Modification to Reservation from Freetour.com - Booking ID: 112713-20261007065104-333',
+  ['Edited Tour Reservation','Previous Date of the Tour: 2026-10-08 10:30 AM','New Date of the Tour: 2026-10-09 10:30 AM',
+   'Language: French','Previous Guests: 3 personnes','New Guests: 1 personne','Booking Reference Number: 112713-20261007065104-333'].join('\n'),
+  { from:'Freetour.com <noreply@freetour.com>', to:'rootsandroadstours@gmail.com' }), 'modify');
+check('FreeTour modification: "New Date" wins over "Previous Date"',
+  ftModPair && dateKey_(ftModPair.date)==='2026-10-09', ftModPair && ftModPair.date && dateKey_(ftModPair.date));
+
 // Same slot, two accounts -> both land in the SAME date/time/language tab (they
 // merge into one portal card, grouped by slot not source), just distinct sources.
 const ftRow2 = normalizeBooking_({ name:'Maria Pia Bongiorno', phone:'+393887468311', guests:2,

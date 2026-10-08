@@ -5144,7 +5144,10 @@ function parseFreetourMessage_(msg, mode) {
   ]);
 
   // Guests: the number before a "person" word in any language, else an adults label.
+  // A MODIFICATION email lists "Previous Guests: 3 … New Guests: 1" — read the NEW
+  // count FIRST so a change applies the new headcount, not the old one.
   const guestsText = extractFirst_(text, [
+    /New Guests\s*:?\s*(\d+)/i,
     /(\d+)\s*(?:persons?|personas?|personnes?|persone|personen|pessoas?|people|g[aä]ste)/i,
     /(?:Adult\w*|Adulto?s?|Adultes|Adulti|Erwachsene)\s*:?\s*(\d+)/i,
     /(?:Guests?|Participants?|Pax|Asistentes?|Plazas?)\s*:?\s*(\d+)/i
@@ -5154,6 +5157,13 @@ function parseFreetourMessage_(msg, mode) {
   // ("3:30 PM, Tuesday, 22 September 2026"), so match the VALUES, not the label.
   const dateText = extractFirst_(text, [
     new RegExp('(\\d{1,2}\\s+(?:' + FT_MONTHS + ')\\s+\\d{4})', 'i'),
+    // Freetour CONFIRMATION emails render the date as "9 October 2026" (above), but
+    // MODIFICATION emails render it ISO — "Date of the Tour: 2026-10-09", and the
+    // "Previous Date … / New Date of the Tour: 2026-10-09" pair. Prefer the NEW date,
+    // then any ISO date, so a date-change modification actually moves the booking
+    // instead of silently keeping the old (confirmation) date.
+    /New Date of the Tour\s*:?\s*(\d{4}-\d{2}-\d{2})/i,
+    /\b(\d{4}-\d{2}-\d{2})\b/,
     /Date:\s*([^\n\r]+)/i,
     /Fecha(?:\s+(?:del?\s+tour|de\s+la\s+reserva))?:\s*([^\n\r]+)/i
   ]);
