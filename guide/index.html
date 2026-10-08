@@ -116,6 +116,10 @@
   .src{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;color:#fff;margin-top:3px;text-transform:uppercase;letter-spacing:.3px}
   .src.paid{background:var(--paid)} .src.free{background:var(--free)} .src.priv{background:#b45309}
   .wa{line-height:0;text-decoration:none}
+  /* Guide History: a clear checked-in / not-checked-in pill (read-only). */
+  .ckst{font-size:12px;font-weight:800;padding:4px 10px;border-radius:999px;white-space:nowrap;flex:none}
+  .ckst.in{background:#e7f6ec;color:#1a7f3c;border:1px solid #bfe6cc}
+  .ckst.out{background:#fdecec;color:#c0392b;border:1px solid #f3c2c2}
   .ph{color:var(--muted);font-size:12px;text-decoration:none;margin-left:6px}
 
   .stepper{display:flex;align-items:center;gap:7px}
@@ -279,7 +283,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-08-guide-history";
+const PORTAL_VERSION = "2026-10-08-guide-history2";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -995,6 +999,20 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   const wa = digits(b.phone) ? '<a class="wa" target="_blank" href="https://wa.me/'+digits(b.phone)+'">'+WA_ICON+'</a>' : '';
   const ph = b.phone ? '<a class="ph" href="tel:'+esc(b.phone)+'">'+esc(b.phone)+'</a>' : '';
   const note = b.note ? '<div class="bnote">'+esc(b.note)+'</div>' : '';
+  // GUIDE History row: read-only — the guest, their phone + WhatsApp (tap to open the
+  // chat and ask for a review), and a clear "checked in / not" status. No steppers or
+  // check-in buttons (that's the live view / a manager).
+  if(HISTORY_RENDER && !MANAGER){
+    const mn = b.manualNote ? '<div class="bnote mnote">'+esc(b.manualNote)+'</div>' : '';
+    const inOut = b.checked
+      ? '<span class="ckst in">✓ Checked in'+(b.checkedAt?' · '+esc(b.checkedAt):'')+'</span>'
+      : '<span class="ckst out">Not checked in</span>';
+    return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
+      '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+
+      (b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mn+'</div>'+
+      wa+ inOut +
+    '</div></div>';
+  }
   // Manager: move this booking to another LANGUAGE and/or TIME in ONE step. The
   // "Move" button appears only once a dropdown is changed, then applies BOTH
   // together — so a language + time change is a single move, no intermediate tour.

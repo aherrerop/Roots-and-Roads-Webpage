@@ -218,6 +218,10 @@ console.log('--- HISTORY (manager: last 2 days) — mark no-shows + undo check-i
 check('a History button + overlay exist, shown to everyone (guides see their own)',
   /id="historyBtn" class="histbtn hidden"/.test(html) && /id="historyView" class="histview hidden"/.test(html) &&
   /hb\.classList\.remove\("hidden"\)/.test(html) && /html\+=tourCard\(t, MANAGER, dayTimes\)/.test(html), null);
+check('guide History row shows WhatsApp + a clear checked-in/not status (no steppers)',
+  /if\(HISTORY_RENDER && !MANAGER\)\{/.test(html) &&
+  /'<span class="ckst in">✓ Checked in'/.test(html) && /'<span class="ckst out">Not checked in<\/span>'/.test(html) &&
+  /wa\+ inOut \+/.test(html) && /\.ckst\.in\{/.test(html) && /\.ckst\.out\{/.test(html), null);
 check('a guide history is read-only: no-show/undo bindings + controls are manager-gated',
   /const histGuide = HISTORY_RENDER && !MANAGER;/.test(html) &&
   /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER\) :/.test(html) &&
