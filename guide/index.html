@@ -188,7 +188,7 @@
     <div class="topbar">
       <div><h1>Tours</h1><div id="who" class="who"></div></div>
       <div class="actions">
-        <button id="historyBtn" class="histbtn hidden" title="Tours from the last 2 days — mark no-shows, undo check-ins">History</button>
+        <button id="historyBtn" class="histbtn hidden" title="Your tours from the last 2 days (managers see all)">History</button>
         <button id="logoutBtn" class="iconbtn">Log out</button>
       </div>
     </div>
@@ -279,7 +279,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-08-inline-note";
+const PORTAL_VERSION = "2026-10-08-guide-history";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -792,7 +792,7 @@ function renderAll(r){
   applyPendingAssigns(r);                // stale reads can never undo your last action
   applyPendingCheckins(r);               // a queued (offline) check-in still shows ✓ ⏳ after a reload
   MANAGER=!!r.manager;
-  const hb=$("historyBtn"); if(hb) hb.classList.toggle("hidden", !MANAGER);   // History is a manager tool
+  const hb=$("historyBtn"); if(hb) hb.classList.remove("hidden");   // History: managers see all tours, guides see their own (read-only)
   HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||3;
   GUIDES_BY_LANG=r.guidesByLanguage||{};
   const all=r.allTours||[];
@@ -975,14 +975,18 @@ function nsInfo(t, guide){
   return {dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",guide:guide||t.noShowGuide||""};
 }
 function noShowControl(t, canAssign){
+  // A GUIDE's History is read-only: they can SEE a no-show was flagged, but cannot
+  // mark or remove one there (that's a manager action in History).
+  const histGuide = HISTORY_RENDER && !MANAGER;
   if(t.noShow){
-    // A manager can always remove it; a guide only on their own card. In History the
-    // whole point is that management can take it off that day, so the label is explicit.
-    const canUndo = MANAGER || !canAssign;
+    // A manager can always remove it; a guide only on their own LIVE card. In History
+    // the whole point is that management can take it off that day (explicit label).
+    const canUndo = !histGuide && (MANAGER || !canAssign);
     const undoLabel = HISTORY_RENDER ? 'Remove no-show' : 'Undo';
     return '<div class="noshowbar on"><span class="noshowtag">🚫 Total no-show — '+esc(t.noShowGuide||"the guide")+'</span>'+
       (canUndo?'<button class="noshowundo" data-noshow=\''+esc(JSON.stringify(nsInfo(t)))+'\'>'+undoLabel+'</button>':'')+'</div>';
   }
+  if(histGuide) return "";   // guides don't mark no-shows from History
   const nsGuide = canAssign ? ((t.assigned&&t.assigned[0])||t.guide||"") : (store.name||"");
   if(!t.bookedGuests || t.checkedGuests>0 || !nsGuide) return "";   // guests expected, none checked in, a guide to pay
   return '<div class="noshowbar"><button class="noshowbtn" data-noshow=\''+esc(JSON.stringify(nsInfo(t,nsGuide)))+'\'>Total no-show</button></div>';
@@ -1035,9 +1039,10 @@ function ckBtn(tourId,i,b,gi,label,title){
   const onThis = !gi || (Number(b.guideIndex)||1)===gi;   // this guest is on THIS guide
   const done = !!b.checked && onThis;
   const lockedOther = !!b.checked && !!gi && !onThis;      // checked on the OTHER guide -> locked until undo
-  // In History: only a checked-in guest's button is active (tap = undo); new
-  // check-ins are disabled. Live: a done button is tappable only by a manager (undo).
-  const dis = HISTORY_RENDER ? (!done) : ((done && !(MANAGER && !b.pending)) || lockedOther);
+  // In History: only a MANAGER can tap a checked-in guest's button (= undo); new
+  // check-ins are disabled, and a guide's history is fully read-only. Live: a done
+  // button is tappable only by a manager (undo).
+  const dis = HISTORY_RENDER ? (!done || !MANAGER) : ((done && !(MANAGER && !b.pending)) || lockedOther);
   const txt = done ? (b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))) : (gi?esc(label):'Check in');
   return '<button class="ckin'+(done?' done':'')+(gi?' g'+gi:'')+(lockedOther?' lockedother':'')+'" data-ck="'+ref+'"'+
     (dis?' disabled':'')+(title?' title="'+esc(title)+'"':'')+'>'+txt+'</button>';
@@ -1413,7 +1418,6 @@ function renderSchedule(rows){
    the tap-✓-to-undo stay live. Isolated from the live poll: its own cache + binding,
    and the poll pauses while it's open. */
 async function openHistory(){
-  if(!MANAGER) return;
   HISTORY_OPEN=true;
   $("historyView").classList.remove("hidden");
   $("historyPane").innerHTML='<div class="spin">Loading…</div>';
@@ -1432,7 +1436,7 @@ async function historyRefresh(){
     if(r && /expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
     $("historyPane").innerHTML='<div class="empty">'+esc((r&&r.error)||"Could not load history.")+'</div>'; return;
   }
-  const sub=$("histSub"); if(sub) sub.textContent="Last "+(r.days||2)+" days"+(r.now?" · updated "+esc(r.now):"");
+  const sub=$("histSub"); if(sub) sub.textContent=(r.manager?"Last ":"Your last ")+(r.days||2)+" days"+(r.now?" · updated "+esc(r.now):"");
   renderHistory(r.tours||[]);
 }
 function renderHistory(tours){
@@ -1448,7 +1452,8 @@ function renderHistory(tours){
       const dayTimes=[];
       day.items.forEach(t=>{ if(!dayTimes.some(x=>x.time===t.time)) dayTimes.push({time:t.time,timeLabel:t.timeLabel||t.time}); });
       day.items.sort((a,b)=>String(a.time).localeCompare(String(b.time)));
-      day.items.forEach(t=> html+=tourCard(t, true, dayTimes));   // canAssign=true -> manager no-show guide + undo
+      // Managers get the editable card (no-show + undo); guides get a read-only card.
+      day.items.forEach(t=> html+=tourCard(t, MANAGER, dayTimes));
     });
   } finally { HISTORY_RENDER=false; }
   pane.innerHTML=html;
@@ -1471,6 +1476,10 @@ function bindHistoryCards(){
     catch(err){ msg=err.message||"Network problem — try again"; }
     MUTATING--; await historyRefresh(); if(msg) alert(msg);
   };
+  // No-show + undo-check-in are MANAGER-only in History (a guide's view is read-only;
+  // its no-show buttons aren't rendered and its ✓ buttons are disabled, but gate the
+  // bindings too for defence-in-depth — the server enforces it regardless).
+  if(!MANAGER) return;
   root.querySelectorAll(".noshowbtn").forEach(btn=>{ btn.onclick=async (e)=>{ e.stopPropagation();
     if(!confirm("Mark this tour as a total no-show?\nNobody in the group came.")) return; noShowCall(btn,{},"Saving"); }; });
   root.querySelectorAll(".noshowundo").forEach(btn=>{ btn.onclick=(e)=>{ e.stopPropagation(); noShowCall(btn,{clear:1},"Undoing"); }; });

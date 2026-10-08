@@ -215,18 +215,22 @@ check('the no-show control posts action=noshow (set + clear) and shows a badge',
   /noShowCall\(btn, \{clear:1\}, "Undoing"\)/.test(html) && /\.chip\.noshowchip\{/.test(html), null);
 
 console.log('--- HISTORY (manager: last 2 days) — mark no-shows + undo check-ins after a tour ran ---');
-check('a manager-only History button + overlay exist',
+check('a History button + overlay exist, shown to everyone (guides see their own)',
   /id="historyBtn" class="histbtn hidden"/.test(html) && /id="historyView" class="histview hidden"/.test(html) &&
-  /hb\.classList\.toggle\("hidden", !MANAGER\)/.test(html), null);
+  /hb\.classList\.remove\("hidden"\)/.test(html) && /html\+=tourCard\(t, MANAGER, dayTimes\)/.test(html), null);
+check('a guide history is read-only: no-show/undo bindings + controls are manager-gated',
+  /const histGuide = HISTORY_RENDER && !MANAGER;/.test(html) &&
+  /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER\) :/.test(html) &&
+  /\/\/ No-show \+ undo-check-in are MANAGER-only in History[\s\S]*?if\(!MANAGER\) return;/.test(html), null);
 check('opening History fetches action=history and renders cards in history mode',
   /function openHistory\(\)\{/.test(html) && /api\("history",\{token:store\.token\}\)/.test(html) &&
-  /HISTORY_RENDER=true;/.test(html) && /tourCard\(t, true, dayTimes\)/.test(html), null);
+  /HISTORY_RENDER=true;/.test(html) && /tourCard\(t, MANAGER, dayTimes\)/.test(html), null);
 check('history mode drops the editing UI (close / assign / 2nd-guide) from the card',
   /const closeBtn=\(canAssign && !HISTORY_RENDER\)\?/.test(html) &&
   /if\(canAssign && !HISTORY_RENDER\) chips\+=assignSelect\(t\);/.test(html) &&
   /const canEdit = canAssign && !HISTORY_RENDER;/.test(html), null);
 check('history keeps no-show + undo live: stepper read-only, check-in button undo-only',
-  /const dis = HISTORY_RENDER \? \(!done\) :/.test(html) &&
+  /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER\) :/.test(html) &&
   /const dis = HISTORY_RENDER \? ' disabled' : '';/.test(html) &&
   /root\.querySelectorAll\("\.ckin\.done:not\(\[disabled\]\)"\)/.test(html) &&
   /api\("uncheckin",\{token:store\.token,bookingId:b\.bookingId\}\)/.test(html), null);

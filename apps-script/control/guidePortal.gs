@@ -2796,7 +2796,11 @@ function apiHistory_(p) {
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
   const me = findGuideByName_(name);
-  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+  if (!me) return { ok: false, error: 'Session expired, please log in again' };
+  // A MANAGER sees every past tour; a GUIDE sees only their OWN (so they can follow
+  // up with their guests for reviews the next day). Both are read-only except the
+  // manager's no-show / undo controls (apiNoShow_/apiUncheckin_ enforce that too).
+  const isManager = !!me.manager;
 
   const today = todayKey_();
   const days = Math.max(1, Number(PORTAL.HISTORY_DAYS) || 2);
@@ -2831,11 +2835,17 @@ function apiHistory_(p) {
   // must come from the ledger, not only the snapshot's M/N.
   let priorCheckins = {}, guideByShift = {};
   try {
-    const raw = readGuidesRaw_();
-    const cols = guideColumns_(raw.header);
-    const allGuides = raw.rows.map(row => parseGuideRow_(row, cols))
-      .filter(g => g.name && g.active).map(g => g.name);
-    const lh = readLedgerHistory_(allGuides, loKey);
+    // A manager scans every active guide's ledger; a guide needs only their own tab.
+    let guidesToRead;
+    if (isManager) {
+      const raw = readGuidesRaw_();
+      const cols = guideColumns_(raw.header);
+      guidesToRead = raw.rows.map(row => parseGuideRow_(row, cols))
+        .filter(g => g.name && g.active).map(g => g.name);
+    } else {
+      guidesToRead = [name];
+    }
+    const lh = readLedgerHistory_(guidesToRead, loKey);
     priorCheckins = lh.checkins || {};
     guideByShift = lh.guideByShift || {};
   } catch (e) { priorCheckins = {}; guideByShift = {}; }
@@ -2850,6 +2860,9 @@ function apiHistory_(p) {
   });
   applyNoShowOverlay_(schedule);                                  // surface a no-show already flagged
   sortSchedule_(schedule);
+  // GUIDES: keep only their own tours — filtering BEFORE the card build means another
+  // guide's guests are never assembled into or returned in the response (privacy).
+  if (!isManager) schedule = schedule.filter(s => (s.assigned || []).some(a => sameName_(a, name)));
   const g2ck = checkinGuide2Set_();
 
   const tours = schedule.map(shift => {
@@ -2891,7 +2904,7 @@ function apiHistory_(p) {
     };
   }).filter(t => t.bookings.length);                              // only tours that actually had bookings
 
-  return { ok: true, guide: name, manager: true, history: true, days: days,
+  return { ok: true, guide: name, manager: isManager, history: true, days: days,
            tours: tours,
            now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };
 }

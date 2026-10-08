@@ -413,10 +413,11 @@ const YDAY = dayKey(-1);
 const past = booking.insertSheet('Past2Days');
 past.getRange(1, 1, 1, 16).setValues([['Date', 'Time', 'Language', 'Name', 'Phone', 'Adults', 'Children',
   'Source', 'Income', 'Booking ID', 'Notes', 'Manager note', 'Checked-in', 'Check-in time', 'Guide', 'Type']]);
-past.getRange(2, 2, 2, 1).setNumberFormat('@'); past.getRange(2, 10, 2, 1).setNumberFormat('@'); past.getRange(2, 14, 2, 1).setNumberFormat('@');
-past.getRange(2, 1, 2, 16).setValues([
+past.getRange(2, 2, 3, 1).setNumberFormat('@'); past.getRange(2, 10, 3, 1).setNumberFormat('@'); past.getRange(2, 14, 3, 1).setNumberFormat('@');
+past.getRange(2, 1, 3, 16).setValues([
   [YDAY, '10:00 AM', 'English', 'Hist One', '+34600000010', 3, 0, 'GetYourGuide', 45, 'HIST001', '', '', 3, '10:05', 'Carlos', 'booking'],
-  [YDAY, '03:00 PM', 'English', 'Hist Two', '+34600000011', 4, 0, 'Guruwalk', 0, 'HIST002', '', '', '', '', 'Carlos', 'booking']]);
+  [YDAY, '03:00 PM', 'English', 'Hist Two', '+34600000011', 4, 0, 'Guruwalk', 0, 'HIST002', '', '', '', '', 'Carlos', 'booking'],
+  [YDAY, '05:00 PM', 'English', 'Hist Three', '+34600000012', 2, 0, 'GetYourGuide', 30, 'HIST003', '', '', 2, '17:05', 'Albert', 'booking']]);
 let rHist = apiHistory_({ token: token });
 check('apiHistory_ ok for a manager, flagged history, window = 2 days', rHist && rHist.ok === true && rHist.history === true && rHist.days === 2, rHist && rHist.error);
 const h1 = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '10:00' && t.language === 'English');
@@ -424,7 +425,12 @@ const h2 = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '15:00
 check('a past tour surfaces with its guide (Carlos) from the snapshot', h1 && (h1.assigned || []).indexOf('Carlos') !== -1, h1 && h1.assigned);
 check('the past tour shows its check-in from the snapshot M/N', h1 && h1.bookings.some(b => b.bookingId === 'HIST001' && b.checked === true && b.checkedIn === 3), h1 && h1.bookings);
 check('the un-checked past tour shows its guest as not checked in', h2 && h2.bookings.some(b => b.bookingId === 'HIST002' && b.checked === false), h2 && h2.bookings);
-check('a non-manager cannot open history (managers only)', (function () { const r = apiHistory_({ token: makeToken_('Carlos') }); return r && r.ok === false && /manager/i.test(r.error || ''); })(), null);
+check('a MANAGER sees ALL guides\' past tours (incl. Albert\'s)', (rHist.tours || []).some(t => t.dateKey === YDAY && t.time === '17:00' && (t.assigned || []).indexOf('Albert') !== -1), (rHist.tours || []).map(t => t.time));
+// GUIDE history: Carlos can open it, flagged non-manager, and sees ONLY his own tours.
+const rGuide = apiHistory_({ token: makeToken_('Carlos') });
+check('a GUIDE can open history (not managers-only), flagged manager:false', rGuide && rGuide.ok === true && rGuide.history === true && rGuide.manager === false, rGuide && rGuide.error);
+check('the guide sees their OWN past tours (HIST001/HIST002)', (rGuide.tours || []).some(t => t.bookings.some(b => b.bookingId === 'HIST001')) && (rGuide.tours || []).some(t => t.bookings.some(b => b.bookingId === 'HIST002')), (rGuide.tours || []).map(t => t.time));
+check('the guide does NOT see another guide\'s tour (Albert\'s HIST003) or its guests', !(rGuide.tours || []).some(t => (t.bookings || []).some(b => b.bookingId === 'HIST003')), (rGuide.tours || []).map(t => t.time));
 // Mark the un-checked past tour as a total no-show (the guide is still paid).
 const nsPast = apiNoShow_({ token: token, dateKey: YDAY, time: '15:00', language: 'English', guide: 'Carlos' });
 check('apiNoShow_ accepts a PAST tour (history window)', nsPast && nsPast.ok === true, nsPast);
