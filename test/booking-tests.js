@@ -422,6 +422,27 @@ const ftModPair = parseFreetourMessage_(makeFakeMsg_('Modification to Reservatio
 check('FreeTour modification: "New Date" wins over "Previous Date"',
   ftModPair && dateKey_(ftModPair.date)==='2026-10-09', ftModPair && ftModPair.date && dateKey_(ftModPair.date));
 
+// ITALIAN confirmation labels the name "Nome prenotazione:" (short), not the long
+// "Nome della prenotazione:" the old regex expected — so the name never parsed and
+// the whole booking was dropped as invalid (name is required). Real stuck booking.
+const ftItBody = [
+  'Barcellona: tour completo della Sagrada Família, delle opere di Gaudí e del Quartiere Gotico',
+  'Prenotazione tour',
+  'Data del tour: 4:00 PM, Saturday, 10 October 2026',
+  'Lingua: Italiano',
+  'Adulti: 1 persona',
+  'Nome prenotazione: Davide Magagna',
+  'E-mail prenotazione: david.maganacentelles@gmail.com',
+  'Telefono prenotazione: +81626483559',
+  'Numero di riferimento: 112713-20261009170317-333'
+].join('\n');
+const ftIt = parseFreetourMessage_(makeFakeMsg_('Prenotazione da Freetour.com: identificativo prenotazione: 112713-20261009170317-333',
+  ftItBody, { from:'Freetour.com <bookings@freetour.com>', to:'rootsandroadstours@gmail.com' }), 'confirm');
+check('FreeTour Italian confirmation: name "Nome prenotazione" parses (was dropped before)',
+  ftIt && ftIt.name==='Davide Magagna' && ftIt.guests===1 && ftIt.language==='Italian' &&
+  ftIt.bookingId==='112713-20261009170317-333' && dateKey_(ftIt.date)==='2026-10-10', ftIt && {n:ftIt&&ftIt.name, g:ftIt&&ftIt.guests, l:ftIt&&ftIt.language, d:ftIt&&ftIt.date&&dateKey_(ftIt.date)});
+check('FreeTour Italian confirmation is a VALID booking (now registers)', ftIt && isValidBooking_(ftIt)===true, ftIt && isValidBooking_(ftIt));
+
 // Same slot, two accounts -> both land in the SAME date/time/language tab (they
 // merge into one portal card, grouped by slot not source), just distinct sources.
 const ftRow2 = normalizeBooking_({ name:'Maria Pia Bongiorno', phone:'+393887468311', guests:2,

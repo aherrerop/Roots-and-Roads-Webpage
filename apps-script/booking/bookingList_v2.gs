@@ -5133,7 +5133,10 @@ function parseFreetourMessage_(msg, mode) {
 
   // Name: multilingual label, captured up to the next known label OR line end.
   const name = extractFirst_(text, [
-    new RegExp('(?:Buchungsname|Booking\\s*name|Reserva a nombre|Nome della prenotazione|Nome da reserva|Nom de la r[ée]servation|R[ée]servation au nom de)\\s*:\\s*([^\\n\\r:]+?)\\s+(?:' + FT_NEXT + ')\\b', 'i'),
+    // Italian uses "Nome prenotazione:" (short) — FreeTour does NOT send the long
+    // "Nome della prenotazione:" the old pattern expected, so Italian names never
+    // parsed and the whole booking was dropped as invalid (name is required).
+    new RegExp('(?:Buchungsname|Booking\\s*name|Reserva a nombre|Nome(?:\\s+della)?\\s+prenotazione|Nome da reserva|Nom de la r[ée]servation|R[ée]servation au nom de)\\s*:\\s*([^\\n\\r:]+?)\\s+(?:' + FT_NEXT + ')\\b', 'i'),
     new RegExp('(?:Buchungsname|Booking\\s*name|Reserva a nombre|Nom|Nome|Nombre|Name|Cliente|Customer)\\s*:\\s*([^\\n\\r:]+?)(?:\\s+(?:' + FT_NEXT + ')\\b|[\\n\\r]|$)', 'i')
   ]);
 
