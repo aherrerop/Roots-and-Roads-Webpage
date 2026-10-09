@@ -115,7 +115,7 @@
   .bk .nm b{display:block;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .src{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;color:#fff;margin-top:3px;text-transform:uppercase;letter-spacing:.3px}
   .src.paid{background:var(--paid)} .src.free{background:var(--free)} .src.priv{background:#b45309}
-  .wa{line-height:0;text-decoration:none}
+  .wa{display:inline-flex;align-items:center;vertical-align:middle;line-height:0;text-decoration:none;margin-left:8px;flex:none}
   /* Guide History: a clear checked-in / not-checked-in pill (read-only). */
   .ckst{font-size:12px;font-weight:800;padding:4px 10px;border-radius:999px;white-space:nowrap;flex:none}
   .ckst.in{background:#e7f6ec;color:#1a7f3c;border:1px solid #bfe6cc}
@@ -283,7 +283,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-08-guide-history2";
+const PORTAL_VERSION = "2026-10-09-wa-and-collapse";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -425,6 +425,10 @@ let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
 // UI (assign/move/close/new check-in). Its own cache + binding keep it isolated
 // from the live poll, which pauses while the overlay is open.
 let HISTORY_RENDER=false, HISTORY_OPEN=false, HISTORY_CACHE=[];
+// Which History cards are expanded (by tour id). Default is CLOSED so the list stays
+// scannable (a manager can have dozens of past tours); tapping a card opens it and the
+// choice survives a history refresh. Cleared when the overlay is closed.
+let HISTORY_OPEN_CARDS=new Set();
 // Which tour cards are EXPANDED, by tour id — so an auto-refresh (poll) never
 // collapses a card the manager is watching. Backed by localStorage so a
 // version-reload keeps it open too; self-prunes to cards still on screen.
@@ -1009,8 +1013,8 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
       : '<span class="ckst out">Not checked in</span>';
     return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
       '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+
-      (b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mn+'</div>'+
-      wa+ inOut +
+      (b.isPrivate?'<span class="src priv">Private</span>':'')+ph+wa+note+mn+'</div>'+
+      inOut +
     '</div></div>';
   }
   // Manager: move this booking to another LANGUAGE and/or TIME in ONE step. The
@@ -1043,9 +1047,12 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
       '<div class="noterow"><button class="bnotesave" data-bns="'+ref+'" data-bid="'+esc(b.bookingId)+'" data-blang="'+esc(lang)+'">Save</button>'+
       '<button class="bnoteclose">Close</button><span class="notemsg" data-bnm="'+ref+'"></span></div></div>'
     : '';
+  // WhatsApp sits next to the phone (inside .nm), NOT in the right-hand control
+  // cluster — on a two-guide tour that cluster has two check-in buttons and the
+  // icon used to overlap them.
   return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+note+mnote+mvbox+noteBtn+'</div>'+
-    wa+ stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+wa+note+mnote+mvbox+noteBtn+'</div>'+
+    stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
     checkinButtons(tourId,b,i,tour)+
     '</div>'+ noteEditor + '</div>';
 }
@@ -1445,7 +1452,7 @@ function closeHistory(){
   HISTORY_OPEN=false;
   $("historyView").classList.add("hidden");
   $("historyPane").innerHTML="";          // drop the cards so a live poll never touches them
-  HISTORY_CACHE=[];
+  HISTORY_CACHE=[]; HISTORY_OPEN_CARDS.clear();   // reopen History with everything collapsed
 }
 async function historyRefresh(){
   let r; try{ r=await api("history",{token:store.token}); }
@@ -1479,11 +1486,17 @@ function renderHistory(tours){
 }
 function bindHistoryCards(){
   const root=$("historyPane"); if(!root) return;
-  // Expand/collapse (open by default so a manager sees the rosters at a glance).
-  root.querySelectorAll(".tour .bookings").forEach(b=>{ b.style.display=""; });
+  // CLOSED by default (keeps a long list scannable); a tapped-open card is remembered
+  // in HISTORY_OPEN_CARDS so a refresh doesn't collapse it.
+  root.querySelectorAll(".tour").forEach(card=>{
+    const b=card.querySelector(".bookings"); if(!b) return;
+    b.style.display = HISTORY_OPEN_CARDS.has(card.dataset.tour) ? "" : "none";
+  });
   root.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{
     const card=h.closest(".tour"); const b=card&&card.querySelector(".bookings"); if(!b) return;
-    b.style.display = b.style.display==="none" ? "" : "none";
+    const nowOpen = b.style.display==="none";
+    b.style.display = nowOpen ? "" : "none";
+    if(nowOpen) HISTORY_OPEN_CARDS.add(card.dataset.tour); else HISTORY_OPEN_CARDS.delete(card.dataset.tour);
   }; });
   // FULL NO-SHOW — same action as the live view, then refresh history.
   const noShowCall=async (btn,extra,verb)=>{

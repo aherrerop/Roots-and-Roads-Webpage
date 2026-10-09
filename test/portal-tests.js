@@ -221,7 +221,14 @@ check('a History button + overlay exist, shown to everyone (guides see their own
 check('guide History row shows WhatsApp + a clear checked-in/not status (no steppers)',
   /if\(HISTORY_RENDER && !MANAGER\)\{/.test(html) &&
   /'<span class="ckst in">✓ Checked in'/.test(html) && /'<span class="ckst out">Not checked in<\/span>'/.test(html) &&
-  /wa\+ inOut \+/.test(html) && /\.ckst\.in\{/.test(html) && /\.ckst\.out\{/.test(html), null);
+  /\+ph\+wa\+note\+mn\+'<\/div>'\+\s*inOut \+/.test(html) && /\.ckst\.in\{/.test(html) && /\.ckst\.out\{/.test(html), null);
+check('WhatsApp icon sits next to the phone (inside .nm), not in the 2-guide button cluster',
+  /\+ph\+wa\+note\+mnote\+mvbox\+noteBtn\+'<\/div>'\+\s*\n?\s*stepper\(tourId/.test(html) && !/wa\+ stepper/.test(html), null);
+check('History cards are collapsed by default, with a remembered open set',
+  /let HISTORY_OPEN_CARDS=new Set\(\);/.test(html) &&
+  /b\.style\.display = HISTORY_OPEN_CARDS\.has\(card\.dataset\.tour\) \? "" : "none";/.test(html) &&
+  /if\(nowOpen\) HISTORY_OPEN_CARDS\.add\(card\.dataset\.tour\); else HISTORY_OPEN_CARDS\.delete\(card\.dataset\.tour\);/.test(html) &&
+  /HISTORY_OPEN_CARDS\.clear\(\)/.test(html), null);
 check('a guide history is read-only: no-show/undo bindings + controls are manager-gated',
   /const histGuide = HISTORY_RENDER && !MANAGER;/.test(html) &&
   /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER\) :/.test(html) &&
@@ -249,7 +256,7 @@ check('closing History empties the pane so a poll never touches its cards',
 console.log('--- Per-booking manager note shows INLINE (no tap), post-it is edit-only ---');
 check('a manager note renders inline below the name (like the source note)',
   /const mnote = hasN \? '<div class="bnote mnote">'\+esc\(b\.manualNote\)\+'<\/div>' : '';/.test(html) &&
-  /\+ph\+note\+mnote\+mvbox\+noteBtn\+/.test(html) && /\.bnote\.mnote\{/.test(html), null);
+  /\+ph\+wa\+note\+mnote\+mvbox\+noteBtn\+/.test(html) && /\.bnote\.mnote\{/.test(html), null);
 check('the post-it is now edit-only (managers), no read-only popup for guides',
   /const noteBtn = canEdit && b\.bookingId/.test(html) &&
   /title="'\+\(hasN\?'Edit note':'Add a note'\)\+'"/.test(html) &&
