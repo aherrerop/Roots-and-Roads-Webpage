@@ -154,7 +154,11 @@
   .loaderr .retry{margin-top:14px;padding:11px 26px;border:none;border-radius:11px;background:var(--ink);color:#fff;font-weight:800;font-size:14px;cursor:pointer}
   .testlink{display:inline-block;margin-top:12px;color:var(--blue);font-weight:700;font-size:13px}
   .asgsel{margin-left:6px;padding:6px 8px;border:1px solid #dfe3e8;border-radius:9px;font-size:13px;font-weight:700;color:var(--ink);background:#fff;max-width:150px}
-  .asglbl{margin-left:8px;font-size:11px;font-weight:700;color:var(--muted)}  /* "2nd guide" label before the slot-2 dropdown */
+  .asglbl{font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  /* 2-guide tour: each pick on its own labelled row (Guide 1 above Guide 2). */
+  .asgrow{display:flex;align-items:center;gap:8px;width:100%;margin-top:4px}
+  .asgrow .asglbl{min-width:52px;flex:none}
+  .asgrow .asgsel{margin-left:0;flex:1;max-width:220px}
   .chip.miss{background:#fff7ed;color:#b45309;font-style:italic}
   .chip.needs{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4}
   .chip.fullbadge{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4;padding:3px 9px}
@@ -162,10 +166,16 @@
   .bnote{font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
   /* A manager's per-booking note, shown inline (amber) so it reads as a message. */
   .bnote.mnote{color:#92610a;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:3px 7px;white-space:pre-wrap;display:inline-block}
-  .mvsel{margin-top:4px;padding:3px 6px;border:1px solid #e2e6ea;border-radius:7px;font-size:11px;color:var(--muted);background:#fff}
-  .mvbox{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;margin-left:4px}
-  .mv-go{margin-top:4px;padding:3px 10px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer}
+  .mvsel{padding:4px 7px;border:1px solid #e2e6ea;border-radius:7px;font-size:12px;color:var(--ink);background:#fff}
+  .mvbox{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0}
+  .mv-go{padding:4px 12px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer}
   .mv-go[hidden]{display:none}
+  /* ⇄ move toggle (collapsed by default) + the panel it opens below the row. */
+  .bmovebtn{background:#eef2fb;border:1px solid #d3ddf2;border-radius:6px;padding:2px 7px;margin-left:6px;cursor:pointer;font-size:13px;line-height:1.2;color:#2547a0;vertical-align:middle;flex:none}
+  .bmovebtn:hover{background:#e2e9fa}
+  .bmovepanel{background:#f6f9ff;border:1px solid #dbe6fb;border-radius:12px;padding:10px 12px;margin:0 2px 10px}
+  .bmovepanel[hidden]{display:none}
+  .bmovepanel .mvlbl{font-size:11px;font-weight:800;color:#2547a0;text-transform:uppercase;letter-spacing:.3px;margin-bottom:7px}
   .ver{text-align:center;color:var(--muted);font-size:11px;padding:14px 0 22px;opacity:.7}
   .fresh{font-size:11px;font-weight:700;color:var(--muted);margin:0 4px 10px;display:flex;align-items:center;gap:6px}
   .fresh::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
@@ -283,7 +293,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-09-wa-and-collapse";
+const PORTAL_VERSION = "2026-10-10-compact-rows-ordered-guides";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -592,7 +602,7 @@ let LAST_EDIT = 0;
 // check-ins within seconds, while someone mid-edit is still protected.
 // Any touch/type/change on an edit control (a note, the move dropdowns, or the
 // "Open a schedule" form) marks the user as mid-edit so the poll holds off.
-const EDIT_SEL = ".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-lang,.mv-time,.mv-date,.mv-go,.bnoteta,.bnotesave,.of-open,.of-date,.of-time,.of-lang,.of-guide,.openform,.noshowbtn,.noshowundo";
+const EDIT_SEL = ".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-lang,.mv-time,.mv-date,.mv-go,.bmovebtn,.bnoteta,.bnotesave,.of-open,.of-date,.of-time,.of-lang,.of-guide,.openform,.noshowbtn,.noshowundo";
 document.addEventListener("input",  e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
 document.addEventListener("change", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
 document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
@@ -929,9 +939,8 @@ function assignSelect(t, slot){
   if(other) opts=opts.filter(o=>o.name!==other);
   if(cur && !opts.some(o=>o.name===cur)) opts=[{name:cur,status:""}].concat(opts);
   const legend="🟢 available · 🟡 overlapping tour · 🔴 already booked this time · 🌴 on vacation — you can still pick anyone";
-  let html=(slot===2?'<span class="asglbl">2nd guide</span>':'')
-    +'<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",slot:slot}))+'\'>';
-  html+='<option value=""'+(cur?'':' selected')+'>'+(slot===2?'Not assigned (2nd)':'Not assigned')+'</option>';
+  let html='<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",slot:slot}))+'\'>';
+  html+='<option value=""'+(cur?'':' selected')+'>Not assigned</option>';
   opts.forEach(o=>{ const d=DOT[o.status]?DOT[o.status]+" ":""; html+='<option value="'+esc(o.name)+'"'+(o.name===cur?' selected':'')+'>'+d+esc(o.name)+'</option>'; });
   return html+'</select>';
 }
@@ -939,15 +948,26 @@ function tourCard(t, canAssign, dayTimes){
   const missN = Math.max(0, t.bookedGuests - t.checkedGuests);
   const sub = missN>0 ? '<div class="sub">'+missN+' to check in</div>' : '<div class="sub done">all checked</div>';
   const assigned = (t.assigned && t.assigned.length) ? t.assigned : (canAssign ? [] : [store.name].concat(t.coGuides||[]));
-  let chips = assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join("");
   // A tour that HAS guests but NO guide is the thing a manager must not miss.
   const needsGuide = canAssign && !assigned.length && t.bookedGuests>0;
-  if(!assigned.length && canAssign) chips = needsGuide
-    ? '<span class="chip needs">⚠ Needs a guide</span>'
-    : '<span class="chip miss">Not assigned</span>';
-  if(canAssign && !HISTORY_RENDER) chips+=assignSelect(t);
-  // FULL tour (20+): a manager can add a SECOND guide (default Not assigned).
-  if(canAssign && !HISTORY_RENDER && t.full) chips+=assignSelect(t,2);
+  let chips;
+  if(canAssign && !HISTORY_RENDER){
+    // MANAGER (live): the dropdown IS the guide — its current selection shows who's
+    // on the tour — so we don't also repeat the guide as a chip (that was the jumble).
+    // A full (2-guide) tour shows the two picks LABELLED and ORDERED: Guide 1 above
+    // Guide 2, each on its own row, instead of a pile of chips + unlabelled selects.
+    chips = needsGuide ? '<span class="chip needs">⚠ Needs a guide</span>' : '';
+    if(t.full){
+      chips += '<div class="asgrow"><span class="asglbl">Guide 1</span>'+assignSelect(t,1)+'</div>'
+            +  '<div class="asgrow"><span class="asglbl">Guide 2</span>'+assignSelect(t,2)+'</div>';
+    } else {
+      chips += assignSelect(t,1);
+    }
+  } else {
+    // GUIDE / History: read-only chips of who is on the tour.
+    chips = assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join("")
+      || '<span class="chip miss">Not assigned</span>';
+  }
   // FULL tour (20+ guests): prompt a second guide + reopen. The red outline is on
   // the card (.tour.full); this badge spells out the action.
   if(t.full) chips = '<span class="chip fullbadge" title="This tour is full (20+ guests). Assign a second guide and reopen it if you can.">🔴 Full'+(canAssign?' — add 2nd guide, reopen':'')+'</span>'+chips;
@@ -1047,14 +1067,21 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
       '<div class="noterow"><button class="bnotesave" data-bns="'+ref+'" data-bid="'+esc(b.bookingId)+'" data-blang="'+esc(lang)+'">Save</button>'+
       '<button class="bnoteclose">Close</button><span class="notemsg" data-bnm="'+ref+'"></span></div></div>'
     : '';
+  // The move controls (3 dropdowns) are the main reason a row was so TALL. They're
+  // now COLLAPSED behind a small ⇄ button (like the note post-it) and open into a
+  // panel below the row — so a normal row is just name · source · phone · check-in.
+  const moveBtn = mvbox
+    ? '<button class="bmovebtn" data-bmove="'+ref+'" title="Move this booking to another day / time / language">⇄</button>' : '';
+  const movePanel = mvbox
+    ? '<div class="bmovepanel" data-bmvp="'+ref+'" hidden><div class="mvlbl">Move to another day / time / language</div>'+mvbox+'</div>' : '';
   // WhatsApp sits next to the phone (inside .nm), NOT in the right-hand control
   // cluster — on a two-guide tour that cluster has two check-in buttons and the
   // icon used to overlap them.
   return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+wa+note+mnote+mvbox+noteBtn+'</div>'+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+wa+note+mnote+noteBtn+moveBtn+'</div>'+
     stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
     checkinButtons(tourId,b,i,tour)+
-    '</div>'+ noteEditor + '</div>';
+    '</div>'+ noteEditor + movePanel + '</div>';
 }
 /* ONE check-in button, OR — on a full tour that has a 2nd guide — two buttons "1/2"
    (labelled by each guide's initials) so a guest is checked in under, and PAID to,
@@ -1216,6 +1243,13 @@ function bindTours(tours){
     };
   });
   document.querySelectorAll(".bnoteclose").forEach(b=>{ b.onclick=(e)=>{ e.stopPropagation(); const p=b.closest(".bnotepanel"); if(p) p.hidden=true; }; });
+  // ⇄ move toggle: open/close the move panel for this booking.
+  document.querySelectorAll(".bmovebtn").forEach(btn=>{
+    btn.onclick=(e)=>{ e.stopPropagation(); LAST_EDIT=Date.now();
+      const panel=btn.closest(".bkwrap").querySelector(".bmovepanel");
+      if(panel) panel.hidden=!panel.hidden;
+    };
+  });
   document.querySelectorAll(".bnotesave").forEach(b=>{
     b.onclick=async (e)=>{ e.stopPropagation();
       const ref=b.dataset.bns, bookingId=b.dataset.bid, lang=b.dataset.blang, panel=b.closest(".bnotepanel");

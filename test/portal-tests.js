@@ -189,8 +189,10 @@ check('a full (20+) tour gets a red outline class + Full badge',
   /if\(t\.full\) chips = '<span class="chip fullbadge"/.test(html), null);
 // B: a full card offers a SECOND guide dropdown (slot 2); it posts slot:2, and the
 // slot-2 overlay is held clear of the slot-1 optimistic hold.
-check('a full card renders a 2nd-guide dropdown (slot 2) that posts slot:2',
-  /function assignSelect\(t, slot\)\{/.test(html) && /if\(canAssign && !HISTORY_RENDER && t\.full\) chips\+=assignSelect\(t,2\)/.test(html) &&
+check('a full card renders ordered, labelled Guide 1 / Guide 2 dropdowns (slot 2 posts slot:2)',
+  /function assignSelect\(t, slot\)\{/.test(html) &&
+  /<span class="asglbl">Guide 1<\/span>'\+assignSelect\(t,1\)/.test(html) &&
+  /<span class="asglbl">Guide 2<\/span>'\+assignSelect\(t,2\)/.test(html) &&
   /sfExt:t\.sfExt\?1:"",slot:slot/.test(html), null);
 check('the 2nd-guide change uses the overlay path (no optimistic hold / conflict)',
   /if\(info\.slot===2\)\{/.test(html) && /s\.secondGuide && !s\.assigned\.some\(a=>a&&a\.toLowerCase\(\)===s\.secondGuide\.toLowerCase\(\)\)/.test(html), null);
@@ -223,7 +225,7 @@ check('guide History row shows WhatsApp + a clear checked-in/not status (no step
   /'<span class="ckst in">✓ Checked in'/.test(html) && /'<span class="ckst out">Not checked in<\/span>'/.test(html) &&
   /\+ph\+wa\+note\+mn\+'<\/div>'\+\s*inOut \+/.test(html) && /\.ckst\.in\{/.test(html) && /\.ckst\.out\{/.test(html), null);
 check('WhatsApp icon sits next to the phone (inside .nm), not in the 2-guide button cluster',
-  /\+ph\+wa\+note\+mnote\+mvbox\+noteBtn\+'<\/div>'\+\s*\n?\s*stepper\(tourId/.test(html) && !/wa\+ stepper/.test(html), null);
+  /\+ph\+wa\+note\+mnote\+noteBtn\+moveBtn\+'<\/div>'\+\s*\n?\s*stepper\(tourId/.test(html) && !/wa\+ stepper/.test(html), null);
 check('History cards are collapsed by default, with a remembered open set',
   /let HISTORY_OPEN_CARDS=new Set\(\);/.test(html) &&
   /b\.style\.display = HISTORY_OPEN_CARDS\.has\(card\.dataset\.tour\) \? "" : "none";/.test(html) &&
@@ -238,7 +240,7 @@ check('opening History fetches action=history and renders cards in history mode'
   /HISTORY_RENDER=true;/.test(html) && /tourCard\(t, MANAGER, dayTimes\)/.test(html), null);
 check('history mode drops the editing UI (close / assign / 2nd-guide) from the card',
   /const closeBtn=\(canAssign && !HISTORY_RENDER\)\?/.test(html) &&
-  /if\(canAssign && !HISTORY_RENDER\) chips\+=assignSelect\(t\);/.test(html) &&
+  /if\(canAssign && !HISTORY_RENDER\)\{/.test(html) && /chips \+= assignSelect\(t,1\);/.test(html) &&
   /const canEdit = canAssign && !HISTORY_RENDER;/.test(html), null);
 check('history keeps no-show + undo live: stepper read-only, check-in button undo-only',
   /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER\) :/.test(html) &&
@@ -256,11 +258,29 @@ check('closing History empties the pane so a poll never touches its cards',
 console.log('--- Per-booking manager note shows INLINE (no tap), post-it is edit-only ---');
 check('a manager note renders inline below the name (like the source note)',
   /const mnote = hasN \? '<div class="bnote mnote">'\+esc\(b\.manualNote\)\+'<\/div>' : '';/.test(html) &&
-  /\+ph\+wa\+note\+mnote\+mvbox\+noteBtn\+/.test(html) && /\.bnote\.mnote\{/.test(html), null);
+  /\+ph\+wa\+note\+mnote\+noteBtn\+moveBtn\+/.test(html) && /\.bnote\.mnote\{/.test(html), null);
 check('the post-it is now edit-only (managers), no read-only popup for guides',
   /const noteBtn = canEdit && b\.bookingId/.test(html) &&
   /title="'\+\(hasN\?'Edit note':'Add a note'\)\+'"/.test(html) &&
   !/<div class="noteread">/.test(html), null);
+
+console.log('--- Compact booking rows + ordered two-guide controls ---');
+// The 3 move dropdowns were the main row-height hog. They now live in a panel that
+// is COLLAPSED behind a ⇄ button, so a normal row is just name · source · phone · check-in.
+check('move controls are collapsed behind a ⇄ toggle (not inline in the row)',
+  /const moveBtn = mvbox\s*\n?\s*\? '<button class="bmovebtn" data-bmove="'\+ref\+'"/.test(html) &&
+  /const movePanel = mvbox\s*\n?\s*\? '<div class="bmovepanel" data-bmvp="'\+ref\+'" hidden>/.test(html) &&
+  /\.bmovepanel\[hidden\]\{display:none\}/.test(html), null);
+check('the ⇄ toggle opens/closes the move panel, and the panel is shown below the row',
+  /document\.querySelectorAll\("\.bmovebtn"\)\.forEach\(btn=>\{/.test(html) &&
+  /const panel=btn\.closest\("\.bkwrap"\)\.querySelector\("\.bmovepanel"\);\s*\n?\s*if\(panel\) panel\.hidden=!panel\.hidden;/.test(html) &&
+  /'<\/div>'\+ noteEditor \+ movePanel \+ '<\/div>'/.test(html), null);
+// For a manager the dropdown IS the guide, so we no longer ALSO print the guide as a
+// chip (that redundant pile was the "jumble"). Read-only chips stay for the guide/history view.
+check('managers see ordered dropdowns (no redundant guide chips); chips are read-only elsewhere',
+  /if\(canAssign && !HISTORY_RENDER\)\{[\s\S]*?chips = needsGuide \? '<span class="chip needs">⚠ Needs a guide<\/span>' : '';/.test(html) &&
+  /\} else \{[\s\S]*?chips = assigned\.map\(n=>'<span class="chip">/.test(html) &&
+  /\.asgrow\{display:flex;align-items:center;gap:8px;width:100%/.test(html), null);
 
 console.log('--- Auto-refresh never interrupts a mid-action user (no wiped forms) ---');
 check('the poll pauses while the "Open a schedule" form is open', /details\.openform\[open\]"\)\) return false;/.test(html), null);
