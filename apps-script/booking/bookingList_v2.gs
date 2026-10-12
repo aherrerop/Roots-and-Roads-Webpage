@@ -1055,6 +1055,33 @@ function getThreadsSafe_(labelName) {
         recent.forEach(t => {
           if (!seen[t.getId()] && !threadHasProcessedLabel_(t)) { threads.push(t); seen[t.getId()] = true; }
         });
+      } else if (/\/Cancellations$/i.test(String(labelName))) {
+        // A SECOND cancellation for the SAME language threads into the FIRST
+        // cancellation's conversation: Freetour reuses the subject ("❌
+        // Annullierung: <tour>") with no booking id, so Gmail groups them. That
+        // thread was marked Processed after the first cancellation, so the
+        // "-label:processed" search above hides the newly-arrived second
+        // cancellation until the twice-daily audit. Re-admit recent cancellation
+        // threads that now carry MORE THAN ONE message and had activity in the
+        // last 2 days, so the extra cancellation is applied on the very next fast
+        // run (parseThread_ reads every message, so both cancellations are seen).
+        // Reprocessing is idempotent (removeActiveBookingBySourceAndId_ no-ops once
+        // a booking is gone); the 2-day window stops it re-running forever once an
+        // audit has swept the thread.
+        const label = getLabel_(labelName);
+        const recent = label ? (label.getThreads(0, RNR.RECENT_RELIABLE_FAST) || []) : [];
+        const seen = {};
+        threads.forEach(t => { seen[t.getId()] = true; });
+        const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+        recent.forEach(t => {
+          if (seen[t.getId()]) return;
+          try {
+            const last = t.getLastMessageDate ? t.getLastMessageDate() : null;
+            if (t.getMessageCount() > 1 && last && (Date.now() - last.getTime()) < TWO_DAYS_MS) {
+              threads.push(t); seen[t.getId()] = true;
+            }
+          } catch (e) { /* best-effort: a skipped thread is caught by the audit */ }
+        });
       }
     } else {
       const label = getLabel_(labelName);

@@ -516,6 +516,32 @@ check('FT Spanish modify: rejected in confirm, accepted in modify mode',
 // Adversarial: empty / garbage must never throw and never invent a real booking.
 check('FT garbage: no throw, no valid booking', (function(){ try { const g=parseFreetourMessage_(makeFakeMsg_('hello','no fields here'),'confirm'); return !isValidBooking_(g) || !g.bookingId || g.bookingId.indexOf('FT-')===0 || true; } catch(e){ return false; } })(), null);
 
+console.log('--- FT: two same-language cancellations threaded together are BOTH applied ---');
+// Freetour reuses the cancellation subject ("❌ Annullierung: <tour>") with NO
+// booking id, so Gmail threads same-language cancellations into one conversation.
+// cancellationBookingsFromThread_ must read EVERY message and keep both distinct
+// bookings — not collapse to the first. (Real incident 2026-10-12: Sophia Keller
+// #…595 + Albina Ibrahimi #…686 landed in one German thread; only the first was
+// being applied.)
+const ftCxSubj = '❌ Annullierung: Barcelona All-in-One Sagrada Família, Gaudí & Gothic Quarter';
+const ftCxBody = (name, id, when) =>
+  'Dear Roots and Roads, Your customer: ' + name + ' has cancelled his or her booking (#' + id +
+  ') for Barcelona All-in-One Sagrada Família, Gaudí & Gothic Quarter at 10:30 AM, ' + when +
+  '. This is an automatic notification message from FREETOUR.com';
+const ftCxThread = {
+  getMessages: () => [
+    makeFakeMsg_(ftCxSubj, ftCxBody('Sophia Keller', '112713-20261012061706-595', 'Monday, 12 October 2026'), {from:'no-reply@freetour.com'}),
+    makeFakeMsg_(ftCxSubj, ftCxBody('Albina Ibrahimi', '112713-20261012144534-686', 'Friday, 16 October 2026'), {from:'no-reply@freetour.com'})
+  ],
+  getFirstMessageSubject: () => ftCxSubj
+};
+const ftTwoCx = cancellationBookingsFromThread_(ftCxThread, RNR.SOURCE.FREETOUR);
+check('FT threaded cancels: BOTH bookings are parsed (not just the first)',
+  ftTwoCx.length === 2 &&
+  ftTwoCx.some(b => b.bookingId === '112713-20261012061706-595') &&
+  ftTwoCx.some(b => b.bookingId === '112713-20261012144534-686'),
+  ftTwoCx.map(b => b.bookingId));
+
 console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
 const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;
 const idEn=idSS.insertSheet('English Tours');
