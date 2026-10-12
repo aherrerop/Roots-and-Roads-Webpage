@@ -2390,6 +2390,52 @@ function archiveConfirmationThreadsById_(source, bookingId) {
 
 
 /**
+ * MANUAL REMOVAL support (guide portal). A manager cancelled a single booking that
+ * never arrived as an email cancellation, so there is no cancellation signal to
+ * stop the reconcile floor from re-adding this still-confirmed booking. TRASH its
+ * confirmation (and any modification) email across EVERY source's labels so the
+ * reconcile + confirmation sweep can never resurrect it. Source-agnostic (the
+ * portal sends no source) and verified by id, so a fuzzy search hit can't trash
+ * the wrong thread. Trash (not archive): a relabelled/archived thread keeps its
+ * Confirmations label and would still be re-read. Returns the number trashed.
+ * Called ONLY via the ADMIN_KEY-guarded web endpoint (removeBookingManual bridge).
+ */
+function trashBookingConfirmationById_(bookingId) {
+  const id = normalizeId_(bookingId);
+  if (!id) return 0;
+
+  const targets = [];
+  sourceConfigs_().forEach(cfg => {
+    [cfg.confirm, cfg.modify].forEach(l => { if (l) targets.push({ label: l, source: cfg.source }); });
+  });
+  if (RNR.LABELS.WEB_CONFIRM) targets.push({ label: RNR.LABELS.WEB_CONFIRM, source: RNR.SOURCE.WEBSITE });
+
+  let trashed = 0;
+  const seen = {};
+  targets.forEach(t => {
+    let threads = [];
+    try { threads = GmailApp.search(searchTokenForLabel_(t.label) + ' "' + bookingId + '"', 0, 5) || []; }
+    catch (e) { return; }
+    threads.forEach(thread => {
+      try {
+        const gid = thread.getId();
+        if (seen[gid]) return;
+        // Verify the id really belongs to this thread (guard a fuzzy search hit).
+        const ids = new Set(parseThread_(thread, t.source, 'any').map(b => normalizeId_(b.bookingId)).filter(Boolean));
+        const tid = normalizeId_(extractBookingIdFromThread_(thread, t.source));
+        if (tid) ids.add(tid);
+        if (!ids.has(id)) return;
+        seen[gid] = true;
+        safeTrash_(thread);
+        trashed++;
+      } catch (e) { /* skip a bad thread */ }
+    });
+  });
+  return trashed;
+}
+
+
+/**
  * Catch-up sweep: for every cancelled booking, make sure its confirmation email
  * has left the inbox. Runs on audits and can be run manually
  * (cleanupCancelledBookings). Scans ALL cancellation threads (including

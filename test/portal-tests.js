@@ -282,6 +282,18 @@ check('managers see ordered dropdowns (no redundant guide chips); chips are read
   /\} else \{[\s\S]*?chips = assigned\.map\(n=>'<span class="chip">/.test(html) &&
   /\.asgrow\{display:flex;align-items:center;gap:8px;width:100%/.test(html), null);
 
+console.log('--- Remove / cancel a booking (lives INSIDE the collapsed move panel) ---');
+// No new always-visible row button: the destructive remove sits in the move panel,
+// which is itself collapsed behind ⇄. It confirms, then removes everywhere.
+check('the move panel holds a Remove option (not a new top-level row button)',
+  /movePanel = mvbox[\s\S]*?class="bmvremove" data-bkill=/.test(html) &&
+  /🗑 Remove \/ cancel this booking/.test(html) && /\.bmvremove\{/.test(html), null);
+check('Remove confirms first, then calls api("removeBooking") and reloads',
+  /document\.querySelectorAll\("\.bmvremove"\)\.forEach/.test(html) &&
+  /if\(!confirm\(/.test(html) &&
+  /api\("removeBooking",\{token:store\.token,bookingId:info\.bookingId,language:info\.language/.test(html) &&
+  /loadTours\(\);/.test(html), null);
+
 console.log('--- Auto-refresh never interrupts a mid-action user (no wiped forms) ---');
 check('the poll pauses while the "Open a schedule" form is open', /details\.openform\[open\]"\)\) return false;/.test(html), null);
 check('choosing in a SELECT also holds the poll', /INPUT\|TEXTAREA\|SELECT/.test(html), null);

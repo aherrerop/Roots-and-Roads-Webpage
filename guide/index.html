@@ -176,6 +176,10 @@
   .bmovepanel{background:#f6f9ff;border:1px solid #dbe6fb;border-radius:12px;padding:10px 12px;margin:0 2px 10px}
   .bmovepanel[hidden]{display:none}
   .bmovepanel .mvlbl{font-size:11px;font-weight:800;color:#2547a0;text-transform:uppercase;letter-spacing:.3px;margin-bottom:7px}
+  .bmvsep{height:1px;background:#dbe6fb;margin:10px 0 8px}
+  .bmvremove{display:inline-flex;align-items:center;gap:5px;background:#fff5f5;border:1px solid #f0b4b4;color:#c0392b;font-weight:800;font-size:12px;padding:6px 11px;border-radius:9px;cursor:pointer}
+  .bmvremove:hover{background:#fdecec}
+  .bmvremove:disabled{opacity:.6;cursor:default}
   .ver{text-align:center;color:var(--muted);font-size:11px;padding:14px 0 22px;opacity:.7}
   .fresh{font-size:11px;font-weight:700;color:var(--muted);margin:0 4px 10px;display:flex;align-items:center;gap:6px}
   .fresh::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
@@ -293,7 +297,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-10-compact-rows-ordered-guides";
+const PORTAL_VERSION = "2026-10-12-remove-booking";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -1072,8 +1076,16 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   // panel below the row — so a normal row is just name · source · phone · check-in.
   const moveBtn = mvbox
     ? '<button class="bmovebtn" data-bmove="'+ref+'" title="Move this booking to another day / time / language">⇄</button>' : '';
+  // The panel also holds the destructive "Remove" (a cancellation that never came
+  // through automatically) — kept INSIDE the collapsed panel, not as another
+  // always-visible row button, and clearly separated + confirmed.
+  const killData = (canEdit && b.bookingId)
+    ? esc(JSON.stringify({bookingId:b.bookingId, language:lang, name:b.name||b.bookingId})) : '';
   const movePanel = mvbox
-    ? '<div class="bmovepanel" data-bmvp="'+ref+'" hidden><div class="mvlbl">Move to another day / time / language</div>'+mvbox+'</div>' : '';
+    ? '<div class="bmovepanel" data-bmvp="'+ref+'" hidden><div class="mvlbl">Move to another day / time / language</div>'+mvbox+
+      '<div class="bmvsep"></div>'+
+      '<button class="bmvremove" data-bkill=\''+killData+'\' title="Remove this booking (a cancellation that did not arrive automatically)">🗑 Remove / cancel this booking</button>'+
+      '</div>' : '';
   // WhatsApp sits next to the phone (inside .nm), NOT in the right-hand control
   // cluster — on a two-guide tour that cluster has two check-in buttons and the
   // icon used to overlap them.
@@ -1248,6 +1260,21 @@ function bindTours(tours){
     btn.onclick=(e)=>{ e.stopPropagation(); LAST_EDIT=Date.now();
       const panel=btn.closest(".bkwrap").querySelector(".bmovepanel");
       if(panel) panel.hidden=!panel.hidden;
+    };
+  });
+  // 🗑 Remove / cancel this booking — a cancellation that never came through
+  // automatically. Confirmed, then the booking is removed everywhere (not counted).
+  document.querySelectorAll(".bmvremove").forEach(btn=>{
+    btn.onclick=async (e)=>{ e.stopPropagation(); LAST_EDIT=Date.now();
+      let info={}; try{ info=JSON.parse(btn.dataset.bkill||"{}"); }catch(_){}
+      if(!info.bookingId) return;
+      if(!confirm("Remove "+(info.name||"this booking")+" from the tour?\n\nUse this for a cancellation that didn’t arrive automatically. The guest is removed and will NOT be counted. This can’t be undone here.")) return;
+      const old=btn.textContent; btn.disabled=true; btn.textContent="Removing…";
+      try{
+        const r=await api("removeBooking",{token:store.token,bookingId:info.bookingId,language:info.language,name:info.name});
+        if(r && r.ok){ if(r.warning) alert(r.warning); loadTours(); }
+        else { alert((r && r.error) || "Could not remove the booking"); btn.disabled=false; btn.textContent=old; }
+      }catch(err){ alert("Network error — try again"); btn.disabled=false; btn.textContent=old; }
     };
   });
   document.querySelectorAll(".bnotesave").forEach(b=>{

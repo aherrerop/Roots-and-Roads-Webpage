@@ -565,6 +565,28 @@ check('FT threaded modifications: BOTH messages parsed in order (newest guest co
   ftThrMods[1] && ftThrMods[1].bookingId === '112713-20261007065104-333' && Number(ftThrMods[1].guests) === 1,
   ftThrMods.map(b => b && b.guests));
 
+console.log('--- manual removal: trashBookingConfirmationById_ trashes ONLY the matching confirmation ---');
+// The guide-portal "Remove" (a cancellation with no email) trashes the booking's
+// source confirmation so the reconcile floor can't resurrect it — verified by id,
+// so a different booking returned by the same fuzzy search is left alone.
+const _rmConf = (id) => {
+  const body = 'Barcelona All-in-One Tour-Reservierung Datum der Tour: 10:30 AM, Friday, 16 October 2026 ' +
+    'Sprache: Deutsch Erwachsene: 2 Personen Buchungsname: Test Guest E-Mail-Adresse: x@y.com Buchungs-ID: ' + id;
+  return { _trashed: false, getId: () => 'thr-' + id,
+    getFirstMessageSubject: () => 'Reservierung von Freetour.com – Buchungs-ID: ' + id,
+    getMessages: () => [makeFakeMsg_('Reservierung von Freetour.com – Buchungs-ID: ' + id, body, {from:'bookings@freetour.com'})],
+    moveToTrash: function () { this._trashed = true; } };
+};
+const rmWant = _rmConf('112713-20261012144534-686');
+const rmOther = _rmConf('112713-20260101000000-111');
+const _rmSearch = GmailApp.search;
+GmailApp.search = (q) => (String(q).indexOf('112713-20261012144534-686') !== -1 ? [rmWant, rmOther] : []);
+const rmN = trashBookingConfirmationById_('112713-20261012144534-686');
+GmailApp.search = _rmSearch;
+check('trashes the matching confirmation thread', rmWant._trashed === true && rmN >= 1, { t: rmWant._trashed, n: rmN });
+check('does NOT trash a different booking returned by the same search', rmOther._trashed === false, rmOther._trashed);
+check('an empty id trashes nothing', trashBookingConfirmationById_('') === 0, null);
+
 console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
 const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;
 const idEn=idSS.insertSheet('English Tours');

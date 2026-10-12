@@ -465,6 +465,33 @@ check('a ledger-only past tour surfaces (roster from Completed Log)', hL && hL.b
 check('its check-in shows from the LEDGER even with no snapshot row', hL && hL.bookings.some(b => b.bookingId === 'HISTLED1' && b.checked === true && b.checkedIn === 2), hL && hL.bookings);
 check('the tour guide is recovered from the ledger (Carlos)', hL && (hL.assigned || []).indexOf('Carlos') !== -1, hL && hL.assigned);
 
+console.log('--- Manager REMOVE a booking: row + feed gone, bridge trashes the source email ---');
+// A cancellation that never arrived automatically. Seed a fresh booking in BOTH
+// the language tab and the feed, then remove it.
+en.getRange(en.getLastRow() + 1, 1, 1, 9).setValues([
+  ['Cancel Me', '+34600999000', 2, new Date(DATE + 'T12:00:00'), '10:00 AM', 'GetYourGuide', 30, 'GYGKILL1', '']]);
+feed.getRange(feed.getLastRow() + 1, 1, 1, 14).setValues([
+  [DATE, '10:00 AM', 'English', 'Cancel Me', '+34600999000', 2, 0, 'GetYourGuide', 30, 'GYGKILL1', '', '', '', '']]);
+// The admin bridge must be configured + reachable for the durable (email-trash) path.
+PropertiesService.getScriptProperties().setProperty('BOOKING_WEBAPP_URL', 'https://example.com/exec');
+PropertiesService.getScriptProperties().setProperty('ADMIN_KEY', 'testkey');
+let bridgeCall = null;
+const _fetch = UrlFetchApp.fetch;
+UrlFetchApp.fetch = (u) => { bridgeCall = String(u); return { getResponseCode: () => 200, getContentText: () => '{"ok":true,"trashed":1}' }; };
+const inTab = () => en.getRange(2, 1, Math.max(1, en.getLastRow() - 1), 9).getValues().some(r => String(r[7]) === 'GYGKILL1');
+const inFeed = () => feed.getRange(2, 1, Math.max(1, feed.getLastRow() - 1), 14).getValues().some(r => String(r[9]) === 'GYGKILL1');
+check('the booking is present before removal (tab + feed)', inTab() && inFeed(), [inTab(), inFeed()]);
+const feedVerBeforeRm = String(__mock.PROPS['PORTAL_FEED_VER'] || '0');
+const rRm = apiRemoveBooking_({ token: token, bookingId: 'GYGKILL1', language: 'English' });
+UrlFetchApp.fetch = _fetch;
+check('apiRemoveBooking_ ok + durable (bridge trashed the email)', rRm && rRm.ok === true && rRm.removed === true && rRm.durable === true, rRm);
+check('the booking row is gone from the language tab', !inTab(), inTab());
+check('the booking row is gone from the Portal Feed', !inFeed(), inFeed());
+check('removal called the bridge with fn=trashBookingConfirmation + the id', /fn=trashBookingConfirmation/.test(bridgeCall || '') && /GYGKILL1/.test(bridgeCall || ''), bridgeCall);
+check('removal bumps the feed version so the portal reflects it next load', String(__mock.PROPS['PORTAL_FEED_VER'] || '0') !== feedVerBeforeRm, [feedVerBeforeRm, __mock.PROPS['PORTAL_FEED_VER']]);
+check('a non-manager cannot remove a booking', (function () { const r = apiRemoveBooking_({ token: makeToken_('Carlos'), bookingId: 'GYGE2E001', language: 'English' }); return r && r.ok === false && /manager/i.test(r.error || ''); })(), null);
+check('removing an unknown id fails cleanly (not found, nothing deleted)', (function () { const r = apiRemoveBooking_({ token: token, bookingId: 'NOPE999', language: 'English' }); return r && r.ok === false; })(), null);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

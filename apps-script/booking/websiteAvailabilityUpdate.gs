@@ -390,6 +390,12 @@ function websiteAdminRun_(e) {
 
     if (!key) out = { ok: false, error: 'ADMIN_KEY not configured' };
     else if (given !== key) out = { ok: false, error: 'Bad key' };
+    else if (fn === 'trashBookingConfirmation') {
+      // Guide-portal manual removal: trash the source confirmation so the booking
+      // cannot be resurrected by reconcile. Takes a bookingId; returns the count.
+      const n = trashBookingConfirmationById_(String(e?.parameter?.bookingId || ''));
+      out = { ok: true, ran: fn, trashed: n };
+    }
     else if (!allowed[fn]) out = { ok: false, error: 'Function not allowed: ' + fn };
     else { allowed[fn](); out = { ok: true, ran: fn }; }
   } catch (err) {

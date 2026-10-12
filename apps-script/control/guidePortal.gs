@@ -274,6 +274,7 @@ function doGet(e) {
       case 'assign': out = apiAssign_(p); break;
       case 'move':   out = apiMoveBooking_(p); break;
       case 'moveTime': out = apiMoveBookingTime_(p); break;
+      case 'removeBooking': out = apiRemoveBooking_(p); break;
       case 'setNote': out = apiSetNote_(p); break;
       case 'closeShift': out = apiCloseShift_(p); break;
       case 'uncheckin': out = apiUncheckin_(p); break;
@@ -1771,6 +1772,117 @@ function moveBookingDateInTab_(bookingId, language, dateKey) {
   // noon avoids any UTC/local off-by-one, and every read goes through toDateKey_.
   sh.getRange(rowNum, 4).setValue(new Date(dateKey + 'T12:00:00'));
   return { ok: true, moved: true, to: dateKey };
+}
+
+/**
+ * Manager REMOVES a single booking from the portal — a cancellation that never
+ * arrived as an OTA/email cancellation (the guest told the guide, a no-show the
+ * manager wants off the list, a duplicate). Unlike a move, the booking is GONE:
+ *   1. its row is deleted from the language Tours tab (so it stops counting),
+ *   2. its Portal Feed row is dropped (so the portal updates on the next poll),
+ *   3. its source CONFIRMATION email is trashed on the BOOKING side (that project
+ *      owns Gmail) — otherwise the booking system's reconcile floor re-adds this
+ *      still-confirmed booking within minutes.
+ * It is NOT logged to Done/Completed, so the cancelled guest is never counted as
+ * having attended. Manager-only, locked, cache-bumped.
+ */
+function apiRemoveBooking_(p) {
+  __RRX = {};
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+
+  const bookingId = String(p.bookingId || '').trim();
+  const language = String(p.language || '').trim();
+  if (!bookingId || !language) return { ok: false, error: 'Missing booking info' };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
+  try {
+    // 1. Delete the booking's row from its language Tours tab.
+    const rowGone = deleteBookingRowFromTab_(bookingId, language);
+    if (!rowGone.ok) return rowGone;
+
+    // 2. Drop its Portal Feed row so the removal shows on the very next poll.
+    removeFeedRowById_(bookingId);
+
+    // 3. Trash the source confirmation on the booking side (it owns Gmail), or the
+    //    reconcile floor re-adds this confirmed booking. Best-effort: if the bridge
+    //    is down the row is still gone, and we warn that it may reappear on sync.
+    const trash = callBookingAdmin_('trashBookingConfirmation', { bookingId: bookingId });
+    const durable = !!(trash && trash.ok);
+
+    bumpFeedCacheVersion_();
+    bumpCacheVersion_();
+
+    return { ok: true, removed: true, durable: durable,
+      warning: durable ? '' :
+        'Removed from the list, but the source email could not be cleared automatically — it may reappear on the next booking sync. Cancel it on the platform too.' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Delete a booking's row(s) from one language Tours tab (col H = Booking ID). */
+function deleteBookingRowFromTab_(bookingId, language) {
+  const ss = bookingSS_();
+  const sh = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
+  if (!sh) return { ok: false, error: language + ' Tours tab not found' };
+
+  const idNorm = String(bookingId).toUpperCase().replace(/\s+/g, '');
+  const last = sh.getLastRow();
+  let found = false;
+  if (last >= 2) {
+    const rows = sh.getRange(2, 1, last - 1, 9).getValues();   // H(8) = Booking ID
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (String(rows[i][7] || '').toUpperCase().replace(/\s+/g, '') === idNorm) {
+        sh.deleteRow(i + 2);
+        found = true;
+      }
+    }
+  }
+  if (!found) return { ok: false, error: bookingId + ' not found in ' + language + ' Tours' };
+  return { ok: true };
+}
+
+/** Delete a booking's Portal Feed row(s) by id (J = Booking ID). Best-effort. */
+function removeFeedRowById_(bookingId) {
+  try {
+    const id = String(bookingId || '').trim();
+    if (!id) return false;
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
+    let done = false;
+    for (let i = ids.length - 1; i >= 0; i--) {
+      if (String(ids[i][0] || '').trim() === id) { sh.deleteRow(i + 2); done = true; }
+    }
+    return done;
+  } catch (e) { return false; }
+}
+
+/**
+ * Call a whitelisted admin function in the BOOKING project's web app (same bridge
+ * Mobile Controls uses: BOOKING_WEBAPP_URL + ADMIN_KEY script properties), passing
+ * extra query params. Returns the parsed JSON, or { ok:false } on any failure.
+ */
+function callBookingAdmin_(fn, extra) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const url = props.getProperty('BOOKING_WEBAPP_URL');
+    const key = props.getProperty('ADMIN_KEY');
+    if (!url || !key) return { ok: false, error: 'bridge not configured' };
+    let q = url + '?admin=1&key=' + encodeURIComponent(key) + '&fn=' + encodeURIComponent(fn);
+    Object.keys(extra || {}).forEach(k => { q += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(extra[k]); });
+    const res = UrlFetchApp.fetch(q, { muteHttpExceptions: true, followRedirects: true });
+    if (res.getResponseCode() >= 300) return { ok: false, error: 'HTTP ' + res.getResponseCode() };
+    let parsed = null;
+    try { parsed = JSON.parse(res.getContentText() || ''); } catch (e) { /* non-JSON */ }
+    return parsed || { ok: false, error: 'bad response' };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
 }
 
 /**
