@@ -542,6 +542,29 @@ check('FT threaded cancels: BOTH bookings are parsed (not just the first)',
   ftTwoCx.some(b => b.bookingId === '112713-20261012144534-686'),
   ftTwoCx.map(b => b.bookingId));
 
+console.log('--- FT: two modifications to one booking in one thread → read in order, newest last ---');
+// Repeated edits to the SAME booking share a subject (it carries the booking id),
+// so Gmail threads them. parseThread_ must read EVERY message IN ORDER so the
+// handler (processModificationThread_ replays oldest→newest) lands the NEWEST
+// edit. Here guest count goes 3→2 then 2→1; the final applied state must be 1.
+const ftThrModSubj = 'Modification to Reservation from Freetour.com - Booking ID: 112713-20261007065104-333';
+const ftThrModBody = (newG) =>
+  'Edited Tour Reservation Date of the Tour: 2026-10-09 10:30 AM Language: French ' +
+  'Previous Guests: ' + (newG + 1) + ' personnes New Guests: ' + newG + ' personne Booking name: Jean Dupont';
+const ftThrModThread = {
+  getMessages: () => [
+    makeFakeMsg_(ftThrModSubj, ftThrModBody(2), {from:'noreply@freetour.com'}),
+    makeFakeMsg_(ftThrModSubj, ftThrModBody(1), {from:'noreply@freetour.com'})
+  ],
+  getFirstMessageSubject: () => ftThrModSubj
+};
+const ftThrMods = parseThread_(ftThrModThread, RNR.SOURCE.FREETOUR, 'modify');
+check('FT threaded modifications: BOTH messages parsed in order (newest guest count last)',
+  ftThrMods.length === 2 &&
+  ftThrMods[0] && ftThrMods[0].bookingId === '112713-20261007065104-333' && Number(ftThrMods[0].guests) === 2 &&
+  ftThrMods[1] && ftThrMods[1].bookingId === '112713-20261007065104-333' && Number(ftThrMods[1].guests) === 1,
+  ftThrMods.map(b => b && b.guests));
+
 console.log('--- activeBookingIdSet_ reads ids across the language tabs ---');
 const idSS=new __mock.MockSS('booking-ids'); SpreadsheetApp._active=idSS;
 const idEn=idSS.insertSheet('English Tours');

@@ -1055,19 +1055,27 @@ function getThreadsSafe_(labelName) {
         recent.forEach(t => {
           if (!seen[t.getId()] && !threadHasProcessedLabel_(t)) { threads.push(t); seen[t.getId()] = true; }
         });
-      } else if (/\/Cancellations$/i.test(String(labelName))) {
-        // A SECOND cancellation for the SAME language threads into the FIRST
-        // cancellation's conversation: Freetour reuses the subject ("❌
-        // Annullierung: <tour>") with no booking id, so Gmail groups them. That
-        // thread was marked Processed after the first cancellation, so the
-        // "-label:processed" search above hides the newly-arrived second
-        // cancellation until the twice-daily audit. Re-admit recent cancellation
-        // threads that now carry MORE THAN ONE message and had activity in the
-        // last 2 days, so the extra cancellation is applied on the very next fast
-        // run (parseThread_ reads every message, so both cancellations are seen).
-        // Reprocessing is idempotent (removeActiveBookingBySourceAndId_ no-ops once
-        // a booking is gone); the 2-day window stops it re-running forever once an
-        // audit has swept the thread.
+      } else if (/\/(Cancellations|Modifications)$/i.test(String(labelName))) {
+        // A SECOND cancellation or modification threads into the FIRST one's
+        // conversation, and that thread was marked Processed after the first —
+        // so the "-label:processed" search above hides the new message until the
+        // twice-daily audit. Two ways it happens:
+        //   · Cancellations — Freetour reuses the subject ("❌ Annullierung:
+        //     <tour>") with NO booking id, so same-language cancellations group.
+        //   · Modifications — the subject carries the booking id, so repeated
+        //     edits to the SAME booking group (first edit processed + Processed,
+        //     the next edit lands in the same thread).
+        // Re-admit recent such threads that now carry MORE THAN ONE message and
+        // had activity in the last 2 days, even if Processed, so the extra message
+        // is applied on the very next fast run (parseThread_ reads every message).
+        // Both passes re-apply idempotently — a cancellation removal no-ops once
+        // the booking is gone, and a re-applied modification just re-sets the
+        // latest state (messages replay oldest-first, so the newest edit wins) —
+        // and the 2-day window stops it re-running forever once an audit has swept
+        // the thread. (Confirmations are handled by the branch above and are NOT
+        // reprocessed here: every confirmation subject carries a unique id/date so
+        // they never thread, and skipping Processed ones keeps the fast run clear
+        // of the audit-only superseded-resurrection guard.)
         const label = getLabel_(labelName);
         const recent = label ? (label.getThreads(0, RNR.RECENT_RELIABLE_FAST) || []) : [];
         const seen = {};
