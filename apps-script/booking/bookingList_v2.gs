@@ -711,6 +711,11 @@ function runBookingCore_(skipProcessed) {
     //    can never break the booking pipeline.
     runPhase_('capacityAlerts', capacityAlerts_);
 
+    // 7b. CLEAN UP STALE ALERTS: a full-tour alert is useful only until the tour
+    //     runs — after that you can no longer close it or add a guide — so trash
+    //     each one once its tour time has passed. Isolated + best-effort.
+    runPhase_('capacityAlertCleanup', cleanupExpiredCapacityAlerts_);
+
   } catch (err) {
     // Errors are logged, never rethrown, so Google does not email failure alerts.
     logError_('runBookingSystem error', err, '');
@@ -1199,6 +1204,10 @@ function safeMarkUnread_(thread) {
 
 function safeArchive_(thread) {
   try { if (thread) thread.moveToArchive(); } catch (e) { /* ignore */ }
+}
+
+function safeTrash_(thread) {
+  try { if (thread) thread.moveToTrash(); } catch (e) { /* ignore */ }
 }
 
 function safeAddLabel_(thread, labelName) {
@@ -4009,6 +4018,10 @@ function capacityAlertBody_(g, thresh) {
     .forEach(b => L.push('  ' + (b.name || '(no name)') + ' — ' + b.people + ' (' + (b.source || '?') + ')'));
   L.push('');
   L.push('You will not be alerted again for this tour unless it drops below ' + thresh + ' and fills up again.');
+  L.push('');
+  // Machine-readable (and human) marker: cleanupExpiredCapacityAlerts_ reads the
+  // ISO date + time back from here and trashes this alert once the tour has run.
+  L.push('This alert is removed automatically after the tour runs: ' + g.dateKey + ' ' + g.time + '.');
   return L.join('\n');
 }
 
@@ -4022,10 +4035,56 @@ function sendCapacityDigestEmail_(list, thresh) {
            ' — ' + g.adults + ' adults (+' + g.children + ' children, ' + g.people + ' total)' +
            ' — guide: ' + (g.guide || 'none');
   });
+  // One removal marker per tour (ISO date + time): cleanupExpiredCapacityAlerts_
+  // reads these and trashes the digest once EVERY tour it covers has run.
+  const markers = list.map(g =>
+    'This alert is removed automatically after the tour runs: ' + g.dateKey + ' ' + g.time + '.');
   const body = list.length + ' upcoming tours have reached the ' + thresh + '-adult cap. ' +
     'Close each on the platforms / website, or add a second guide:\n\n' + blocks.join('\n') +
-    '\n\n(One alert per tour — they will not repeat unless they drop below ' + thresh + ' and refill.)';
+    '\n\n(One alert per tour — they will not repeat unless they drop below ' + thresh + ' and refill.)' +
+    '\n\n' + markers.join('\n');
   MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: body });
+}
+
+/**
+ * A full-tour alert is actionable only until the tour runs — once its time has
+ * passed you can no longer close it or add a guide — so trash each alert once its
+ * tour is over. The tour's start time is read back from the ISO marker the sender
+ * wrote into the body ("…after the tour runs: 2026-10-16 10:30 AM."), which is
+ * locale-independent; a digest carries one marker per tour and is trashed only
+ * when EVERY tour it covers has passed. Matches ONLY our own alerts (the 🔴
+ * "…2nd guide" subject plus the marker phrase), so it can never touch a real
+ * booking email, and if a date can't be read the alert is left alone — never a
+ * guess-delete. Best-effort + bounded, so it is safe to run every pass.
+ */
+function cleanupExpiredCapacityAlerts_() {
+  let threads;
+  try {
+    threads = GmailApp.search('subject:"2nd guide" "after the tour runs" newer_than:400d', 0, 50) || [];
+  } catch (e) { return; }
+
+  const now = Date.now();
+  threads.forEach(thread => {
+    try {
+      const subject = thread.getFirstMessageSubject() || '';
+      if (!/close or add (?:a )?2nd guide/i.test(subject)) return;   // our capacity alerts ONLY
+
+      let bodyText = '';
+      try { bodyText = thread.getMessages().map(m => getBestMessageText_(m)).join('\n'); } catch (e) { bodyText = ''; }
+
+      const whens = [];
+      const re = /after the tour runs:\s*(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/gi;
+      let m;
+      while ((m = re.exec(bodyText)) !== null) {
+        const when = combineDateTime_(m[1], m[2]);
+        if (when && !isNaN(when.getTime())) whens.push(when.getTime());
+      }
+      if (!whens.length) return;                       // unreadable date -> leave it, never guess
+
+      // Trash only once the LAST tour the alert covers is in the past.
+      if (now >= Math.max.apply(null, whens)) safeTrash_(thread);
+    } catch (e) { /* best-effort; a leftover alert is harmless */ }
+  });
 }
 
 

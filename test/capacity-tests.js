@@ -131,6 +131,55 @@ check('the digest body lists both tours', /10:30 AM/.test(sent[0].body) && /5:00
 console.log('--- the ">20 means 21" tuning point: threshold constant drives the trigger ---');
 check('TOUR_FULL_THRESHOLD is 20 (reaches 20 -> full)', RNR.TOUR_FULL_THRESHOLD === 20, RNR.TOUR_FULL_THRESHOLD);
 
+console.log('--- the alert body carries an auto-removal marker (ISO date + time) ---');
+resetState(); sent = [];
+setFeed([{ time: '10:30 AM', source: 'GetYourGuide', adults: 20 }]);
+capacityAlerts_();
+check('body carries "after the tour runs: <ISO date> <time>" so cleanup can read it',
+  sent.length === 1 && new RegExp('after the tour runs:\\s*' + D + ' 10:30 AM').test(sent[0].body || ''),
+  sent[0] && sent[0].body);
+
+console.log('--- stale alerts are trashed after the tour time; upcoming ones are kept ---');
+// Build fake Gmail threads the way GmailApp.search would hand them back.
+const mkAlert = (dk, time) => {
+  const body = ['This tour has reached the 20-adult cap.', 'Adults: 20',
+    'This alert is removed automatically after the tour runs: ' + dk + ' ' + time + '.'].join('\n');
+  return { trashed: false,
+    getFirstMessageSubject: () => '🔴 English · x ' + time + ' · FULL 20 adults — close or add 2nd guide',
+    getMessages: () => [makeFakeMsg_('cap', body)],
+    moveToTrash: function () { this.trashed = true; } };
+};
+const past = mkAlert(dayKey(-1), '10:30 AM');
+const future = mkAlert(dayKey(5), '10:30 AM');
+// A real email that merely mentions "2nd guide" (no marker / not our subject) must be left alone.
+const notOurs = { trashed: false,
+  getFirstMessageSubject: () => 'Re: question about the 2nd guide rota',
+  getMessages: () => [makeFakeMsg_('re', 'can we talk about the 2nd guide next week?')],
+  moveToTrash: function () { this.trashed = true; } };
+const _search = GmailApp.search;
+GmailApp.search = () => [past, future, notOurs];
+cleanupExpiredCapacityAlerts_();
+GmailApp.search = _search;
+check('a PAST-tour alert is trashed', past.trashed === true, past.trashed);
+check('an UPCOMING-tour alert is kept', future.trashed === false, future.trashed);
+check('a non-alert email that merely mentions "2nd guide" is NOT trashed', notOurs.trashed === false, notOurs.trashed);
+
+console.log('--- a digest is trashed only after EVERY tour it covers has passed ---');
+const mkDigest = (pairs) => {
+  const lines = pairs.map(([dk, t]) => 'This alert is removed automatically after the tour runs: ' + dk + ' ' + t + '.');
+  return { trashed: false,
+    getFirstMessageSubject: () => '🔴 2 tours full (20+) — close or add a 2nd guide',
+    getMessages: () => [makeFakeMsg_('digest', '2 tours full\n\n' + lines.join('\n'))],
+    moveToTrash: function () { this.trashed = true; } };
+};
+const digestMixed = mkDigest([[dayKey(-1), '10:30 AM'], [dayKey(5), '5:00 PM']]);   // one past, one still upcoming
+const digestAllPast = mkDigest([[dayKey(-2), '10:30 AM'], [dayKey(-1), '5:00 PM']]);
+GmailApp.search = () => [digestMixed, digestAllPast];
+cleanupExpiredCapacityAlerts_();
+GmailApp.search = _search;
+check('a digest with a still-upcoming tour is KEPT', digestMixed.trashed === false, digestMixed.trashed);
+check('a digest whose tours have ALL passed is trashed', digestAllPast.trashed === true, digestAllPast.trashed);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
