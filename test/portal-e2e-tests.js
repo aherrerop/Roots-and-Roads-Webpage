@@ -487,6 +487,13 @@ UrlFetchApp.fetch = _fetch;
 check('apiRemoveBooking_ ok + durable (bridge trashed the email)', rRm && rRm.ok === true && rRm.removed === true && rRm.durable === true, rRm);
 check('the booking row is gone from the language tab', !inTab(), inTab());
 check('the booking row is gone from the Portal Feed', !inFeed(), inFeed());
+const cx = ledgerSS_().getSheetByName('Cancellations');
+check('a Cancellations tab is created in the ledger', !!cx, null);
+const cxRows = cx ? cx.getRange(1, 1, cx.getLastRow(), 12).getValues() : [];
+check('the cancellation row keeps full info (id, name, guests, who, language)',
+  cxRows.some(r => String(r[10]) === 'GYGKILL1' && String(r[5]) === 'Cancel Me' &&
+    Number(r[7]) === 2 && String(r[1]) === 'Albert' && String(r[4]) === 'English'),
+  cxRows.slice(1));
 check('removal called the bridge with fn=trashBookingConfirmation + the id', /fn=trashBookingConfirmation/.test(bridgeCall || '') && /GYGKILL1/.test(bridgeCall || ''), bridgeCall);
 check('removal bumps the feed version so the portal reflects it next load', String(__mock.PROPS['PORTAL_FEED_VER'] || '0') !== feedVerBeforeRm, [feedVerBeforeRm, __mock.PROPS['PORTAL_FEED_VER']]);
 check('a non-manager cannot remove a booking', (function () { const r = apiRemoveBooking_({ token: makeToken_('Carlos'), bookingId: 'GYGE2E001', language: 'English' }); return r && r.ok === false && /manager/i.test(r.error || ''); })(), null);

@@ -1804,6 +1804,10 @@ function apiRemoveBooking_(p) {
     const rowGone = deleteBookingRowFromTab_(bookingId, language);
     if (!rowGone.ok) return rowGone;
 
+    // 1b. Keep a full record of the cancellation in the ledger's Cancellations tab
+    //     (the row + its confirmation email are gone, so this is the only trace).
+    logCancellationToLedger_(rowGone.row, language, name);
+
     // 2. Drop its Portal Feed row so the removal shows on the very next poll.
     removeFeedRowById_(bookingId);
 
@@ -1832,18 +1836,53 @@ function deleteBookingRowFromTab_(bookingId, language) {
 
   const idNorm = String(bookingId).toUpperCase().replace(/\s+/g, '');
   const last = sh.getLastRow();
-  let found = false;
+  let found = false, captured = null;
   if (last >= 2) {
     const rows = sh.getRange(2, 1, last - 1, 9).getValues();   // H(8) = Booking ID
     for (let i = rows.length - 1; i >= 0; i--) {
       if (String(rows[i][7] || '').toUpperCase().replace(/\s+/g, '') === idNorm) {
+        if (!captured) captured = rows[i].slice();   // keep the row's full data for the cancellations log
         sh.deleteRow(i + 2);
         found = true;
       }
     }
   }
   if (!found) return { ok: false, error: bookingId + ' not found in ' + language + ' Tours' };
-  return { ok: true };
+  return { ok: true, row: captured };
+}
+
+/**
+ * Record a removed booking in the ledger's "Cancellations" tab (created on first
+ * use) so a manual removal is kept as an auditable record — the active row and its
+ * confirmation email are both gone, so this tab is the only remaining trace. Full
+ * info is kept: who cancelled it + when, plus the tour date/time/language and the
+ * guest's name, phone, guests, source, income, booking id and notes. Best-effort.
+ */
+function logCancellationToLedger_(rowVals, language, byName) {
+  try {
+    const ss = ledgerSS_();
+    const TAB = 'Cancellations';
+    const HEAD = ['Cancelled at', 'Cancelled by', 'Tour date', 'Time', 'Language',
+                  'Name', 'Phone', 'Guests', 'Source', 'Income', 'Booking ID', 'Notes'];
+    let sh = ss.getSheetByName(TAB);
+    if (!sh) {
+      sh = ss.insertSheet(TAB);
+      sh.getRange(1, 1, 1, HEAD.length).setValues([HEAD]).setFontWeight('bold');
+      try { sh.setFrozenRows(1); } catch (e) { /* cosmetic */ }
+    }
+    const r = rowVals || [];   // [Name, Phone, Guests, Tour date, Time, Source, Income, Booking ID, Notes]
+    const when = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+    const tourDate = toDateKey_(r[3]) || String(r[3] || '');
+    const row = [when, String(byName || ''), tourDate, String(r[4] || ''), String(language || ''),
+                 String(r[0] || ''), String(r[1] || ''), (r[2] === '' || r[2] == null ? '' : r[2]),
+                 String(r[5] || ''), (r[6] === '' || r[6] == null ? '' : r[6]),
+                 String(r[7] || ''), String(r[8] || '')];
+    const at = sh.getLastRow() + 1;
+    sh.getRange(at, 7, 1, 1).setNumberFormat('@');    // Phone as text
+    sh.getRange(at, 11, 1, 1).setNumberFormat('@');   // Booking ID as text
+    sh.getRange(at, 1, 1, row.length).setValues([row]);
+    return true;
+  } catch (e) { return false; }
 }
 
 /** Delete a booking's Portal Feed row(s) by id (J = Booking ID). Best-effort. */
