@@ -7,7 +7,11 @@ const WEBSITE_CONTROL_SPREADSHEET_ID = '1A8RrqIoWw-HpxCLDRGVJLcflja8tSGEOgaXd-2s
 
 const WEBSITE_TZ = 'Europe/Madrid';
 const WEBSITE_CAPACITY = 20;
-const WEBSITE_CUTOFF_HOUR = 21;
+// Booking cutoff: an EMPTY tour (nobody signed up yet) stops taking website
+// bookings this many hours before it starts — we don't commit to running an
+// unstaffed tour for a single last-minute booking. A tour that ALREADY has guests
+// is running (a guide is on it), so it keeps taking bookings right up to its start.
+const WEBSITE_LEAD_HOURS = 3;
 
 const WEBSITE_ACTIVE_BOOKING_SHEETS = [
   'English Tours',
@@ -90,7 +94,7 @@ function websiteBuildMonthAvailability_(ym) {
       const key = websiteAvailabilityKey_(iso, slot.time, slot.language);
       const booked = Number(bookedMap.get(key) || 0);
       const spotsLeft = Math.max(0, WEBSITE_CAPACITY - booked);
-      const closed = websiteClosedByCutoff_(dateObj);
+      const closed = websiteClosedByCutoff_(dateObj, slot.time, booked);
 
       if (!out[iso]) out[iso] = [];
 
@@ -242,14 +246,22 @@ function websiteReadBookedGuestsMap_() {
 }
 
 
-function websiteClosedByCutoff_(dateObj) {
-  const d = websiteDateOnly_(dateObj);
-  const cutoff = new Date(d);
+function websiteClosedByCutoff_(dateObj, timeStr, booked) {
+  // Build the tour's actual start moment (its day + its time).
+  const start = websiteDateOnly_(dateObj);
+  start.setHours(0, 0, 0, 0);
+  start.setMinutes(websiteTimeToMinutes_(timeStr));
 
-  cutoff.setDate(cutoff.getDate() - 1);
-  cutoff.setHours(WEBSITE_CUTOFF_HOUR, 0, 0, 0);
+  const now = new Date();
+  if (now >= start) return true;                 // started / in the past -> never bookable
 
-  return new Date() >= cutoff;
+  // A tour that already has guests is confirmed running (a guide is on it), so keep
+  // selling it right up to the start. An EMPTY tour closes WEBSITE_LEAD_HOURS before
+  // it starts, so we never take a lone last-minute booking for an unstaffed tour.
+  if (Number(booked) > 0) return false;
+
+  const cutoff = new Date(start.getTime() - WEBSITE_LEAD_HOURS * 60 * 60 * 1000);
+  return now >= cutoff;
 }
 
 

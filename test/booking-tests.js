@@ -169,6 +169,18 @@ check('Italian capacity 20-5=15',           itSlot&&itSlot.spotsLeft===15, itSlo
 check('French slot present on Mon 2026-09-07', !!frSlot, mon);
 check('French capacity 20-4=16',            frSlot&&frSlot.spotsLeft===16, frSlot);
 
+console.log('--- Website cutoff: keep a tour open if it has guests, else close 3h before start ---');
+// Deterministic (relative to now): build a tour start N hours from now and ask
+// websiteClosedByCutoff_ whether it is closed.
+const _mkStart = (hoursFromNow) => new Date(Date.now() + hoursFromNow * 3600 * 1000);
+const _hhmm = (d) => d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+const _closed = (hoursFromNow, booked) => { const s = _mkStart(hoursFromNow); return websiteClosedByCutoff_(s, _hhmm(s), booked); };
+check('an EMPTY tour more than 3h away is OPEN', _closed(5, 0) === false, _closed(5, 0));
+check('an EMPTY tour within 3h of its start is CLOSED', _closed(2, 0) === true, _closed(2, 0));
+check('a tour WITH guests stays OPEN even <3h before start', _closed(1, 4) === false, _closed(1, 4));
+check('a tour WITH guests stays OPEN same-day, hours after the night-before cutoff', _closed(6, 9) === false, _closed(6, 9));
+check('a started / past tour is CLOSED regardless of guests', _closed(-1, 10) === true, _closed(-1, 10));
+
 console.log('--- Trigger guard: a failing run must never reach Apps Script ---');
 SpreadsheetApp._active=new __mock.MockSS('booking-guard');
 let threw=false;
