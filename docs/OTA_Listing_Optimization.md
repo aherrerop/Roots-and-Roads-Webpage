@@ -2,7 +2,7 @@
 
 Ready-to-paste text for your GetYourGuide, Viator, GuruWalk and Airbnb listings, plus the keyword and phrasing rules behind them. The goal: rank on each platform's "best walking tours in Barcelona" category pages — which is exactly what AI assistants (ChatGPT, Perplexity, Google AI) and travellers pull from.
 
-> **Why this works:** live AI tests showed assistants rank tours on *keyword-relevant titles*, *review volume*, and a clear *differentiator*. Our honest edge is: **one tour connects BOTH the Gothic Quarter AND Gaudí/Sagrada Família** (most operators split those into two separate tours), in a **small group**, with a **local guide**, rated **4.92/5**. Lead with that everywhere.
+> **Why this works:** live AI tests showed assistants rank tours on *keyword-relevant titles*, *review volume*, and a clear *differentiator*. Our honest edge is: **one tour connects BOTH the Gothic Quarter AND Gaudí/Sagrada Família** (most operators split those into two separate tours), in a **small group**, with a **local guide**, rated **4.73/5**. Lead with that everywhere.
 
 ---
 
@@ -120,7 +120,7 @@ This drives click-through, which drives ranking. Lead with the differentiator + 
 - Say **"small group"**, **"local guide"**, **"ask questions"** — but always pair them with a concrete proof (the route, the rating), because everyone claims these.
 - Name the sights the search engine indexes: **Sagrada Família, Gaudí, Passeig de Gràcia, Casa Batlló, Casa Milà, Gothic Quarter, Modernisme**.
 - Use **"first day / first-time visitors / orientation"** — a huge share of tour searches are first-timers.
-- Reference the **rating** where the platform allows ("rated 4.92/5 by guests").
+- Reference the **rating** where the platform allows ("rated 4.73/5 by guests").
 
 **DON'T**
 - Don't bury the differentiator below generic filler ("welcome to beautiful Barcelona…").
@@ -142,4 +142,4 @@ Copy gets you keyword-relevance and click-through. These move ranking as much or
 
 ---
 
-*Keep the differentiator consistent across all platforms and your own site (llms.txt, reviews page) — the same "both halves in one small-group tour, 4.92/5, local guide" message everywhere is what an AI needs to see repeated across sources before it confidently puts you in a list. Refresh the review count when it changes.*
+*Keep the differentiator consistent across all platforms and your own site (llms.txt, reviews page) — the same "both halves in one small-group tour, 4.73/5, local guide" message everywhere is what an AI needs to see repeated across sources before it confidently puts you in a list. Refresh the review count when it changes.*
