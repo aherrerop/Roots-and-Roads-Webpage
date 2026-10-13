@@ -711,10 +711,11 @@ function runBookingCore_(skipProcessed) {
     //    can never break the booking pipeline.
     runPhase_('capacityAlerts', capacityAlerts_);
 
-    // 7b. CLEAN UP STALE ALERTS: a full-tour alert is useful only until the tour
-    //     runs — after that you can no longer close it or add a guide — so trash
-    //     each one once its tour time has passed. Isolated + best-effort.
-    runPhase_('capacityAlertCleanup', cleanupExpiredCapacityAlerts_);
+    // 7b. CLEAN UP STALE ALERTS: trash a full-tour alert once its tour has run.
+    //     AUDIT-ONLY (it does a Gmail search every pass): housekeeping that does
+    //     not need the 5-min cadence, and keeping Gmail calls off the fast run
+    //     protects the daily Gmail quota (a quota exhaustion stalls ALL processing).
+    runPhase_('capacityAlertCleanup', cleanupExpiredCapacityAlerts_, !RNR_SKIP_PROCESSED_);
 
   } catch (err) {
     // Errors are logged, never rethrown, so Google does not email failure alerts.
@@ -1060,42 +1061,16 @@ function getThreadsSafe_(labelName) {
         recent.forEach(t => {
           if (!seen[t.getId()] && !threadHasProcessedLabel_(t)) { threads.push(t); seen[t.getId()] = true; }
         });
-      } else if (/\/(Cancellations|Modifications)$/i.test(String(labelName))) {
-        // A SECOND cancellation or modification threads into the FIRST one's
-        // conversation, and that thread was marked Processed after the first —
-        // so the "-label:processed" search above hides the new message until the
-        // twice-daily audit. Two ways it happens:
-        //   · Cancellations — Freetour reuses the subject ("❌ Annullierung:
-        //     <tour>") with NO booking id, so same-language cancellations group.
-        //   · Modifications — the subject carries the booking id, so repeated
-        //     edits to the SAME booking group (first edit processed + Processed,
-        //     the next edit lands in the same thread).
-        // Re-admit recent such threads that now carry MORE THAN ONE message and
-        // had activity in the last 2 days, even if Processed, so the extra message
-        // is applied on the very next fast run (parseThread_ reads every message).
-        // Both passes re-apply idempotently — a cancellation removal no-ops once
-        // the booking is gone, and a re-applied modification just re-sets the
-        // latest state (messages replay oldest-first, so the newest edit wins) —
-        // and the 2-day window stops it re-running forever once an audit has swept
-        // the thread. (Confirmations are handled by the branch above and are NOT
-        // reprocessed here: every confirmation subject carries a unique id/date so
-        // they never thread, and skipping Processed ones keeps the fast run clear
-        // of the audit-only superseded-resurrection guard.)
-        const label = getLabel_(labelName);
-        const recent = label ? (label.getThreads(0, RNR.RECENT_RELIABLE_FAST) || []) : [];
-        const seen = {};
-        threads.forEach(t => { seen[t.getId()] = true; });
-        const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
-        recent.forEach(t => {
-          if (seen[t.getId()]) return;
-          try {
-            const last = t.getLastMessageDate ? t.getLastMessageDate() : null;
-            if (t.getMessageCount() > 1 && last && (Date.now() - last.getTime()) < TWO_DAYS_MS) {
-              threads.push(t); seen[t.getId()] = true;
-            }
-          } catch (e) { /* best-effort: a skipped thread is caught by the audit */ }
-        });
       }
+      // NOTE: a SECOND cancellation/modification threaded into an already-Processed
+      // conversation is handled by the AUDIT, not here. We deliberately do NOT add
+      // a per-label membership read on the fast run for Cancellations/Modifications
+      // (it was an extra label.getThreads() per label on EVERY 5-min pass — ~9
+      // calls/run — which, on a high-volume day, helped exhaust the Gmail daily
+      // quota and stall ALL processing). The audit reads the whole label
+      // (MAX_THREADS_AUDIT), which includes multi-message Processed threads, so the
+      // 2nd message is still caught — just on the next audit rather than within 5
+      // minutes. Quota health > a few hours sooner on a rare re-cancellation.
     } else {
       const label = getLabel_(labelName);
       threads = label ? (label.getThreads(0, RNR.MAX_THREADS_AUDIT) || []) : [];
