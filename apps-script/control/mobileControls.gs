@@ -46,7 +46,7 @@ function mcActions_() {
   return [
     { label: 'Run booking update', remote: 'runBookingSystem' },
     { label: 'Run booking audit', remote: 'runBookingAudit' },
-    { label: 'Sync availability', fn: syncAvailabilityFile },
+    { label: 'Sync availability', fn: syncAvailabilityTabs },   // ensures + rebuilds BOTH the 3h and SF week tabs
     { label: 'Generate schedules', fn: makeSchedule },
     { label: 'Refresh ledger & queues', fn: updateManagementQueues },
     { label: 'Weekly full run (avail + schedule + email)', fn: runWeeklyScheduling },
@@ -61,7 +61,7 @@ function mcActions_() {
  */
 function mcFullRefresh_() {
   mcCallRemote_('runBookingSystem');   // fire-and-report; separate quota
-  syncAvailabilityFile();
+  syncAvailabilityTabs();              // ensure + rebuild the 3h AND SF week tabs
   makeSchedule();
   updateManagementQueues();
 }

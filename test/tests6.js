@@ -634,6 +634,40 @@ check('3h shift offers only 3h-capable guides (Carlos, Flex)',
   eligibleGuidesForShift_({dateKey:d3,minutes:10*60,language:'English',sfExt:false},gblSf).slice().sort().join()==='Carlos,Flex',
   eligibleGuidesForShift_({dateKey:d3,minutes:10*60,language:'English',sfExt:false},gblSf));
 
+console.log('--- SF availability: dedicated SF Week tabs, SF rules + SF guides only ---');
+// Weekly_Schedule on cSf: one 3h row + one SF row (SF flagged Hide-from-availability,
+// which only ever kept it off the 3h sheet).
+const wsSf=cSf.insertSheet('Weekly_Schedule');
+wsSf.getRange(1,1,3,11).setValues([
+ ['Day','Time','Language','Tour Type','Guides needed','Active from','Active until','Guide','Hide from availability','Private','Hide from website'],
+ ['Monday','11:00','English','3h',1,'','','Carlos','','',''],
+ ['Monday','9:00', 'English','SF',1,'','','Amalia','Yes','','Yes']]);
+__RRX={};
+check('availWeekTabType_ parses SF vs 3h vs non-week tabs',
+  availWeekTabType_('SF Week 42').isSf===true && availWeekTabType_('SF Week 42').isWeek===true &&
+  availWeekTabType_('Week 42').isSf===false && availWeekTabType_('Week 42').isWeek===true &&
+  availWeekTabType_('Guides').isWeek===false, null);
+check('availabilityRulesFor_(SF) = the SF rule only (ignores Hide-from-availability)',
+  availabilityRulesFor_(cSf,true).length===1 && availabilityRulesFor_(cSf,true)[0].sfExt===true, availabilityRulesFor_(cSf,true).map(r=>r.tourName));
+check('availabilityRulesFor_(3h) = non-SF, non-hidden rules only',
+  availabilityRulesFor_(cSf,false).length===1 && availabilityRulesFor_(cSf,false).every(r=>!r.sfExt), availabilityRulesFor_(cSf,false).map(r=>r.tourName));
+check('availabilityGuideNames_(SF) = SF-capable only (Amalia, Flex)',
+  availabilityGuideNames_(cSf,true).slice().sort().join()==='Amalia,Flex', availabilityGuideNames_(cSf,true));
+check('availabilityGuideNames_(3h) excludes the SF-only guide, keeps 3h + both',
+  availabilityGuideNames_(cSf,false).indexOf('Amalia')===-1 &&
+  availabilityGuideNames_(cSf,false).slice().sort().join()==='Carlos,Flex', availabilityGuideNames_(cSf,false));
+// An SF week tab, rebuilt with the SF rules + SF guides, lists SF guides and the SF time.
+const gfSf=new __mock.MockSS('guidefile-sf'); __mock.SS_BY_ID['GF-SF']=gfSf;
+const mon=day(7); // any upcoming date; the slot's dayName is set to Monday explicitly below
+const sfWk=gfSf.insertSheet('SF Week 50');
+rebuildAvailabilityWeekSheet_(sfWk,[{dateKey:key(mon),dateObj:mon,dayName:'Monday',shortLabel:shortDateLabel_(mon)}],
+  availabilityRulesFor_(cSf,true), availabilityGuideNames_(cSf,true), {});
+const sfTimes=sfWk.getRange(4,2,1,1).getDisplayValues()[0];
+const sfNames=sfWk.getRange(5,1,3,1).getDisplayValues().map(r=>r[0]).filter(Boolean);
+check('SF week tab shows the SF time slot (9:00)', sfTimes[0]==='9:00', sfTimes);
+check('SF week tab lists SF guides only (Amalia, Flex — not Carlos)',
+  sfNames.indexOf('Amalia')!==-1 && sfNames.indexOf('Carlos')===-1, sfNames);
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

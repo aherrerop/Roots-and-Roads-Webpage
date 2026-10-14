@@ -198,7 +198,15 @@ function makeSchedule() {
   let shifts = [];
   weekNames.forEach(weekName => {
     const guideCalendar = readGuideCalendar_(guideSS, weekName);
-    const availability = readAvailability_(guideSS, weekName);
+    let availability = readAvailability_(guideSS, weekName);
+    // Merge the SF availability for the SAME week ("SF Week N"): SF guides tick
+    // their own sheet, and SF shifts (built from the SF Weekly_Schedule rules
+    // below) draw from it. SF and 3h ticks share date|time keys, but the
+    // tour-type gate in pickAutoEligible_ keeps each type's guides on its own
+    // shifts, so the merge can never cross-staff.
+    if (guideSS.getSheetByName('SF ' + weekName)) {
+      availability = availability.concat(readAvailability_(guideSS, 'SF ' + weekName));
+    }
     availability.forEach(a => {
       const ak = a.dateText + '|' + a.time;
       if (!availIndex[ak]) availIndex[ak] = [];
@@ -921,23 +929,56 @@ function readPrivateGroups_() {
 
 /* ---------- unchanged workflow entry points ---------- */
 
+/* ---------- availability: 3h vs SF (dedicated sheets) ----------
+ * The 3-hour tour and the Sagrada-exterior (SF) tour each get their OWN
+ * availability week tabs in the Guide file: "Week <N>" for 3h, "SF Week <N>"
+ * for SF. "Sync availability" (Control tab) rebuilds BOTH. Each sheet lists only
+ * the guides who run that tour type and only that type's time slots, so an SF
+ * guide ticks SF shifts and a 3h guide ticks 3h shifts — never each other's. */
+
+/** Is this Guide-file tab an availability week tab, and of which type? */
+function availWeekTabType_(name) {
+  if (String(name || '').startsWith('SF Week ')) return { isWeek: true, isSf: true };
+  if (String(name || '').startsWith('Week '))    return { isWeek: true, isSf: false };
+  return { isWeek: false, isSf: false };
+}
+
+/** Active guides who run this tour type (for the availability name list + dropdown). */
+function availabilityGuideNames_(controlSS, isSf) {
+  return readGuides_(controlSS).filter(g => {
+    if (!g.active) return false;
+    const t = g.tourTypes || { threeH: true, sf: false };
+    return isSf ? !!t.sf : !!t.threeH;
+  }).map(g => g.name);
+}
+
+/**
+ * Weekly_Schedule rules that belong on this tour type's availability sheet.
+ *   3h: non-SF rules that are NOT "Hide from availability" (e.g. 4pm Italian stays off).
+ *   SF: SF rules — the "Hide from availability" flag only existed to keep SF OFF the
+ *       3h sheet, so it is ignored here now that SF has its own sheet. Private rows
+ *       keep their tick columns on both (private is staffed from availability too).
+ */
+function availabilityRulesFor_(controlSS, isSf) {
+  return readWeeklySchedule_(controlSS).filter(r =>
+    (!!r.sfExt === !!isSf) && (isSf || !r.hideFromAvailability));
+}
+
 function syncAvailabilityFile() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
 
-  const guideNames = readActiveGuideNames_(controlSS);
-  // Availability columns come ONLY from the Weekly_Schedule that Management edits —
-  // no hardcoded slots. Add a time here by adding its row to Weekly_Schedule.
-  // Rows flagged "Hide from availability" (col H) still run on the website and
-  // portal but get NO tick column here (e.g. 4pm Italian).
-  const scheduleRules = readWeeklySchedule_(controlSS).filter(r => !r.hideFromAvailability);
+  // One read of each type's rules + guide pool, reused across every week tab.
+  const rules = { false: availabilityRulesFor_(controlSS, false), true: availabilityRulesFor_(controlSS, true) };
+  const names = { false: availabilityGuideNames_(controlSS, false), true: availabilityGuideNames_(controlSS, true) };
 
   guideSS.getSheets().forEach(sheet => {
-    if (!sheet.getName().startsWith("Week ")) return;
+    const t = availWeekTabType_(sheet.getName());
+    if (!t.isWeek) return;
     const weekDates = readWeekDates_(sheet);
     if (weekDates.length === 0) return;
     const existingAvailability = readExistingAvailability_(sheet);
-    rebuildAvailabilityWeekSheet_(sheet, weekDates, scheduleRules, guideNames, existingAvailability);
+    rebuildAvailabilityWeekSheet_(sheet, weekDates, rules[t.isSf], names[t.isSf], existingAvailability);
   });
 }
 
@@ -1104,12 +1145,12 @@ function availabilityWeeksAhead_(mondayThis) {
 function ensureWeekTabs_() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
-  const guideNames = readActiveGuideNames_(controlSS);
-  // Availability columns come ONLY from the Weekly_Schedule that Management edits —
-  // no hardcoded slots. Add a time here by adding its row to Weekly_Schedule.
-  // Rows flagged "Hide from availability" (col H) still run on the website and
-  // portal but get NO tick column here (e.g. 4pm Italian).
-  const scheduleRules = readWeeklySchedule_(controlSS).filter(r => !r.hideFromAvailability);
+
+  // Per-type rules + guide pools, read once. SF tabs are only created when SF
+  // actually runs (there are SF rules) — no empty SF availability otherwise.
+  const rules = { false: availabilityRulesFor_(controlSS, false), true: availabilityRulesFor_(controlSS, true) };
+  const names = { false: availabilityGuideNames_(controlSS, false), true: availabilityGuideNames_(controlSS, true) };
+  const makeSf = rules[true].length > 0;
 
   const today = dateOnly_(new Date());
   const dow = (today.getDay() + 6) % 7;
@@ -1119,18 +1160,24 @@ function ensureWeekTabs_() {
   // end date when that is further out).
   const weeksAhead = availabilityWeeksAhead_(mondayThis);
 
-  // Names we want to exist (current + next weeks).
-  const wanted = {};
+  // Weeks we want to exist (current + next weeks), by ISO week number -> Monday.
+  const wantedWeeks = {};
   for (let i = 0; i <= weeksAhead; i++) {
     const m = new Date(mondayThis); m.setDate(mondayThis.getDate() + 7 * i);
     m.setHours(12, 0, 0, 0);
-    wanted["Week " + getISOWeek_(m)] = m;
+    wantedWeeks[getISOWeek_(m)] = m;
   }
+  // The exact tab names we want (both kinds), for the delete pass.
+  const wantedNames = {};
+  Object.keys(wantedWeeks).forEach(w => {
+    wantedNames['Week ' + w] = true;
+    if (makeSf) wantedNames['SF Week ' + w] = true;
+  });
 
-  // Delete week tabs whose whole week is before this Monday.
+  // Delete availability tabs (either kind) whose whole week is before this Monday.
   guideSS.getSheets().forEach(sheet => {
     const nm = sheet.getName();
-    if (!nm.startsWith("Week ") || wanted[nm]) return;
+    if (!availWeekTabType_(nm).isWeek || wantedNames[nm]) return;
     try {
       const dv = sheet.getDataRange().getDisplayValues();
       const year = extractYear_(String(dv[0][0]));
@@ -1145,17 +1192,21 @@ function ensureWeekTabs_() {
     } catch (e) { /* leave sheet if unreadable */ }
   });
 
-  // Create any missing wanted week tab.
-  Object.keys(wanted).forEach(name => {
-    if (guideSS.getSheetByName(name)) return;
-    const monday = wanted[name];
-    const sheet = guideSS.insertSheet(name);
+  // Create any missing wanted week tab — the 3h "Week N" always, the SF
+  // "SF Week N" only when SF runs.
+  Object.keys(wantedWeeks).forEach(w => {
+    const monday = wantedWeeks[w];
     const weekDates = [];
     for (let d = 0; d < 7; d++) {
       const dt = new Date(monday); dt.setDate(monday.getDate() + d); dt.setHours(12, 0, 0, 0);
       weekDates.push({ dateObj: dt, dateKey: formatDate_(dt), dayName: fullDayName_(dt), shortLabel: shortDateLabel_(dt) });
     }
-    rebuildAvailabilityWeekSheet_(sheet, weekDates, scheduleRules, guideNames, {});
+    const ensure = (tabName, isSf) => {
+      if (guideSS.getSheetByName(tabName)) return;
+      rebuildAvailabilityWeekSheet_(guideSS.insertSheet(tabName), weekDates, rules[isSf], names[isSf], {});
+    };
+    ensure('Week ' + w, false);
+    if (makeSf) ensure('SF Week ' + w, true);
   });
 }
 
