@@ -181,6 +181,12 @@ check('a tour WITH guests stays OPEN even <3h before start', _closed(1, 4) === f
 check('a tour WITH guests stays OPEN same-day, hours after the night-before cutoff', _closed(6, 9) === false, _closed(6, 9));
 check('a started / past tour is CLOSED regardless of guests', _closed(-1, 10) === true, _closed(-1, 10));
 
+console.log('--- Audit does the FULL re-read at most once/day (Gmail quota) ---');
+PropertiesService.getScriptProperties().deleteProperty('RNR_LAST_FULL_AUDIT_DAY');
+check('before any full audit today -> would run FULL', fullAuditRanToday_() === false, null);
+markFullAuditToday_();
+check('after a full audit today -> an extra scheduled audit downgrades to a fast pass', fullAuditRanToday_() === true, null);
+
 console.log('--- Trigger guard: a failing run must never reach Apps Script ---');
 SpreadsheetApp._active=new __mock.MockSS('booking-guard');
 let threw=false;

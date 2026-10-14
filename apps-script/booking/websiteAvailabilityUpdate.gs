@@ -398,7 +398,10 @@ function websiteAdminRun_(e) {
     const key = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY');
     const given = String(e?.parameter?.key || '');
     const fn = String(e?.parameter?.fn || '');
-    const allowed = { runBookingSystem: runBookingSystem, runBookingAudit: runBookingAudit };
+    // The manual "Run booking audit" button forces a FULL re-read (the owner ran it
+    // on purpose), bypassing the once-per-day downgrade that only trims EXTRA
+    // scheduled audit firings.
+    const allowed = { runBookingSystem: runBookingSystem, runBookingAudit: function () { runBookingAudit(true); } };
 
     if (!key) out = { ok: false, error: 'ADMIN_KEY not configured' };
     else if (given !== key) out = { ok: false, error: 'Bad key' };

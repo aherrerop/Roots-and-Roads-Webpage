@@ -599,9 +599,26 @@ function safeTriggerRun_(label, fn) {
 // Frequent trigger (every 5 min): skips already-processed threads.
 function runBookingSystem() { safeTriggerRun_('runBookingSystem', function () { runBookingCore_(true); }); }
 
-// Twice-daily audit trigger: identical pipeline, ignores PROCESSED so every
-// labelled thread is re-read for full consistency.
-function runBookingAudit() { safeTriggerRun_('runBookingAudit', function () { runBookingCore_(false); }); }
+// Audit trigger: identical pipeline, ignores PROCESSED so every labelled thread
+// is re-read for full consistency. The FULL (heavy) re-read is the single biggest
+// Gmail-quota cost, so it runs at most ONCE PER DAY — extra scheduled firings fall
+// back to a fast pass (new threads only). A MANUAL run (Control tab) and the
+// confirmation-failure one-shot pass force=true, so they always do the full re-read.
+function runBookingAudit(force) {
+  safeTriggerRun_('runBookingAudit', function () {
+    if (!force && fullAuditRanToday_()) { runBookingCore_(true); return; }
+    markFullAuditToday_();                // mark before running: guarantees once/day even if a run is cut short
+    runBookingCore_(false);
+  });
+}
+function auditDayKey_() { return Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd'); }
+function fullAuditRanToday_() {
+  try { return (PropertiesService.getScriptProperties().getProperty('RNR_LAST_FULL_AUDIT_DAY') || '') === auditDayKey_(); }
+  catch (e) { return false; }
+}
+function markFullAuditToday_() {
+  try { PropertiesService.getScriptProperties().setProperty('RNR_LAST_FULL_AUDIT_DAY', auditDayKey_()); } catch (e) {}
+}
 
 
 function runBookingCore_(skipProcessed) {
@@ -5944,7 +5961,7 @@ function runBookingAuditOneShot_() {
       }
     });
   } catch (e) { /* ignore */ }
-  runBookingAudit();
+  runBookingAudit(true);   // force a FULL re-read: this fires precisely because a confirmation couldn't register
 }
 
 function logError_(type, err, rawData) {
