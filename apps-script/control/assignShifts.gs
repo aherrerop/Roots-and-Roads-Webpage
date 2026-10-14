@@ -156,7 +156,13 @@ function disableAutoScheduling() { return setAutoScheduling(false); }
  */
 function pickAutoEligible_(shift, autoOn, guides, byName, assignedByGuide) {
   const locked = shift.lockedGuides || [];
-  const freeOf = g => g && g.active && g.languages[shift.language] === true &&
+  // Tour-type gate: an SF shift is only for SF-capable guides, a 3h shift only for
+  // 3h-capable ones (Guides tab "Tour" column; blank defaults to 3h).
+  const runsType = g => {
+    const t = (g && g.tourTypes) || { threeH: true, sf: false };
+    return shift.sfExt ? !!t.sf : !!t.threeH;
+  };
+  const freeOf = g => g && g.active && runsType(g) && g.languages[shift.language] === true &&
     !isGuideOnVacation_(g, shift.dateText) &&
     !locked.some(n => n.toLowerCase() === g.name.toLowerCase()) &&
     !hasConflict_(assignedByGuide[g.name] || [], shift.dateTimeObj);
@@ -521,8 +527,9 @@ function readLockedAssignments_(controlSS) {
   const locks = {};
   controlSS.getSheets().forEach(sheet => {
     const name = sheet.getName();
-    if (name.indexOf("Schedule_") !== 0) return;
-    const language = name.substring("Schedule_".length).trim();
+    const parsed = parseScheduleTabName_(name);       // Schedule_<lang> + Schedule_SF_<lang>
+    if (!parsed) return;
+    const language = parsed.language, tabIsSf = parsed.isSf;
     if (!language || sheet.getLastRow() < 3) return;
 
     const dv = sheet.getDataRange().getDisplayValues();
@@ -550,13 +557,15 @@ function readLockedAssignments_(controlSS) {
           if (!style || !style.isBold()) return;
           const txt = String(run.getText() || "");
           // Column header decides private/regular; the legacy 🔒 in-cell
-          // marker still wins for grids written before the column redesign.
-          const isPriv = h.isPrivate || /🔒|\(private\)/i.test(txt);
-          const idx = h.isPrivate ? h.index : 1;
+          // marker still wins for grids written before the column redesign. An SF
+          // grid tab is never private.
+          const colSf = tabIsSf || h.isSf;
+          const isPriv = !colSf && (h.isPrivate || /🔒|\(private\)/i.test(txt));
+          const idx = isPriv ? h.index : 1;
           txt.split(/[\n,]/).forEach(piece => {
             let nm = piece.replace(/🔒/g, "").replace(/\(private\)/ig, "").trim();
             if (!nm || /not assigned|lock conflict|need \d/i.test(nm)) return;
-            const k = lockKey_(dateText, h.time, language, isPriv, idx, h.isSf);
+            const k = lockKey_(dateText, h.time, language, isPriv, idx, colSf);
             if (!locks[k]) locks[k] = [];
             if (locks[k].indexOf(nm) === -1) locks[k].push(nm);
           });
@@ -579,8 +588,9 @@ function readClearedSlots_(controlSS) {
   const cleared = {};
   controlSS.getSheets().forEach(sheet => {
     const name = sheet.getName();
-    if (name.indexOf('Schedule_') !== 0) return;
-    const language = name.substring('Schedule_'.length).trim();
+    const parsed = parseScheduleTabName_(name);
+    if (!parsed) return;
+    const language = parsed.language, tabIsSf = parsed.isSf;
     if (!language || sheet.getLastRow() < 3) return;
 
     const dv = sheet.getDataRange().getDisplayValues();
@@ -595,8 +605,10 @@ function readClearedSlots_(controlSS) {
         const h = parseGridTimeHeader_(timeRow[c]);
         if (!h) continue;
         if (!/cleared/i.test(String(dv[r][c] || ''))) continue;
-        const idx = h.isPrivate ? h.index : 1;
-        cleared[lockKey_(dateText, h.time, language, h.isPrivate, idx, h.isSf)] = true;
+        const colSf = tabIsSf || h.isSf;
+        const isPriv = !colSf && h.isPrivate;
+        const idx = isPriv ? h.index : 1;
+        cleared[lockKey_(dateText, h.time, language, isPriv, idx, colSf)] = true;
       }
     }
   });
@@ -1186,19 +1198,29 @@ function makeLanguageScheduleTabs_(controlSS, assignedShifts) {
   // assignments (this is exactly how "Albert on German" ghosts survived).
   const withShifts = [...new Set(assignedShifts.map(s => s.language))];
   const existingTabs = controlSS.getSheets()
-    .map(sh => sh.getName())
-    .filter(n => n.indexOf('Schedule_') === 0)
-    .map(n => n.substring('Schedule_'.length).trim());
+    .map(sh => parseScheduleTabName_(sh.getName()))     // Schedule_<lang> AND Schedule_SF_<lang>
+    .filter(Boolean)
+    .map(p => p.language);
   const languages = [...new Set(withShifts.concat(existingTabs))].filter(Boolean).sort();
 
   languages.forEach(language => {
     const languageShifts = assignedShifts.filter(s => s.language === language);
-    makeOneLanguageScheduleTab_(controlSS, language, languageShifts);
+    // The 3h/private grid and the SF grid are regenerated SEPARATELY, so an SF
+    // assignment never lands in Schedule_<lang> and vice versa.
+    makeOneLanguageScheduleTab_(controlSS, language, languageShifts.filter(s => !s.sfExt), false);
+    const sfShifts = languageShifts.filter(s => s.sfExt);
+    // Only touch the SF grid when this language actually runs SF, or an SF tab
+    // already exists (so a stale one still gets cleared) — no empty SF tabs for
+    // languages that never run the exterior tour.
+    if (sfShifts.length || controlSS.getSheetByName(scheduleTabName_(language, true))) {
+      makeOneLanguageScheduleTab_(controlSS, language, sfShifts, true);
+    }
   });
 }
 
-function makeOneLanguageScheduleTab_(controlSS, language, shifts) {
-  const tabName = `Schedule_${language}`;
+function makeOneLanguageScheduleTab_(controlSS, language, shifts, isSf) {
+  const tabName = scheduleTabName_(language, isSf);
+  const label = isSf ? (language + ' SF') : language;   // "English SF" for the SF grid
   let sheet = controlSS.getSheetByName(tabName);
   if (!sheet) sheet = controlSS.insertSheet(tabName);
 
@@ -1208,7 +1230,7 @@ function makeOneLanguageScheduleTab_(controlSS, language, shifts) {
 
   if (shifts.length === 0) {
     // Cleared on purpose: no tours in the window -> nothing stale survives.
-    sheet.getRange(1, 1).setValue(`${language}: no tours in the scheduling window`)
+    sheet.getRange(1, 1).setValue(`${label}: no tours in the scheduling window`)
       .setFontStyle('italic').setFontColor('#94a3b8');
     return;
   }
@@ -1237,7 +1259,7 @@ function makeOneLanguageScheduleTab_(controlSS, language, shifts) {
                     a[1].index - b[1].index);
 
   const dates = [...new Set(shifts.map(s => s.dateText))].sort();   // yyyy-MM-dd
-  const title = `${language} schedule (${dates[0]} to ${dates[dates.length - 1]})`;
+  const title = `${label} schedule (${dates[0]} to ${dates[dates.length - 1]})`;
 
   // dateText -> colId -> {text, boldNames[], conflict}
   const cells = {};
@@ -1334,6 +1356,7 @@ function readGuides_(ss) {
     if (c !== -1) langCol[l] = c;
   });
   const vacCol = header.findIndex(h => /vacation/i.test(h));   // "Vacation dates" column
+  const tourCol = header.findIndex(h => /^tour$/i.test(h));    // "Tour" column: 3h / SF / both
   const guides = [];
   for (let r = 1; r < values.length; r++) {
     const row = values[r];
@@ -1347,6 +1370,10 @@ function readGuides_(ss) {
       seniority: Number(row[2]) || 999,
       order: r,
       vacations: parseVacationRanges_(vacCol !== -1 ? row[vacCol] : ''),   // blocked date ranges
+      // Which tour type(s) the guide runs (shared parser with the portal). Blank
+      // defaults to 3h, so the auto-scheduler never puts an SF-only guide on a 3h
+      // tour, nor a 3h-only guide on SF.
+      tourTypes: parseTourTypes_(tourCol !== -1 ? row[tourCol] : ''),
       languages
     });
   }
@@ -1794,8 +1821,9 @@ function validateScheduleGrids() {
 
   controlSS.getSheets().forEach(sheet => {
     const name = sheet.getName();
-    if (name.indexOf("Schedule_") !== 0) return;
-    const language = name.substring("Schedule_".length).trim();
+    const parsed = parseScheduleTabName_(name);
+    if (!parsed) return;
+    const language = parsed.language, tabIsSf = parsed.isSf;
     if (!language || sheet.getLastRow() < 3) return;
 
     const dv = sheet.getDataRange().getDisplayValues();
@@ -1826,6 +1854,10 @@ function validateScheduleGrids() {
               if (!g) { problems.push(`${nm} @ ${formatDate_(dObj)} ${time} ${language}: not in Guides tab`); return; }
               if (g.languages[language] !== true) {
                 problems.push(`${nm} @ ${formatDate_(dObj)} ${time} ${language}: does not speak ${language}`);
+              }
+              const gt = g.tourTypes || { threeH: true, sf: false };
+              if (tabIsSf ? !gt.sf : !gt.threeH) {
+                problems.push(`${nm} @ ${formatDate_(dObj)} ${time} ${language}: does not run the ${tabIsSf ? 'SF' : '3h'} tour`);
               }
               if (!seen[nm]) seen[nm] = [];
               seen[nm].forEach(prev => {
@@ -1879,11 +1911,12 @@ function handleScheduleEdit(e) {
     if (!e || !e.range) return;
     const sh = e.range.getSheet();
     const name = sh.getName();
-    if (name.indexOf('Schedule_') !== 0) return;
+    const parsed = parseScheduleTabName_(name);
+    if (!parsed) return;
+    const language = parsed.language, tabIsSf = parsed.isSf;
     if (e.range.getRow() < 3 || e.range.getColumn() < 2) return;
     if (e.range.getNumRows() > 1 || e.range.getNumColumns() > 1) return;
 
-    const language = name.substring('Schedule_'.length).trim();
     const val = String(e.range.getValue() || '').trim();
     if (!val || /not assigned/i.test(val)) { e.range.setNote(''); return; }
 
@@ -1895,7 +1928,7 @@ function handleScheduleEdit(e) {
         .build());
     e.range.setFontStyle('normal').setFontColor('#1a2b49');
 
-    const problems = validateCellAssignment_(sh, e.range, language, val);
+    const problems = validateCellAssignment_(sh, e.range, language, val, tabIsSf);
     if (problems.length) {
       e.range.setNote('⚠ ' + problems.join('\n⚠ '));
       logScheduleConflicts_(SpreadsheetApp.getActiveSpreadsheet(), problems.map(p => ({
@@ -1911,7 +1944,7 @@ function handleScheduleEdit(e) {
 }
 
 /** Problems (strings) with putting `namesText` into this grid cell. */
-function validateCellAssignment_(sh, range, language, namesText) {
+function validateCellAssignment_(sh, range, language, namesText, isSf) {
   const problems = [];
   const dv = sh.getDataRange().getDisplayValues();
   const anchor = gridAnchor_(String((dv[0] && dv[0][0]) || ''));
@@ -1919,10 +1952,11 @@ function validateCellAssignment_(sh, range, language, namesText) {
   const dateKey = gridLabelToKey_(String((dv[range.getRow() - 1] || [])[0] || '').trim(), anchor);
   if (!header || !dateKey) return problems;   // not a data cell we understand
 
+  const sf = !!isSf || !!header.isSf;          // an SF grid tab (or legacy SF column)
   const startMs = shiftStartMs_(dateKey, timeToMinutes_(header.time));
   const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
   const myKey = dateKey + '|' + timeToMinutes_(header.time) + '|' + language.toLowerCase() +
-                '|' + (header.isPrivate ? 'P' + header.index : 'R');
+                '|' + (sf ? 'SF' : (header.isPrivate ? 'P' + header.index : 'R'));
 
   let busy = {};
   try { busy = buildBusyMap_(readSchedule_()); } catch (err) { /* portal reader unavailable */ }
@@ -1933,6 +1967,8 @@ function validateCellAssignment_(sh, range, language, namesText) {
     if (!g) { problems.push(nm + ': not in the Guides tab'); return; }
     if (!g.active) problems.push(nm + ' is marked inactive');
     if (g.languages[language] !== true) problems.push(nm + ' does not speak ' + language);
+    const gt = g.tourTypes || { threeH: true, sf: false };
+    if (sf ? !gt.sf : !gt.threeH) problems.push(nm + ' does not run the ' + (sf ? 'SF' : '3h') + ' tour');
     const b = busy[nm.trim().toLowerCase()] || [];
     const clash = b.find(x => x.k !== myKey && Math.abs(x.ms - startMs) < sepMs);
     if (clash) {

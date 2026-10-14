@@ -316,6 +316,42 @@ check('SF check-in writes a ledger row tagged Type "SF Exterior"', !!sfLed && St
 check('SF ledger row carries the SF source (cross-reference)', !!sfLed && String(sfLed[LEDGER_SOURCE_COL]) === 'GYG-SF', sfLed && sfLed[LEDGER_SOURCE_COL]);
 check('SF ledger pays its OWN rate (2 pax x 3€ = 6€ we owe)', !!sfLed && Number(sfLed[10]) === 6, sfLed && sfLed[10]);
 
+console.log('=== STRESS: SF assignments live in their OWN grid tab (Schedule_SF_<lang>) ===');
+// The SF assign above (Carlos) must land in Schedule_SF_English, NOT the 3h grid;
+// the 3h assign (Albert) must stay in Schedule_English. Dedicated per-language SF grids.
+const sfTab = control.getSheetByName('Schedule_SF_English');
+const h3Tab = control.getSheetByName('Schedule_English');
+const tabText = sh => { if (!sh || sh.getLastRow() < 1) return ''; return sh.getRange(1,1,sh.getLastRow(),Math.max(1,sh.getLastColumn())).getDisplayValues().map(r=>r.join(' ')).join(' '); };
+check('a dedicated Schedule_SF_English tab was created', !!sfTab, control.getSheets().map(s=>s.getName()).filter(n=>/Schedule_/.test(n)));
+check('Carlos (SF) is written in the SF grid', /Carlos/.test(tabText(sfTab)), tabText(sfTab));
+check('the 3h grid no longer carries ANY SF column (SF lives only in its own tab)', !/·\s*SF/.test(tabText(h3Tab)), tabText(h3Tab));
+check('the SF grid IS all SF columns', /·\s*SF/.test(tabText(sfTab)), tabText(sfTab));
+check('Albert (3h) is written in the 3h grid', /Albert/.test(tabText(h3Tab)), tabText(h3Tab));
+check('the SF grid round-trips back to an SF-assigned card (Schedule_SF read path)',
+  (function(){ __RRX={}; const rr=tours(); const c=(rr.allTours||[]).find(x=>x.dateKey===DATE&&x.time==='15:30'&&x.sfExt); return !!c && (c.assigned||[]).indexOf('Carlos')!==-1; })(), null);
+// Helper round-trip (shared across the control project).
+check('scheduleTabName_/parseScheduleTabName_ agree on SF + language',
+  scheduleTabName_('English', true) === 'Schedule_SF_English' &&
+  parseScheduleTabName_('Schedule_SF_English').isSf === true &&
+  parseScheduleTabName_('Schedule_SF_English').language === 'English' &&
+  parseScheduleTabName_('Schedule_English').isSf === false, null);
+
+console.log('=== STRESS: auto-scheduler only staffs a tour type with guides who run it ===');
+// A 3h-only guide must never be auto-picked for an SF shift, nor an SF-only guide
+// for a 3h shift (Guides tab "Tour" column, read by assignShifts.readGuides_).
+const sfG = { active:true, languages:{English:true}, tourTypes:{threeH:false, sf:true},  name:'SfOnly',   vacations:[] };
+const h3G = { active:true, languages:{English:true}, tourTypes:{threeH:true,  sf:false}, name:'H3Only',   vacations:[] };
+const oldG= { active:true, languages:{English:true}, name:'NoTourCol', vacations:[] }; // no tourTypes -> defaults 3h
+const everyone = ['SfOnly','H3Only','NoTourCol'];   // all marked available, so the type gate is the only filter
+const sfShift = { sfExt:true,  language:'English', dateText:'2026-11-02', dateTimeObj:new Date('2026-11-02T11:00:00'), lockedGuides:[], guidesNeeded:1, availableGuides:everyone };
+const h3Shift = { sfExt:false, language:'English', dateText:'2026-11-02', dateTimeObj:new Date('2026-11-02T10:00:00'), lockedGuides:[], guidesNeeded:1, availableGuides:everyone };
+const poolG = [sfG, h3G, oldG];
+const byNameG = { sfonly:sfG, h3only:h3G, notourcol:oldG };
+const sfElig = pickAutoEligible_(sfShift, true, poolG, byNameG, {}).map(g=>g.name);
+const h3Elig = pickAutoEligible_(h3Shift, true, poolG, byNameG, {}).map(g=>g.name);
+check('SF shift auto-pool = SF-capable only (SfOnly)', sfElig.join()==='SfOnly', sfElig);
+check('3h shift auto-pool excludes the SF-only guide, includes 3h + blank-default', h3Elig.slice().sort().join()==='H3Only,NoTourCol', h3Elig);
+
 console.log('=== STRESS: data-subject access (export) + erasure across all stores ===');
 const exHits = exportClientData('B-M1');
 check('export finds the booking across tabs (feed + Tours)', exHits.length >= 2 && exHits.every(function (h) { return /B-M1/i.test(h.data); }), exHits.map(function (h) { return h.tab; }));

@@ -1373,14 +1373,15 @@ function deleteShiftFromGrid_(id) {
   const dateKey = parts[0];
   const minutes = Number(parts[1]);
   const langLower = parts[2] || '';
-  const isPriv = /^P/i.test(parts[3] || '');
+  const isSf = /^SF$/i.test(parts[3] || '');
+  const isPriv = !isSf && /^P/i.test(parts[3] || '');
   const privIndex = isPriv ? (Number((parts[3] || '').replace(/[^0-9]/g, '')) || 1) : 1;
   if (!dateKey || !Number.isFinite(minutes) || !langLower) return false;
   const language = LANGUAGES.find(l => l.toLowerCase() === langLower) ||
                    (langLower.charAt(0).toUpperCase() + langLower.slice(1));
   const time = minutesToTime_(minutes);
 
-  const sh = control_().getSheetByName('Schedule_' + language);
+  const sh = control_().getSheetByName(scheduleTabName_(language, isSf));   // SF clears from its own grid
   if (!sh || sh.getLastRow() < 3) return false;
   const anchor = gridAnchor_(String(sh.getRange(1, 1).getDisplayValue() || ''));
 
@@ -1388,7 +1389,9 @@ function deleteShiftFromGrid_(id) {
   let colNum = -1;
   for (let c = 1; c < timeRow.length; c++) {
     const h = parseGridTimeHeader_(timeRow[c]);
-    if (h && h.time === time && h.isPrivate === isPriv && (!isPriv || (h.index || 1) === privIndex)) { colNum = c + 1; break; }
+    if (!h || h.time !== time) continue;
+    if (isSf) { if (h.isSf) { colNum = c + 1; break; } continue; }
+    if (h.isPrivate === isPriv && (!isPriv || (h.index || 1) === privIndex)) { colNum = c + 1; break; }
   }
   const colA = sh.getRange(3, 1, sh.getLastRow() - 2, 1).getDisplayValues();
   let rowNum = -1;
@@ -1948,7 +1951,7 @@ function callBookingAdmin_(fn, extra) {
  */
 function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide, isSf) {
   const ss = control_();
-  const tabName = 'Schedule_' + language;
+  const tabName = scheduleTabName_(language, isSf);   // SF -> its own Schedule_SF_<lang> grid
   let sh = ss.getSheetByName(tabName);
   const header = gridHeaderForColumn_(time, isPriv, privIndex, isSf);
   const dayLabel = Utilities.formatDate(new Date(dateKey + 'T12:00:00'), Session.getScriptTimeZone(), 'EEE MMM d');
@@ -2420,6 +2423,29 @@ function findGuideByName_(guideName) {
 }
 
 /**
+ * The assigning-grid tab name for a language + tour type. The 3-hour tour lives in
+ * `Schedule_<Language>`; the Sagrada exterior (SF) tour has its OWN per-language
+ * grid `Schedule_SF_<Language>`, so SF assignments never mix into the 3h grid.
+ * SHARED across the control project (portal writers + batch scheduler).
+ */
+function scheduleTabName_(language, isSf) {
+  return (isSf ? 'Schedule_SF_' : 'Schedule_') + language;
+}
+
+/**
+ * Parse a `Schedule_*` tab name into { language, isSf }, or null if it is not a
+ * grid tab. Checks the SF prefix FIRST so `Schedule_SF_English` reads as
+ * {English, SF}, not a phantom language "SF_English". SHARED across the project;
+ * every reader that derives a language from a grid tab name must use this.
+ */
+function parseScheduleTabName_(name) {
+  const n = String(name || '');
+  if (n.indexOf('Schedule_SF_') === 0) return { language: n.substring('Schedule_SF_'.length).trim(), isSf: true };
+  if (n.indexOf('Schedule_') === 0)    return { language: n.substring('Schedule_'.length).trim(),    isSf: false };
+  return null;
+}
+
+/**
  * Reads the per-language grids (Schedule_English, Schedule_German, ...) into
  * upcoming shift objects. These grids are the SOURCE OF TRUTH: makeSchedule
  * generates them, but a manager can hand-edit a cell and the portal follows.
@@ -2450,8 +2476,10 @@ function readSchedule_(opts) {
 
   ss.getSheets().forEach(sh => {
     const name = sh.getName();
-    if (name.indexOf('Schedule_') !== 0) return;      // only the per-language grids
-    const language = name.substring('Schedule_'.length).trim();
+    const parsed = parseScheduleTabName_(name);       // {language, isSf} for Schedule_* and Schedule_SF_*
+    if (!parsed) return;                              // only the per-language grids
+    const language = parsed.language;
+    const tabIsSf = parsed.isSf;                      // an SF grid tab -> every column is an SF tour
     if (!language || sh.getLastRow() < 3) return;
 
     const vals = sh.getDataRange().getDisplayValues();
@@ -2495,8 +2523,9 @@ function readSchedule_(opts) {
         // "Not assigned (cleared)"; carry that so the weekly default is suppressed.
         const clearedCell = /cleared/i.test(raw);
 
-        if (t.headerSf) {
-          // Sagrada exterior tour — its own column/card.
+        if (tabIsSf || t.headerSf) {
+          // Sagrada exterior tour — its own grid tab (Schedule_SF_<lang>), or a
+          // legacy SF-marked column in a shared grid. Either way, its own card.
           out.push(Object.assign({}, base, {
             sfExt: true, private: false, privIndex: 1, tourName: 'SF',
             assigned: namesFrom(lines),
@@ -4820,8 +4849,9 @@ function readScheduleDateCoverage_() {
   const cover = {};
   control_().getSheets().forEach(sh => {
     const name = sh.getName();
-    if (name.indexOf('Schedule_') !== 0) return;
-    const language = name.substring('Schedule_'.length).trim();
+    const parsed = parseScheduleTabName_(name);       // merge Schedule_SF_<lang> dates into the base language
+    if (!parsed) return;
+    const language = parsed.language;
     if (!language || sh.getLastRow() < 3) return;
     const vals = sh.getDataRange().getDisplayValues();
     const anchor = gridAnchor_(String((vals[0] && vals[0][0]) || ''));
