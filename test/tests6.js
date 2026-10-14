@@ -674,6 +674,26 @@ check('SF week tab shows the SF time slot (9:00)', sfTimes[0]==='9:00', sfTimes)
 check('SF week tab lists SF guides only (Amalia, Flex — not Carlos)',
   sfNames.indexOf('Amalia')!==-1 && sfNames.indexOf('Carlos')===-1, sfNames);
 
+console.log('--- Availability SAFETY: a sync can never blank a good sheet (the bug that wiped names) ---');
+const wkMon=[{dateKey:key(mon),dateObj:mon,dayName:'Monday',shortLabel:shortDateLabel_(mon)}];
+const goodWk=gfSf.insertSheet('Week 91');
+rebuildAvailabilityWeekSheet_(goodWk, wkMon, availabilityRulesFor_(cSf,true), availabilityGuideNames_(cSf,true), {});
+const beforeNames=goodWk.getRange(5,1,3,1).getDisplayValues().map(r=>r[0]).filter(Boolean);
+// Empty guide list (e.g. a transient read failure) must BAIL, not wipe the sheet.
+rebuildAvailabilityWeekSheet_(goodWk, wkMon, availabilityRulesFor_(cSf,true), [], {});
+const afterEmptyNames=goodWk.getRange(5,1,3,1).getDisplayValues().map(r=>r[0]).filter(Boolean);
+check('rebuild with EMPTY names bails and leaves the names intact', beforeNames.length>0 && afterEmptyNames.join()===beforeNames.join(), [beforeNames, afterEmptyNames]);
+// Empty rules (no slots) must also bail.
+rebuildAvailabilityWeekSheet_(goodWk, wkMon, [], availabilityGuideNames_(cSf,true), {});
+const afterEmptyRules=goodWk.getRange(5,1,3,1).getDisplayValues().map(r=>r[0]).filter(Boolean);
+check('rebuild with EMPTY rules bails and leaves the names intact', afterEmptyRules.join()===beforeNames.join(), afterEmptyRules);
+// A blanked tab (title only) recovers its week from the title on the next sync.
+const blankWk=gfSf.insertSheet('Week 92');
+blankWk.getRange(1,1).setValue('Availability: Week 42 (Mon Oct 12 - Sun Oct 18, 2026)');
+const recovered=readWeekDates_(blankWk);
+check('readWeekDates_ recovers a blanked tab from its title (full Mon–Sun week)',
+  recovered.length===7 && recovered[0].dayName==='Monday', recovered.map(d=>d.dayName));
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

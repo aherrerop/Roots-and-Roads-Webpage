@@ -1641,6 +1641,16 @@ function readWeekDates_(sheet) {
     const d = parseDateFromHeader_(label, year);
     if (d && !isNaN(d) && (!earliest || d < earliest)) earliest = d;
   }
+  // RECOVERY: a blanked tab has no day headers, so fall back to the date in its
+  // TITLE — "Availability: Week 42 (Mon Oct 12 - Sun Oct 18, 2026)". This lets a
+  // once-wiped sheet be rebuilt on the next sync instead of being skipped forever.
+  if (!earliest) {
+    const m = title.match(/\(\s*(?:[A-Za-z]{3,}\s+)?([A-Za-z]{3,})\s+(\d{1,2})\b/);
+    if (m) {
+      const mi = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(m[1].slice(0, 3).toLowerCase());
+      if (mi >= 0) { const d = new Date(year, mi, Number(m[2]), 12, 0, 0, 0); if (!isNaN(d)) earliest = d; }
+    }
+  }
   if (!earliest) return [];
   const monday = new Date(earliest);
   monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));   // snap back to Monday
@@ -1692,6 +1702,12 @@ function rebuildAvailabilityWeekSheet_(sheet, weekDates, scheduleRules, guideNam
 
   const totalCols = 1 + slots.length;
   const guideRows = Math.max(AVAILABILITY_MIN_GUIDE_ROWS, guideNames.length + 5);
+
+  // SAFETY: never clear + rebuild a sheet when there is nothing to write. If the
+  // schedule rules or the guide list came back empty — e.g. a transient
+  // "Service Spreadsheets timed out" mid-sync — bail BEFORE touching the sheet,
+  // so a good availability tab (names + ticks) is never wiped to a blank shell.
+  if (!slots.length || !guideNames || !guideNames.length) return;
 
   sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).breakApart();
   sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearDataValidations();
