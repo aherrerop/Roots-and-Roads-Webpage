@@ -508,10 +508,16 @@ const stShift = (apiTours_({ token: token, days: 10 }).allTours || []).find(s =>
   s.dateKey === stDate && s.time === '13:37' && s.language === 'English' &&
   (s.bookings || []).some(b => b.bookingId === 'TEST-ENGLISH-ST1'));
 check('a just-created Testing booking surfaces as a shift via the portal (feed)', !!stShift, stShift && stShift.bookings.map(b => b.bookingId));
+// SF self-test leg: createTestBookingRow_(…, isSf) must surface as its OWN SF card.
+createTestBookingRow_('English', stDate, '1:37 PM', 'Testing SF', 'TEST-SF-ST1', 2, true);
+const stSf = (apiTours_({ token: token, days: 10 }).allTours || []).find(s =>
+  s.dateKey === stDate && s.time === '13:37' && s.language === 'English' && s.sfExt &&
+  (s.bookings || []).some(b => b.bookingId === 'TEST-SF-ST1'));
+check('a Testing SF (GYG-SF) booking surfaces as its OWN SF card (sfExt)', !!stSf && stSf.tourName === 'SF', stSf && [stSf.sfExt, stSf.tourName]);
 deleteSelfTestArtifacts_({ time24: '13:37', langs: ['English'] });
 const stGone = !(apiTours_({ token: token, days: 10 }).allTours || []).some(s =>
-  (s.bookings || []).some(b => b.bookingId === 'TEST-ENGLISH-ST1'));
-check('cleanup removes the Testing booking from the portal + feed', stGone, null);
+  (s.bookings || []).some(b => b.bookingId === 'TEST-ENGLISH-ST1' || b.bookingId === 'TEST-SF-ST1'));
+check('cleanup removes the Testing bookings (3h + SF) from the portal + feed', stGone, null);
 
 console.log('--- Near-future Portal feed: portal reads the pre-built tab (fast path), falls back live ---');
 const nfBuild = rebuildNearFuturePortalFeed_();

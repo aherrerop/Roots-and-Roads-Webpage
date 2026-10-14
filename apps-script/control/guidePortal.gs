@@ -6021,6 +6021,59 @@ function runPortalSelfTest(opts) {
         return 'persisted at ' + (cke.at || '?');
       });
     });
+
+    // ---- SF exterior tour leg: its OWN card, its OWN grid (Schedule_SF_<lang>),
+    //      and the 3€/pax "SF Exterior" ledger — the full SF parity path. ----
+    const sfLang = 'English';
+    const sfGuide = guidesParsed_().list.find(g =>
+      g.active && g.tourTypes && g.tourTypes.sf && g.name !== managerName);
+    if (!sfGuide) {
+      R.push({ name: '[SF] assign an SF guide', ms: 0, ok: false, detail: 'no active SF-capable guide (set a guide to SF in the Guides "Tour" column)' });
+    } else {
+      const sfBid = 'TEST-SF-' + Date.now();
+      step('[SF] create a Testing SF (GYG-SF) booking', () => {
+        createTestBookingRow_(sfLang, dateKey, ST.timeLabel, 'Testing SF', sfBid, 2, true);
+        return sfBid;
+      });
+      step('[SF] it surfaces as its OWN SF card (sfExt), separate from any 3h card', () => {
+        const t = apiTours_({ token: token });
+        const sf = (t.allTours || []).find(s => s.dateKey === dateKey && s.time === ST.time24 && s.language === sfLang && s.sfExt);
+        if (!sf) throw new Error('no SF card for the SF booking');
+        if (!(sf.bookings || []).some(b => b.bookingId === sfBid)) throw new Error('SF booking not on the SF card');
+        return 'tourName=' + sf.tourName;
+      });
+      step('[SF] manager assigns ' + sfGuide.name + ' to the SF tour', () => {
+        const r = apiAssign_({ token: token, dateKey: dateKey, time: ST.time24, language: sfLang, sfExt: '1', guide: sfGuide.name, force: '1' });
+        if (!r.ok) throw new Error(r.error || 'SF assign failed');
+        return sfGuide.name;
+      });
+      step('[SF] the assignment lands in the Schedule_SF grid and sticks on reload', () => {
+        const t = apiTours_({ token: token });
+        const sf = (t.allTours || []).find(s => s.dateKey === dateKey && s.time === ST.time24 && s.language === sfLang && s.sfExt);
+        if (!sf) throw new Error('SF card vanished after assign');
+        const names = (sf.assigned || []).concat(sf.guide ? [sf.guide] : []);
+        if (!names.some(n => n && n.toLowerCase() === sfGuide.name.toLowerCase())) throw new Error('SF assigned to ' + JSON.stringify(names));
+        const grid = control_().getSheetByName(scheduleTabName_(sfLang, true));
+        if (!grid) throw new Error('Schedule_SF_' + sfLang + ' grid was not created');
+        return 'grid=' + grid.getName();
+      });
+      step('[SF] a check-in pays the 3€/pax "SF Exterior" rate into the guide tab', () => {
+        const r = apiSave_({ token: token, data: JSON.stringify({
+          dateKey: dateKey, time: ST.time24, timeLabel: ST.timeLabel, day: dayNameFromKey_(dateKey),
+          language: sfLang, guide: sfGuide.name,
+          bookings: [{ bookingId: sfBid, source: (PORTAL.SF_EXT_SOURCE || 'GYG-SF'), name: 'Testing SF', phone: '', guests: 2, income: 0, isPrivate: false, checked: true, checkedIn: 2 }]
+        }) });
+        if (!r.ok) throw new Error(r.error || 'SF save failed');
+        const tab = ledgerSS_().getSheetByName(sfGuide.name);
+        if (!tab || tab.getLastRow() < 2) throw new Error('no ledger tab for ' + sfGuide.name);
+        const rows = tab.getRange(2, 1, tab.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
+        const led = rows.find(x => String(x[LEDGER_BOOKINGID_COL]) === sfBid);
+        if (!led) throw new Error('no SF ledger row');
+        if (String(led[13]) !== 'SF Exterior') throw new Error('type=' + led[13] + ', expected SF Exterior');
+        if (Number(led[10]) !== 6) throw new Error('weOwe=' + led[10] + ', expected 6 (2 pax x 3€)');
+        return 'SF Exterior, we owe 6€';
+      });
+    }
   } finally {
     if (!keep) step('clean up all Testing data', () => deleteSelfTestArtifacts_(ST));
   }
@@ -6028,8 +6081,11 @@ function runPortalSelfTest(opts) {
   return selfTestReport_(R);
 }
 
-/** Append one throwaway Testing booking row to a BookingSheet language tab. */
-function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests) {
+/** Append one throwaway Testing booking row to a BookingSheet language tab.
+ *  isSf -> an SF exterior test booking (source GYG-SF + the feed's SF marker), so
+ *  the self-test can exercise the dedicated SF card / grid / 3€ ledger path. */
+function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests, isSf) {
+  const source = isSf ? (PORTAL.SF_EXT_SOURCE || 'GYG-SF') : 'Website';
   const ss = bookingSS_();
   const sh = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
   if (!sh) throw new Error(language + ' Tours tab not found');
@@ -6038,7 +6094,7 @@ function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests) {
   sh.getRange(row, 5, 1, 1).setNumberFormat('@');   // time as text
   sh.getRange(row, 8, 1, 1).setNumberFormat('@');   // booking id as text
   sh.getRange(row, 1, 1, 9).setValues([[
-    name, '', Number(guests || 0), new Date(dateKey + 'T12:00:00'), timeLabel, 'Website', 0, id, ''
+    name, '', Number(guests || 0), new Date(dateKey + 'T12:00:00'), timeLabel, source, 0, id, ''
   ]]);
 
   // The LIVE portal reads the Portal Feed (the language tabs only feed it on the
@@ -6054,8 +6110,8 @@ function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests) {
       feed.getRange(fr, 2, 1, 1).setNumberFormat('@');    // Time as text
       feed.getRange(fr, 10, 1, 1).setNumberFormat('@');   // Booking ID as text
       feed.getRange(fr, 1, 1, 16).setValues([[
-        dateKey, timeLabel, language, name, '', Number(guests || 0), 0, 'Website', 0, id,
-        '', '', '', '', '', 'booking'
+        dateKey, timeLabel, language, name, '', Number(guests || 0), 0, source, 0, id,
+        (isSf ? 'SF' : ''), '', '', '', '', 'booking'
       ]]);
       bumpFeedCacheVersion_();
     }
