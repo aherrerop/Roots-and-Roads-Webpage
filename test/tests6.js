@@ -653,9 +653,15 @@ check('availabilityRulesFor_(3h) = non-SF, non-hidden rules only',
   availabilityRulesFor_(cSf,false).length===1 && availabilityRulesFor_(cSf,false).every(r=>!r.sfExt), availabilityRulesFor_(cSf,false).map(r=>r.tourName));
 check('availabilityGuideNames_(SF) = SF-capable only (Amalia, Flex)',
   availabilityGuideNames_(cSf,true).slice().sort().join()==='Amalia,Flex', availabilityGuideNames_(cSf,true));
-check('availabilityGuideNames_(3h) excludes the SF-only guide, keeps 3h + both',
-  availabilityGuideNames_(cSf,false).indexOf('Amalia')===-1 &&
-  availabilityGuideNames_(cSf,false).slice().sort().join()==='Carlos,Flex', availabilityGuideNames_(cSf,false));
+check('availabilityGuideNames_(3h) = EVERY active guide (never narrowed -> names can never vanish)',
+  availabilityGuideNames_(cSf,false).slice().sort().join()==='Amalia,Carlos,Flex', availabilityGuideNames_(cSf,false));
+check('availabilityGuideNames_(SF) falls back to all-active when no guide is SF-tagged (never blank)',
+  (function(){ const c=new __mock.MockSS('ctl-no-sf'); SpreadsheetApp._active=c; __RRX={};
+    c.insertSheet('Guides').getRange(1,1,2,11).setValues([
+      ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Manager','Email','Password'],
+      ['Nora',true,1,true,false,false,false,false,false,'n@x.com','pw']]);
+    const r = availabilityGuideNames_(c,true); SpreadsheetApp._active=cSf; __RRX={};
+    return r.join()==='Nora'; })(), null);
 // An SF week tab, rebuilt with the SF rules + SF guides, lists SF guides and the SF time.
 const gfSf=new __mock.MockSS('guidefile-sf'); __mock.SS_BY_ID['GF-SF']=gfSf;
 const mon=day(7); // any upcoming date; the slot's dayName is set to Monday explicitly below

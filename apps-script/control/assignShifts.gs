@@ -945,13 +945,19 @@ function availWeekTabType_(name) {
   return { isWeek: false, isSf: false };
 }
 
-/** Active guides who run this tour type (for the availability name list + dropdown). */
+/**
+ * Guides listed on an availability sheet.
+ *   3h sheet: EVERY active guide, exactly as it was before the SF split — the 3h
+ *             sheet is never narrowed by tour type (that wiped the names), so a
+ *             guide always appears where they always did.
+ *   SF sheet: only SF-capable guides (Guides "Tour" column). If none are tagged
+ *             yet, the SF sheet still lists every active guide so it is never
+ *             blank — mark SF guides in the Guides tab to narrow it.
+ */
 function availabilityGuideNames_(controlSS, isSf) {
-  return readGuides_(controlSS).filter(g => {
-    if (!g.active) return false;
-    const t = g.tourTypes || { threeH: true, sf: false };
-    return isSf ? !!t.sf : !!t.threeH;
-  }).map(g => g.name);
+  if (!isSf) return readActiveGuideNames_(controlSS);
+  const sf = readGuides_(controlSS).filter(g => g.active && g.tourTypes && !!g.tourTypes.sf).map(g => g.name);
+  return sf.length ? sf : readActiveGuideNames_(controlSS);
 }
 
 /**
