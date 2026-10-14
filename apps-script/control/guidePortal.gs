@@ -5859,7 +5859,8 @@ function runPortalSelfTest(opts) {
 
 /** Append one throwaway Testing booking row to a BookingSheet language tab. */
 function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests) {
-  const sh = bookingSS_().getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
+  const ss = bookingSS_();
+  const sh = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
   if (!sh) throw new Error(language + ' Tours tab not found');
   const row = sh.getLastRow() + 1;
   sh.getRange(row, 2, 1, 1).setNumberFormat('@');   // phone as text
@@ -5868,11 +5869,31 @@ function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests) {
   sh.getRange(row, 1, 1, 9).setValues([[
     name, '', Number(guests || 0), new Date(dateKey + 'T12:00:00'), timeLabel, 'Website', 0, id, ''
   ]]);
+
+  // The LIVE portal reads the Portal Feed (the language tabs only feed it on the
+  // booking system's next ~5-min rebuild), so also drop a matching feed row and
+  // bump the feed cache — otherwise "the booking surfaces as a shift" fails in
+  // production purely on feed lag (it only passed in unit tests, which have no
+  // feed tab and fall back to reading the language tabs). Best-effort.
+  try {
+    const feed = ss.getSheetByName('Portal Feed');
+    if (feed) {
+      const fr = feed.getLastRow() + 1;
+      feed.getRange(fr, 1, 1, 1).setNumberFormat('@');    // Date as text (ISO)
+      feed.getRange(fr, 2, 1, 1).setNumberFormat('@');    // Time as text
+      feed.getRange(fr, 10, 1, 1).setNumberFormat('@');   // Booking ID as text
+      feed.getRange(fr, 1, 1, 16).setValues([[
+        dateKey, timeLabel, language, name, '', Number(guests || 0), 0, 'Website', 0, id,
+        '', '', '', '', '', 'booking'
+      ]]);
+      bumpFeedCacheVersion_();
+    }
+  } catch (e) { /* feed optional (unit tests / first run) */ }
 }
 
 /** Remove every Testing artefact: booking rows, ledger rows, and the fake grid column. */
 function deleteSelfTestArtifacts_(ST) {
-  const removed = { bookings: 0, ledger: 0, gridCols: 0 };
+  const removed = { bookings: 0, feed: 0, ledger: 0, gridCols: 0 };
 
   bookingSS_().getSheets().forEach(sh => {
     const tab = sh.getName();
@@ -5883,6 +5904,18 @@ function deleteSelfTestArtifacts_(ST) {
       if (/^TEST-/i.test(String(ids[i][0] || ''))) { sh.deleteRow(i + 2); removed.bookings++; }
     }
   });
+
+  // Also pull the Testing rows out of the Portal Feed (the portal reads it).
+  try {
+    const feed = bookingSS_().getSheetByName('Portal Feed');
+    if (feed && feed.getLastRow() >= 2) {
+      const fids = feed.getRange(2, 10, feed.getLastRow() - 1, 1).getValues();   // J = Booking ID
+      for (let i = fids.length - 1; i >= 0; i--) {
+        if (/^TEST-/i.test(String(fids[i][0] || ''))) { feed.deleteRow(i + 2); removed.feed = (removed.feed || 0) + 1; }
+      }
+      if (removed.feed) bumpFeedCacheVersion_();
+    }
+  } catch (e) { /* feed optional */ }
 
   try {
     ledgerSS_().getSheets().forEach(sh => {
@@ -5906,7 +5939,7 @@ function deleteSelfTestArtifacts_(ST) {
     }
   });
 
-  return 'bookings=' + removed.bookings + ' ledger=' + removed.ledger + ' gridCols=' + removed.gridCols;
+  return 'bookings=' + removed.bookings + ' feed=' + removed.feed + ' ledger=' + removed.ledger + ' gridCols=' + removed.gridCols;
 }
 
 /** Write the self-test results to a "Self Test" tab and the log; return a summary. */

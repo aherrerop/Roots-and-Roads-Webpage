@@ -499,6 +499,20 @@ check('removal bumps the feed version so the portal reflects it next load', Stri
 check('a non-manager cannot remove a booking', (function () { const r = apiRemoveBooking_({ token: makeToken_('Carlos'), bookingId: 'GYGE2E001', language: 'English' }); return r && r.ok === false && /manager/i.test(r.error || ''); })(), null);
 check('removing an unknown id fails cleanly (not found, nothing deleted)', (function () { const r = apiRemoveBooking_({ token: token, bookingId: 'NOPE999', language: 'English' }); return r && r.ok === false; })(), null);
 
+console.log('--- Self-test fix: a created Testing booking surfaces via the FEED (was FAIL in prod), then cleans up ---');
+// The live portal reads the Portal Feed, so createTestBookingRow_ must also write
+// a feed row + bump the cache — else the "surfaces as a shift" step fails on feed lag.
+const stDate = dayKey(2);
+createTestBookingRow_('English', stDate, '1:37 PM', 'Testing English', 'TEST-ENGLISH-ST1', 2);
+const stShift = (apiTours_({ token: token, days: 10 }).allTours || []).find(s =>
+  s.dateKey === stDate && s.time === '13:37' && s.language === 'English' &&
+  (s.bookings || []).some(b => b.bookingId === 'TEST-ENGLISH-ST1'));
+check('a just-created Testing booking surfaces as a shift via the portal (feed)', !!stShift, stShift && stShift.bookings.map(b => b.bookingId));
+deleteSelfTestArtifacts_({ time24: '13:37', langs: ['English'] });
+const stGone = !(apiTours_({ token: token, days: 10 }).allTours || []).some(s =>
+  (s.bookings || []).some(b => b.bookingId === 'TEST-ENGLISH-ST1'));
+check('cleanup removes the Testing booking from the portal + feed', stGone, null);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
