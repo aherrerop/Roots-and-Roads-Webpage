@@ -1093,8 +1093,10 @@ function apiTours_(p) {
   // check-ins), and can save on a guide's behalf.
   let allTours = [];
   let guidesByLanguage = null;
+  let guideTourTypes = null;   // { name: {threeH, sf} } — lets the client's "Open a schedule" forms offer the right guides per type
   if (isManager) _t('mgrGuides', function () {
     guidesByLanguage = {};
+    guideTourTypes = {};
     const seniorityOf = {};
     const raw = readGuidesRaw_();
     const cols = guideColumns_(raw.header);
@@ -1102,6 +1104,7 @@ function apiTours_(p) {
       const g = parseGuideRow_(row, cols);
       if (!g.name || !g.active) return;
       seniorityOf[g.name] = g.seniority;
+      guideTourTypes[g.name] = g.tourTypes;
       Object.keys(g.languages).forEach(l => {
         if (g.languages[l] === true) {
           (guidesByLanguage[l] = guidesByLanguage[l] || []).push(g.name);
@@ -1187,7 +1190,7 @@ function apiTours_(p) {
   });
 
   return { ok: true, guide: name, manager: isManager, tours,
-           schedule: scheduleView, allTours, guidesByLanguage,
+           schedule: scheduleView, allTours, guidesByLanguage, guideTourTypes,
            hasMore: hasMore, windowDays: windowDays,
            timings: T,   // per-phase ms (tok/sched/book/assemble/me/backfill/closed/mine/mgrGuides/mgrTours)
            // Freshness: the server's own clock at the moment this data was built,
@@ -2285,6 +2288,10 @@ function guideColumns_(header) {
   const password = idx('Password');
   const manager = idx('Manager');
   const vacation = header.findIndex(h => /vacation/i.test(h));
+  // "Tour" column: which tour type(s) a guide runs — "3h", "SF", or both. It sits
+  // among the language columns positionally, so it is excluded from the language
+  // range exactly like the vacation column is.
+  const tour = header.findIndex(h => /^tour$/i.test(h));
   const langStart = seniority + 1;
   // Languages are the columns after Seniority, up to the first of Manager/Email.
   const stops = [email, manager].filter(c => c > seniority);
@@ -2292,10 +2299,31 @@ function guideColumns_(header) {
   const languages = [];
   for (let c = langStart; c < langEnd; c++) {
     if (c === vacation) continue;                 // the vacation column is never a language
+    if (c === tour) continue;                     // the "Tour" (type) column is never a language
     if (header[c]) languages.push({ col: c, name: header[c] });
   }
   return { nameCol: idx('Guide'), activeCol: idx('Active?'), emailCol: email, passwordCol: password,
-           managerCol: idx('Manager'), seniorityCol: seniority, vacationCol: vacation, languages };
+           managerCol: idx('Manager'), seniorityCol: seniority, vacationCol: vacation,
+           tourTypeCol: tour, languages };
+}
+
+/**
+ * TOUR TYPE(S) a guide runs, from the Guides-tab "Tour" column.
+ *   "3h"       -> the 3-hour tour (the default)
+ *   "SF"       -> the Sagrada Família exterior tour only
+ *   "3h/SF", "Both", "3h, SF" -> both
+ * BLANK defaults to 3h (so existing guides keep working with no sheet edit — only
+ * SF guides need marking). An unrecognised value also falls back to 3h so a guide
+ * is never hidden from everything by a typo.
+ */
+function parseTourTypes_(cell) {
+  const s = String(cell == null ? '' : cell).trim().toLowerCase();
+  if (!s) return { threeH: true, sf: false };
+  const both = s.indexOf('both') > -1 || s.indexOf('all') > -1;
+  const sf = both || s.indexOf('sf') > -1 || s.indexOf('sagrada') > -1;
+  const threeH = both || s.indexOf('3') > -1 || s.indexOf('three') > -1;
+  if (!sf && !threeH) return { threeH: true, sf: false };   // unknown -> 3h, never hide
+  return { threeH: threeH, sf: sf };
 }
 
 function parseGuideRow_(row, cols) {
@@ -2313,6 +2341,9 @@ function parseGuideRow_(row, cols) {
       ? Number(row[cols.seniorityCol]) : 999,
     // Blocked/vacation date ranges (Guides tab "Vacation dates" column).
     vacations: parseVacationRanges_(cols.vacationCol > -1 ? row[cols.vacationCol] : ''),
+    // Which tour type(s) this guide runs (Guides tab "Tour" column). Drives what
+    // tours they see and which assign dropdowns they appear in.
+    tourTypes: parseTourTypes_(cols.tourTypeCol > -1 ? row[cols.tourTypeCol] : ''),
     languages
   };
 }
@@ -3309,7 +3340,12 @@ function visibleShiftsForGuide_(shifts, myShifts, guide, isManager) {
   const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
   const myShiftMs = (myShifts || []).map(s => shiftStartMs_(s.dateKey, s.minutes));
   const speaks = (guide && guide.languages) || {};
+  const types = (guide && guide.tourTypes) || { threeH: true, sf: false };
   return (shifts || []).filter(s => {
+    // Tour-type gate FIRST (Guides tab "Tour" column): a guide only ever sees the
+    // tour type(s) they run — an SF-only guide never sees 3h tours (even assigned
+    // ones), and a 3h guide never sees SF tours. 3h/SF guides see both.
+    if (s.sfExt ? !types.sf : !types.threeH) return false;
     if (s.assigned && s.assigned.length) return true;          // someone is on it
     if (speaks[s.language] !== true) return false;             // not a language I run
     const st = shiftStartMs_(s.dateKey, s.minutes);
@@ -4671,7 +4707,14 @@ function buildBusyMap_(schedule) {
  * that; the batch auto-scheduler in assignShifts.gs still spaces guides out.)
  */
 function eligibleGuidesForShift_(shift, guidesByLanguage) {
-  return (guidesByLanguage[shift.language] || []).slice();
+  return (guidesByLanguage[shift.language] || []).filter(n => guideDoesTourType_(n, shift.sfExt));
+}
+
+/** Does this guide run this tour type? (Guides tab "Tour" column; blank -> 3h.) */
+function guideDoesTourType_(name, isSf) {
+  const g = findGuideByName_(name);
+  const t = (g && g.tourTypes) || { threeH: true, sf: false };
+  return isSf ? !!t.sf : !!t.threeH;
 }
 
 /**
@@ -4688,7 +4731,7 @@ function guideStatusesForShift_(shift, guidesByLanguage, busyMap) {
   const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
   const st = shiftStartMs_(shift.dateKey, shift.minutes);
   const thisKey = shiftKeyFull_(shift);
-  return (guidesByLanguage[shift.language] || []).map(function (name) {
+  return (guidesByLanguage[shift.language] || []).filter(n => guideDoesTourType_(n, shift.sfExt)).map(function (name) {
     // On vacation this date -> flag it so a manager doesn't reassign them by accident
     // (they still CAN — the option stays selectable; this is only the status dot).
     const gv = findGuideByName_(name);

@@ -213,10 +213,12 @@
     <div class="tabs">
       <button id="tabTours" class="tab active">My tours</button>
       <button id="tabSched" class="tab">All guides</button>
+      <button id="tabSf" class="tab hidden">SF tours</button>
     </div>
     <div id="fresh" class="fresh"></div>
     <div id="toursPane"><div class="spin">Loading…</div></div>
     <div id="schedPane" class="hidden"></div>
+    <div id="sfPane" class="hidden"></div>
     <div id="ver" class="ver"></div>
   </div>
 
@@ -297,7 +299,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-12-remove-booking";
+const PORTAL_VERSION = "2026-10-14-sf-tabs";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -432,7 +434,7 @@ const store = {
   get tab(){ return localStorage.getItem("rr_tab")||""; },
   set tab(v){ try{ localStorage.setItem("rr_tab", v||""); }catch(e){} }
 };
-let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={};
+let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={}, GUIDE_TOUR_TYPES={};
 // HISTORY view (manager-only): the last 2 days of tours, rendered read-only except
 // for the no-show + undo-check-in controls. HISTORY_RENDER is true only while the
 // history cards' HTML is being built, so the shared card helpers drop the editing
@@ -566,13 +568,19 @@ $("histCloseBtn").onclick=()=>{ closeHistory(); };
 /* ================== TABS ================== */
 $("tabTours").onclick=()=>switchTab("tours");
 $("tabSched").onclick=()=>switchTab("sched");
+$("tabSf").onclick=()=>switchTab("sf");
 function switchTab(t){
-  t = (t==="sched") ? "sched" : "tours";
+  // "sf" only exists for managers (the SF tab is hidden otherwise) — fall back to
+  // the schedule tab if an old remembered "sf" comes back on a non-manager.
+  if(t==="sf" && $("tabSf").classList.contains("hidden")) t="sched";
+  t = (t==="sched") ? "sched" : (t==="sf" ? "sf" : "tours");
   store.tab = t;                                   // remember across reloads
   $("tabTours").classList.toggle("active",t==="tours");
   $("tabSched").classList.toggle("active",t==="sched");
+  $("tabSf").classList.toggle("active",t==="sf");
   $("toursPane").classList.toggle("hidden",t!=="tours");
   $("schedPane").classList.toggle("hidden",t!=="sched");
+  $("sfPane").classList.toggle("hidden",t!=="sf");
 }
 /* Put the user back on the tab they last used. Called after each render so a
    background refresh never yanks a manager out of All tours. */
@@ -620,7 +628,7 @@ function canAutoRefresh(){
   if(document.querySelector("details.openform[open]")) return false;
   if(Date.now()-LAST_EDIT < 8000) return false;           // just used a control
   const a=document.activeElement;
-  if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName||"") && a.closest && a.closest("#toursPane,#schedPane")) return false; // typing/choosing in a field
+  if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName||"") && a.closest && a.closest("#toursPane,#schedPane,#sfPane")) return false; // typing/choosing in a field
   return true;
 }
 function startAutoRefresh(){
@@ -817,10 +825,20 @@ function renderAll(r){
   const hb=$("historyBtn"); if(hb) hb.classList.remove("hidden");   // History: managers see all tours, guides see their own (read-only)
   HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||3;
   GUIDES_BY_LANG=r.guidesByLanguage||{};
+  GUIDE_TOUR_TYPES=r.guideTourTypes||{};
   const all=r.allTours||[];
   renderTours(r.tours||[], "toursPane");
-  if(MANAGER){ renderTours(all, "schedPane", true); $("tabSched").textContent="All tours"; }
-  else { renderSchedule(r.schedule||[]); $("tabSched").textContent="All guides"; }
+  if(MANAGER){
+    // Managers get three tabs — split the full list by tour type so each stays
+    // short and scannable on a phone (fewer cards, no scrolling past SF to reach 3h).
+    const all3h=all.filter(t=>!t.sfExt), allSf=all.filter(t=>t.sfExt);
+    renderTours(all3h, "schedPane", true); $("tabSched").textContent="3h tours";
+    renderTours(allSf, "sfPane", true);    $("tabSf").textContent="SF tours";
+    $("tabSf").classList.remove("hidden");
+  } else {
+    renderSchedule(r.schedule||[]); $("tabSched").textContent="All guides";
+    $("tabSf").classList.add("hidden");
+  }
   TOURS_CACHE = MANAGER ? (r.tours||[]).concat(all) : (r.tours||[]);
   bindTours(TOURS_CACHE);
   restoreTab();                          // keep the user on their last tab (no jump to My tours)
@@ -855,8 +873,9 @@ function groupByDay(items){
 function renderTours(tours, paneId, canAssign){
   const pane=$(paneId||"toursPane");
   const seen={}; tours=(tours||[]).filter(t=>{ if(seen[t.id]) return false; seen[t.id]=true; return true; });
-  const opener = (canAssign && paneId==="schedPane") ? openScheduleForm() : "";
-  if(!tours.length){ pane.innerHTML=opener+'<div class="empty">'+(paneId==="schedPane"?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; bindOpenForm(); return; }
+  const isMgrPane = canAssign && (paneId==="schedPane" || paneId==="sfPane");
+  const opener = isMgrPane ? openScheduleForm(paneId==="sfPane") : "";
+  if(!tours.length){ pane.innerHTML=opener+'<div class="empty">'+(isMgrPane?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; bindOpenForm(); return; }
   let html=opener;
   groupByDay(tours).forEach(day=>{
     html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
@@ -886,11 +905,11 @@ function renderTours(tours, paneId, canAssign){
 /* Manager-only: open a brand-new schedule (pick day/date, time, language and,
    optionally, a guide). Reuses the assign action, which creates the grid slot
    if it doesn't exist yet. Leaving the guide empty opens an unassigned slot. */
-function openScheduleForm(){
+function openScheduleForm(isSf){
   const langs=Object.keys(GUIDES_BY_LANG||{});
   if(!langs.length) langs.push("English","German","Spanish","Italian","French");
   const langOpts=langs.map(l=>'<option>'+esc(l)+'</option>').join("");
-  return '<details class="openform"><summary>➕ Open a schedule</summary>'+
+  return '<details class="openform" data-sf="'+(isSf?"1":"")+'"><summary>➕ Open '+(isSf?"an SF schedule":"a schedule")+'</summary>'+
     '<div class="ofrow">'+
       '<label>Date<input type="date" class="of-date"></label>'+
       '<label>Time<input type="text" class="of-time" placeholder="11:00" value="11:00"></label>'+
@@ -903,24 +922,38 @@ function openScheduleForm(){
     '</details>';
 }
 function bindOpenForm(){
-  const form=document.querySelector(".openform"); if(!form) return;
-  const langSel=form.querySelector(".of-lang"), guideSel=form.querySelector(".of-guide");
-  const fillGuides=()=>{ const gs=(GUIDES_BY_LANG||{})[langSel.value]||[];
-    guideSel.innerHTML='<option value="">Not assigned</option>'+gs.map(n=>'<option>'+esc(n)+'</option>').join(""); };
-  langSel.onchange=fillGuides; fillGuides();
-  form.querySelector(".of-open").onclick=async ()=>{
-    const msg=form.querySelector(".of-msg");
-    const dateKey=form.querySelector(".of-date").value;
-    const time=(form.querySelector(".of-time").value||"").trim();
-    const language=langSel.value, guide=guideSel.value;
-    if(!dateKey||!time){ msg.textContent="Pick a date and time."; return; }
-    const btn=form.querySelector(".of-open"); btn.disabled=true; msg.textContent="Opening…"; LAST_EDIT=Date.now();
-    try{
-      const r=await api("assign",{token:store.token,dateKey:dateKey,time:time,language:language,guide:guide,force:"1"});
-      if(!r.ok){ msg.textContent=r.error||"Error"; btn.disabled=false; return; }
-      msg.textContent="Opened ✓"; setTimeout(loadTours,700);
-    }catch(err){ msg.textContent="Network problem"; btn.disabled=false; }
-  };
+  // Two manager panes (3h + SF) can each carry an "Open a schedule" form, so bind
+  // EVERY one, not just the first in the document. Each form's data-sf tells it
+  // which tour type it opens and which guides it offers.
+  document.querySelectorAll(".openform").forEach(form=>{
+    if(form.dataset.bound) return; form.dataset.bound="1";
+    const isSf=form.dataset.sf==="1";
+    const langSel=form.querySelector(".of-lang"), guideSel=form.querySelector(".of-guide");
+    const fillGuides=()=>{ const gs=guidesForType((GUIDES_BY_LANG||{})[langSel.value]||[], isSf);
+      guideSel.innerHTML='<option value="">Not assigned</option>'+gs.map(n=>'<option>'+esc(n)+'</option>').join(""); };
+    langSel.onchange=fillGuides; fillGuides();
+    form.querySelector(".of-open").onclick=async ()=>{
+      const msg=form.querySelector(".of-msg");
+      const dateKey=form.querySelector(".of-date").value;
+      const time=(form.querySelector(".of-time").value||"").trim();
+      const language=langSel.value, guide=guideSel.value;
+      if(!dateKey||!time){ msg.textContent="Pick a date and time."; return; }
+      const btn=form.querySelector(".of-open"); btn.disabled=true; msg.textContent="Opening…"; LAST_EDIT=Date.now();
+      try{
+        const r=await api("assign",{token:store.token,dateKey:dateKey,time:time,language:language,guide:guide,sfExt:isSf?"1":"",force:"1"});
+        if(!r.ok){ msg.textContent=r.error||"Error"; btn.disabled=false; return; }
+        msg.textContent="Opened ✓"; setTimeout(loadTours,700);
+      }catch(err){ msg.textContent="Network problem"; btn.disabled=false; }
+    };
+  });
+}
+/* Keep only the guides who run this tour type (Guides tab "Tour" column, relayed
+   as guideTourTypes). Blank/unknown defaults to 3h, matching the server. */
+function guidesForType(names, isSf){
+  return (names||[]).filter(n=>{
+    const t=(GUIDE_TOUR_TYPES||{})[n]||{threeH:true,sf:false};
+    return isSf ? !!t.sf : !!t.threeH;
+  });
 }
 /* Manager-only: dropdown of guides who SPEAK the tour's language. Picking one
    writes it into the Schedule_<Language> grid in bold (= a management lock). */
@@ -936,7 +969,7 @@ function assignSelect(t, slot){
   const DOT={free:"🟢",overlap:"🟡",busy:"🔴",vacation:"🌴"};
   let opts = (Array.isArray(t.guideOptions)&&t.guideOptions.length)
     ? t.guideOptions.slice()
-    : (t.eligible||GUIDES_BY_LANG[t.language]||[]).map(n=>({name:n,status:""}));
+    : (t.eligible||guidesForType(GUIDES_BY_LANG[t.language]||[], t.sfExt)).map(n=>({name:n,status:""}));
   const g1=(t.assigned&&t.assigned[0])||"", g2=t.secondGuide||"";
   const cur = slot===2 ? g2 : g1;
   const other = slot===2 ? g1 : g2;               // already on the other slot -> not offered here

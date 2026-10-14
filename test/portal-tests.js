@@ -135,6 +135,21 @@ check('the active tab is persisted (rr_tab)', /store\.tab/.test(html) && /rr_tab
 check('switchTab records the choice', /function switchTab\(t\)\{[\s\S]*store\.tab = t;/.test(html), null);
 check('renderAll restores the last tab (no jump back to My tours)', /function restoreTab/.test(html) && /restoreTab\(\);/.test(html), null);
 
+console.log('--- SF tour: managers get three tabs (My tours / 3h tours / SF tours) ---');
+check('an SF tab button and its pane exist', /id="tabSf"/.test(html) && /id="sfPane"/.test(html), null);
+check('the SF tab is hidden by default (managers-only, shown at render)', /id="tabSf" class="tab hidden"/.test(html), null);
+check('switchTab handles the "sf" tab (show/hide its pane)', /\$\("sfPane"\)\.classList\.toggle\("hidden",t!=="sf"\)/.test(html), null);
+check('a non-manager "sf" tab falls back to the schedule tab', /if\(t==="sf" && \$\("tabSf"\)\.classList\.contains\("hidden"\)\) t="sched"/.test(html), null);
+check('managers split the full list by sfExt into 3h + SF panes',
+  /all\.filter\(t=>!t\.sfExt\)/.test(html) && /all\.filter\(t=>t\.sfExt\)/.test(html), null);
+check('the manager tabs are labelled "3h tours" and "SF tours", and the SF tab is shown',
+  /textContent="3h tours"/.test(html) && /textContent="SF tours"/.test(html) && /\$\("tabSf"\)\.classList\.remove\("hidden"\)/.test(html), null);
+check('a non-manager (guide) hides the SF tab', /else \{[\s\S]*renderSchedule[\s\S]*\$\("tabSf"\)\.classList\.add\("hidden"\)/.test(html), null);
+check('the SF "Open a schedule" form passes sfExt to the assign call', /sfExt:isSf\?"1":""/.test(html), null);
+check('each opener is bound by type and every opener is bound (two manager panes)', /querySelectorAll\(".openform"\)/.test(html) && /form\.dataset\.sf==="1"/.test(html), null);
+check('the opener guide list is filtered to the pane\'s tour type', /function guidesForType\(names, isSf\)/.test(html) && /guidesForType\(\(GUIDES_BY_LANG\|\|\{\}\)\[langSel\.value\]/.test(html), null);
+check('a background poll never clobbers an SF-pane dropdown mid-use', /#toursPane,#schedPane,#sfPane/.test(html), null);
+
 console.log('--- Resilient loads: one miss must not show "Can\'t reach the server" ---');
 check('a single failed load is gated (banner only after 2 in a row)', /LOAD_FAILS\s*<\s*2/.test(html), null);
 check('a miss schedules a quiet auto-retry instead of an error', /RETRY_TIMER=setTimeout\(\(\)=>\{ RETRY_TIMER=null; loadTours\("retry"\)/.test(html), null);

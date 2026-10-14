@@ -580,6 +580,60 @@ check('a wrong password does NOT verify', verifyPassword_('titaGorda22', 'nope')
 check('empty stored never authenticates', verifyPassword_('', '') === false && verifyPassword_(null, '') === false, null);
 check('a blank submitted password never authenticates', verifyPassword_('HolaMar', '') === false, null);
 
+console.log('--- SF tour type: Guides "Tour" column gates what each guide sees / is offered ---');
+// parseTourTypes_ (pure): blank defaults to 3h (no sheet edit needed for existing guides).
+check('blank Tour -> 3h only (backward compatible)', parseTourTypes_('').threeH===true && parseTourTypes_('').sf===false, parseTourTypes_(''));
+check('"3h" -> 3h only', parseTourTypes_('3h').threeH===true && parseTourTypes_('3h').sf===false, parseTourTypes_('3h'));
+check('"SF" -> SF only', parseTourTypes_('SF').sf===true && parseTourTypes_('SF').threeH===false, parseTourTypes_('SF'));
+check('"3h/SF" -> both', parseTourTypes_('3h/SF').threeH===true && parseTourTypes_('3h/SF').sf===true, parseTourTypes_('3h/SF'));
+check('"Both" -> both', parseTourTypes_('Both').threeH===true && parseTourTypes_('Both').sf===true, parseTourTypes_('Both'));
+check('unknown value -> 3h (never hide a guide)', parseTourTypes_('???').threeH===true && parseTourTypes_('???').sf===false, parseTourTypes_('???'));
+
+// guideColumns_ / parseGuideRow_: "Tour" is NOT a language column, and it sets tourTypes.
+const hdrSf=['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Tour','Manager','Email','Password'];
+const colsSf=guideColumns_(hdrSf);
+check('"Tour" column excluded from the language range', colsSf.languages.every(l=>l.name!=='Tour'), colsSf.languages.map(l=>l.name));
+check('languages still read correctly alongside a Tour column', colsSf.languages.map(l=>l.name).join()==='English,German,Spanish,French,Italian', colsSf.languages.map(l=>l.name));
+check('tourTypeCol detected at the Tour column', colsSf.tourTypeCol===8, colsSf.tourTypeCol);
+check('SF-only guide parsed (Amalia: sf, not 3h)',
+  (()=>{const a=parseGuideRow_(['Amalia',true,3,true,false,false,false,false,'SF',false,'am@x.com','pw'],colsSf);return a.tourTypes.sf===true&&a.tourTypes.threeH===false;})(), null);
+check('3h guide parsed (Mario)',
+  parseGuideRow_(['Mario',true,3,true,false,false,false,false,'3h',false,'ma@x.com','pw'],colsSf).tourTypes.threeH===true, null);
+
+// visibleShiftsForGuide_: the type gate (SF-only sees only SF; 3h sees only 3h; both sees both).
+const sfGuide={name:'Amalia',languages:{English:true},tourTypes:{threeH:false,sf:true}};
+const h3Guide={name:'Carlos',languages:{English:true},tourTypes:{threeH:true,sf:false}};
+const bothGuide={name:'Flex',languages:{English:true},tourTypes:{threeH:true,sf:true}};
+const sfPool=[
+  {dateKey:tomorrow,minutes:10*60,language:'English',assigned:[],status:'Not assigned',sfExt:false}, // 3h open
+  {dateKey:tomorrow,minutes:11*60,language:'English',assigned:[],status:'Not assigned',sfExt:true},  // SF open
+  {dateKey:tomorrow,minutes:15*60,language:'English',assigned:['Carlos'],status:'OK',sfExt:false}];   // 3h ASSIGNED
+const seenSf=visibleShiftsForGuide_(sfPool,[],sfGuide,false);
+check('SF-only guide sees ONLY SF (not even an assigned 3h tour)', seenSf.length===1 && seenSf[0].sfExt===true, seenSf.map(s=>s.sfExt));
+const seen3h=visibleShiftsForGuide_(sfPool,[],h3Guide,false);
+check('3h guide sees ONLY 3h (never SF)', seen3h.length>0 && seen3h.every(s=>!s.sfExt), seen3h.map(s=>s.sfExt));
+const seenBoth=visibleShiftsForGuide_(sfPool,[],bothGuide,false);
+check('3h/SF guide sees BOTH types', seenBoth.some(s=>s.sfExt) && seenBoth.some(s=>!s.sfExt), seenBoth.map(s=>s.sfExt));
+check('a guide with no tourTypes field defaults to 3h (never hidden)',
+  visibleShiftsForGuide_(sfPool,[],{name:'Old',languages:{English:true}},false).every(s=>!s.sfExt), null);
+check('manager still sees everything regardless of type', visibleShiftsForGuide_(sfPool,[],sfGuide,true).length===sfPool.length, null);
+
+// eligibleGuidesForShift_: an SF card offers only SF-capable guides; a 3h card only 3h-capable.
+const cSf=new __mock.MockSS('control-sf'); SpreadsheetApp._active=cSf; __RRX={};
+const gSf=cSf.insertSheet('Guides');
+gSf.getRange(1,1,4,12).setValues([
+ hdrSf,
+ ['Carlos',true,1,true,false,false,false,false,'3h',   true, 'c@x.com', 'pw'],
+ ['Amalia',true,3,true,false,false,false,false,'SF',   false,'am@x.com','pw'],
+ ['Flex',  true,2,true,false,false,false,false,'3h/SF',false,'f@x.com', 'pw']]);
+const gblSf={English:['Carlos','Amalia','Flex']};
+check('SF shift offers only SF-capable guides (Amalia, Flex)',
+  eligibleGuidesForShift_({dateKey:d3,minutes:11*60,language:'English',sfExt:true},gblSf).slice().sort().join()==='Amalia,Flex',
+  eligibleGuidesForShift_({dateKey:d3,minutes:11*60,language:'English',sfExt:true},gblSf));
+check('3h shift offers only 3h-capable guides (Carlos, Flex)',
+  eligibleGuidesForShift_({dateKey:d3,minutes:10*60,language:'English',sfExt:false},gblSf).slice().sort().join()==='Carlos,Flex',
+  eligibleGuidesForShift_({dateKey:d3,minutes:10*60,language:'English',sfExt:false},gblSf));
+
 console.log('=================================');
 console.log('RESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
