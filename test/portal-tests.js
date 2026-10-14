@@ -132,14 +132,18 @@ check('an unrelated shift keeps its own guide', other.allTours[0].assigned.join(
 
 console.log('--- Manager stays on their tab across reloads ---');
 check('the active tab is persisted (rr_tab)', /store\.tab/.test(html) && /rr_tab/.test(html), null);
-check('switchTab records the choice', /function switchTab\(t\)\{[\s\S]*store\.tab = t;/.test(html), null);
+check('switchTab records the choice', /function switchTab\(t, remember\)\{[\s\S]*store\.tab = want;/.test(html), null);
+check('restoreTab re-applies WITHOUT clobbering the remembered tab (SF survives reload)',
+  /if\(remember!==false\) store\.tab = want;/.test(html) && /function restoreTab\(\)\{ switchTab\(store\.tab \|\| "tours", false\)/.test(html), null);
 check('renderAll restores the last tab (no jump back to My tours)', /function restoreTab/.test(html) && /restoreTab\(\);/.test(html), null);
 
 console.log('--- SF tour: managers get three tabs (My tours / 3h tours / SF tours) ---');
 check('an SF tab button and its pane exist', /id="tabSf"/.test(html) && /id="sfPane"/.test(html), null);
 check('the SF tab is hidden by default (managers-only, shown at render)', /id="tabSf" class="tab hidden"/.test(html), null);
-check('switchTab handles the "sf" tab (show/hide its pane)', /\$\("sfPane"\)\.classList\.toggle\("hidden",t!=="sf"\)/.test(html), null);
-check('a non-manager "sf" tab falls back to the schedule tab', /if\(t==="sf" && \$\("tabSf"\)\.classList\.contains\("hidden"\)\) t="sched"/.test(html), null);
+check('switchTab handles the "sf" tab (show/hide its pane)', /\$\("sfPane"\)\.classList\.toggle\("hidden",v!=="sf"\)/.test(html), null);
+check('a non-manager "sf" tab falls back visually to the schedule tab', /\(want==="sf" && \$\("tabSf"\)\.classList\.contains\("hidden"\)\) \? "sched" : want/.test(html), null);
+check('within a day, tours sort NUMERICALLY by time (9:00 before 11:00, not string order)',
+  /au-bu \|\| \(_mins\(a\.time\)-_mins\(b\.time\)\)/.test(html) && !/localeCompare\(String\(b\.time\)\)/.test(html), null);
 check('managers split the full list by sfExt into 3h + SF panes',
   /all\.filter\(t=>!t\.sfExt\)/.test(html) && /all\.filter\(t=>t\.sfExt\)/.test(html), null);
 check('the manager tabs are labelled "3h tours" and "SF tours", and the SF tab is shown',

@@ -299,7 +299,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-14-sf-tabs";
+const PORTAL_VERSION = "2026-10-14-sf-tab-order";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -569,22 +569,26 @@ $("histCloseBtn").onclick=()=>{ closeHistory(); };
 $("tabTours").onclick=()=>switchTab("tours");
 $("tabSched").onclick=()=>switchTab("sched");
 $("tabSf").onclick=()=>switchTab("sf");
-function switchTab(t){
-  // "sf" only exists for managers (the SF tab is hidden otherwise) — fall back to
-  // the schedule tab if an old remembered "sf" comes back on a non-manager.
-  if(t==="sf" && $("tabSf").classList.contains("hidden")) t="sched";
-  t = (t==="sched") ? "sched" : (t==="sf" ? "sf" : "tours");
-  store.tab = t;                                   // remember across reloads
-  $("tabTours").classList.toggle("active",t==="tours");
-  $("tabSched").classList.toggle("active",t==="sched");
-  $("tabSf").classList.toggle("active",t==="sf");
-  $("toursPane").classList.toggle("hidden",t!=="tours");
-  $("schedPane").classList.toggle("hidden",t!=="sched");
-  $("sfPane").classList.toggle("hidden",t!=="sf");
+function switchTab(t, remember){
+  const want = (t==="sched"||t==="sf") ? t : "tours";
+  // Remember the REAL choice (even "sf") across reloads. restoreTab passes
+  // remember=false so it never OVERWRITES the stored tab while re-applying it —
+  // the SF tab is still hidden before the first manager render, and clobbering it
+  // there is exactly what lost the SF tab on reload.
+  if(remember!==false) store.tab = want;
+  // Visual tab: "sf" only exists for managers (its button is hidden otherwise), so
+  // show the schedule tab instead when SF isn't available — WITHOUT forgetting it.
+  let v = (want==="sf" && $("tabSf").classList.contains("hidden")) ? "sched" : want;
+  $("tabTours").classList.toggle("active",v==="tours");
+  $("tabSched").classList.toggle("active",v==="sched");
+  $("tabSf").classList.toggle("active",v==="sf");
+  $("toursPane").classList.toggle("hidden",v!=="tours");
+  $("schedPane").classList.toggle("hidden",v!=="sched");
+  $("sfPane").classList.toggle("hidden",v!=="sf");
 }
 /* Put the user back on the tab they last used. Called after each render so a
    background refresh never yanks a manager out of All tours. */
-function restoreTab(){ switchTab(store.tab || "tours"); }
+function restoreTab(){ switchTab(store.tab || "tours", false); }   // re-apply WITHOUT clobbering the remembered tab
 
 /* ================== LOAD ================== */
 function showDash(){
@@ -870,6 +874,9 @@ function groupByDay(items){
   const g={}; items.forEach(t=>{ (g[t.dateKey]=g[t.dateKey]||[]).push(t); });
   return Object.keys(g).sort().map(dk=>({dateKey:dk, items:g[dk]}));
 }
+/* Minutes-since-midnight for a time string, so tours sort NUMERICALLY by time.
+   A string compare put "9:00" AFTER "11:00" (because "9" > "1") — the SF mis-order. */
+function _mins(s){ const m=String(s||"").match(/(\d{1,2}):(\d{2})/); return m?(+m[1]*60 + +m[2]):0; }
 function renderTours(tours, paneId, canAssign){
   const pane=$(paneId||"toursPane");
   const seen={}; tours=(tours||[]).filter(t=>{ if(seen[t.id]) return false; seen[t.id]=true; return true; });
@@ -879,11 +886,11 @@ function renderTours(tours, paneId, canAssign){
   let html=opener;
   groupByDay(tours).forEach(day=>{
     html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
-    // Within a day, a tour with guests but no guide sorts to the TOP so it can't be missed.
-    if(canAssign) day.items.sort((a,b)=>{ const au=(!(a.assigned&&a.assigned.length)&&a.bookedGuests>0)?0:1, bu=(!(b.assigned&&b.assigned.length)&&b.bookedGuests>0)?0:1; return au-bu || String(a.time).localeCompare(String(b.time)); });
+    // Within a day, a tour with guests but no guide sorts to the TOP so it can't be
+    // missed; otherwise chronological by start time (_mins, global).
+    if(canAssign) day.items.sort((a,b)=>{ const au=(!(a.assigned&&a.assigned.length)&&a.bookedGuests>0)?0:1, bu=(!(b.assigned&&b.assigned.length)&&b.bookedGuests>0)?0:1; return au-bu || (_mins(a.time)-_mins(b.time)); });
     // Times already running that day per language — the options for a manager's
     // "move to another time" dropdown (plus a "New time…" entry, added per row).
-    const _mins=s=>{ const m=String(s||"").match(/(\d{1,2}):(\d{2})/); return m?(+m[1]*60 + +m[2]):0; };
     // ALL times running that day (any language) — so a move can go back to a time
     // that currently only exists in another language (e.g. 5 PM English) in one
     // step by also picking the language. "＋ New time…" is added per row.
@@ -1512,7 +1519,7 @@ function renderSchedule(rows){
   let html="";
   groupByDay(rows).forEach(day=>{
     html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
-    day.items.sort((a,b)=>String(a.time).localeCompare(String(b.time))).forEach(s=>{
+    day.items.sort((a,b)=>_mins(a.time)-_mins(b.time)).forEach(s=>{
       const miss = !s.assigned.length || (s.status && s.status!=="OK");
       const who = s.assigned.length
         ? s.assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join(" ")
@@ -1570,7 +1577,7 @@ function renderHistory(tours){
       html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
       const dayTimes=[];
       day.items.forEach(t=>{ if(!dayTimes.some(x=>x.time===t.time)) dayTimes.push({time:t.time,timeLabel:t.timeLabel||t.time}); });
-      day.items.sort((a,b)=>String(a.time).localeCompare(String(b.time)));
+      day.items.sort((a,b)=>_mins(a.time)-_mins(b.time));
       // Managers get the editable card (no-show + undo); guides get a read-only card.
       day.items.forEach(t=> html+=tourCard(t, MANAGER, dayTimes));
     });
