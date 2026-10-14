@@ -165,7 +165,9 @@ function pickAutoEligible_(shift, autoOn, guides, byName, assignedByGuide) {
   const freeOf = g => g && g.active && runsType(g) && g.languages[shift.language] === true &&
     !isGuideOnVacation_(g, shift.dateText) &&
     !locked.some(n => n.toLowerCase() === g.name.toLowerCase()) &&
-    !hasConflict_(assignedByGuide[g.name] || [], shift.dateTimeObj);
+    // SF is a short, stackable add-on: the same SF guide may run consecutive SF
+    // slots, so the separation conflict check (for the 3h tour) is skipped for SF.
+    (shift.sfExt || !hasConflict_(assignedByGuide[g.name] || [], shift.dateTimeObj));
   if (!autoOn) {
     const wg = byName[String(shift.weeklyGuide || '').toLowerCase()];
     return freeOf(wg) ? [wg] : [];

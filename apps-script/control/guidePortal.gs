@@ -3377,8 +3377,9 @@ function visibleShiftsForGuide_(shifts, myShifts, guide, isManager) {
     if (s.sfExt ? !types.sf : !types.threeH) return false;
     if (s.assigned && s.assigned.length) return true;          // someone is on it
     if (speaks[s.language] !== true) return false;             // not a language I run
+    if (s.sfExt) return true;                                  // SF is short + stackable -> no separation clash
     const st = shiftStartMs_(s.dateKey, s.minutes);
-    return !myShiftMs.some(ms => Math.abs(ms - st) < sepMs);   // no clash with my own
+    return !myShiftMs.some(ms => Math.abs(ms - st) < sepMs);   // no clash with my own (3h)
   });
 }
 
@@ -3613,7 +3614,11 @@ function applyWeeklyDefaults_(schedule) {
     if (!guide) return;
     const st = shiftStartMs_(s.dateKey, s.minutes);
     const gb = busy[guide.trim().toLowerCase()] || [];
-    if (gb.some(x => Math.abs(x.ms - st) < sepMs)) return;   // guide is really busy nearby -> skip the default
+    // The SF exterior tour is a SHORT add-on: the same SF guide is meant to run
+    // consecutive SF slots (9:00, 11:00, 13:00, 15:00), so the 5h separation that
+    // protects the 3h tour must NOT block the SF weekly default. 3h keeps it.
+    const sep = s.sfExt ? 0 : sepMs;
+    if (sep && gb.some(x => Math.abs(x.ms - st) < sep)) return;   // 3h guide really busy nearby -> skip the default
     s.assigned = [guide];
     s.status = 'OK';
     s.weeklyDefault = true;                             // marker: filled by the weekly pattern

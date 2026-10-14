@@ -155,6 +155,42 @@ check('guideForShift_ returns nobody for a cleared slot (not the weekly default)
 check('the grid reader flags a "Not assigned (cleared)" cell as cleared, plain "Not assigned" as not',
   /cleared/i.test('Not assigned (cleared)')===true && /cleared/i.test('Not assigned')===false, null);
 
+console.log('--- SF weekly default: one SF guide fills CONSECUTIVE SF slots (no 5h separation) ---');
+// Amalia is the SF weekly-default on four slots 2h apart (9/11/13/15). The 5h
+// separation that protects the 3h tour must NOT block the SF add-on, or only the
+// 6h-apart pair (9 + 15) would fill — the exact "missing 11 & 1pm" bug.
+const sfDS = new __mock.MockSS('control-sf-default'); SpreadsheetApp._active = sfDS; __RRX = {};
+sfDS.insertSheet('Guides').getRange(1,1,2,12).setValues([
+  ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Tour','Manager','Email','Password'],
+  ['Amalia', true, 1, true, false, false, false, false, 'SF', false, 'am@x.com','pw']]);
+sfDS.insertSheet('Weekly_Schedule').getRange(1,1,5,11).setValues([
+  ['Day','Time','Language','Tour Type','Guides needed','Active from','Active until','Guide','Hide from availability','Private','Hide from website'],
+  ['Monday','9:00', 'English','SF',1,'','','Amalia','Yes','','Yes'],
+  ['Monday','11:00','English','SF',1,'','','Amalia','Yes','','Yes'],
+  ['Monday','13:00','English','SF',1,'','','Amalia','Yes','','Yes'],
+  ['Monday','15:00','English','SF',1,'','','Amalia','Yes','','Yes']]);
+__RRX = {}; __RRX.weekly = readWeeklySchedule_(sfDS);
+const _sfMon = (function(){ const d=new Date(); d.setHours(12,0,0,0); while(d.getDay()!==1) d.setDate(d.getDate()+1); return Utilities.formatDate(d, Session.getScriptTimeZone(),'yyyy-MM-dd'); })();
+const _sfS = [9,11,13,15].map(h => ({ dateKey:_sfMon, time:h+':00', minutes:h*60, language:'English', private:false, sfExt:true, assigned:[], status:'Not assigned' }));
+applyWeeklyDefaults_(_sfS);
+check('ALL four consecutive SF slots auto-fill the SF guide (not just 9 + 15)',
+  _sfS.every(s => s.assigned.join()==='Amalia'), _sfS.map(s=>s.time+'='+(s.assigned.join()||'—')));
+// Contrast: the 3h tour KEEPS the 5h separation — the same default guide only
+// fills the slots that are >=5h apart.
+const h3DS = new __mock.MockSS('control-3h-sep'); SpreadsheetApp._active = h3DS; __RRX = {};
+h3DS.insertSheet('Guides').getRange(1,1,2,11).setValues([
+  ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Manager','Email','Password'],
+  ['Carlos', true, 1, true, false, false, false, false, false, 'c@x.com','pw']]);
+h3DS.insertSheet('Weekly_Schedule').getRange(1,1,3,10).setValues([
+  ['Day','Time','Language','Guides needed','Active from','Active until','Guide','Hide from availability','Private','Hide from website'],
+  ['Monday','9:00', 'English',1,'','','Carlos','','',''],
+  ['Monday','11:00','English',1,'','','Carlos','','','']]);
+__RRX = {}; __RRX.weekly = readWeeklySchedule_(h3DS);
+const _h3S = [9,11].map(h => ({ dateKey:_sfMon, time:h+':00', minutes:h*60, language:'English', private:false, sfExt:false, assigned:[], status:'Not assigned' }));
+applyWeeklyDefaults_(_h3S);
+check('3h STILL separation-blocks the same default guide 2h apart (9 fills, 11 does not)',
+  _h3S[0].assigned.join()==='Carlos' && _h3S[1].assigned.length===0, _h3S.map(s=>s.time+'='+(s.assigned.join()||'—')));
+
 console.log('--- Availability horizon: rolling window, extended to the seasonal end date ---');
 // mondayThis well before AVAILABILITY_UNTIL (2026-12-31): project out to the week
 // containing Dec 31, not just the 4-week rolling window.
