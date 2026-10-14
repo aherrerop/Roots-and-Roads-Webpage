@@ -513,6 +513,21 @@ const stGone = !(apiTours_({ token: token, days: 10 }).allTours || []).some(s =>
   (s.bookings || []).some(b => b.bookingId === 'TEST-ENGLISH-ST1'));
 check('cleanup removes the Testing booking from the portal + feed', stGone, null);
 
+console.log('--- Near-future Portal feed: portal reads the pre-built tab (fast path), falls back live ---');
+const nfBuild = rebuildNearFuturePortalFeed_();
+check('rebuildNearFuturePortalFeed_ builds a non-empty tab (sheet-only)', nfBuild && nfBuild.ok === true && nfBuild.n > 0, nfBuild);
+check('the "near-future Portal feed" tab exists in the BookingSheet', (function () { const t = booking.getSheetByName('near-future Portal feed'); return !!t && t.getLastRow() > 1; })(), null);
+const nfTours = apiTours_({ token: token, days: 10 });
+const nfShift = (nfTours.allTours || []).find(s => s.dateKey === DATE && s.time === '10:00' && s.language === 'English' && (s.bookings || []).some(b => b.bookingId === 'GYGE2E001'));
+check('apiTours_ surfaces the booking via the pre-built tab', !!nfShift, nfShift && nfShift.bookings.map(b => b.bookingId));
+check('the FAST path was used (nfpf timing set, no cold asm.build)', nfTours.timings && typeof nfTours.timings.nfpf === 'number' && nfTours.timings['asm.build'] === undefined, nfTours.timings);
+// A change bumps the global version -> the tab is stale -> live build (still correct).
+bumpCacheVersion_();
+const nfTours2 = apiTours_({ token: token, days: 10 });
+const nfShift2 = (nfTours2.allTours || []).find(s => s.dateKey === DATE && s.time === '10:00' && s.language === 'English' && (s.bookings || []).some(b => b.bookingId === 'GYGE2E001'));
+check('after a change the stale tab is bypassed; live build still returns the tour', !!nfShift2, nfShift2 && nfShift2.bookings.map(b => b.bookingId));
+check('the fallback did a live build (asm.build timing set)', nfTours2.timings && typeof nfTours2.timings['asm.build'] === 'number', nfTours2.timings);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

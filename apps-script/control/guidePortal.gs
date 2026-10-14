@@ -881,9 +881,22 @@ function apiTours_(p) {
     // ever exceeds the cache cap, cachedRead_ falls back to a live build.
     schedule = _t('assemble', function () {
       return cachedRead_('asm:' + offerHorizonDays, PORTAL.CACHE_TTL, function () {
-        // Sub-phase timings (only populated on a cold miss — a warm poll skips
-        // this whole function) so the Portal Log shows WHICH part of assemble is
-        // the cost, not just the total. Keys sort under `assemble` in the detail.
+        // FAST PATH: read the pre-built "near-future Portal feed" tab when it is
+        // CURRENT (built at the same global version = no assign/move/overlay change
+        // since). It holds the full horizon; slice to this load's window. This is
+        // what makes a regular load AND "Load more" fast — no cold assembly, so the
+        // 13s throttle spike never lands on a guide's load. Bookings/check-ins/counts
+        // are still attached per-request below from the FRESH feed, so a new booking
+        // at an existing slot shows without a rebuild.
+        const pre = _t('nfpf', function () { return readNearFuturePortalFeed_(); });
+        if (pre && pre.ver === String(cacheVersion_()) && pre.schedule.length) {
+          const maxKey = addDaysKey_(today, offerHorizonDays);
+          return pre.schedule.filter(s =>
+            s.dateKey >= today && s.dateKey <= maxKey && !shiftIsOver_(s.dateKey, s.minutes));
+        }
+        // FALLBACK (tab absent / unreadable / stale right after a change): the live
+        // windowed build — identical to the pre-tab behaviour, so this can never
+        // regress. Sub-phase timings show WHICH part costs, only on this cold path.
         const s = _t('asm.build', function () { return buildScheduleFromFeed_(bookingsByKey, offerHorizonDays); });
         _t('asm.weekly', function () { appendWeeklyScheduleShifts_(s, offerHorizonDays); return 0; });
         _t('asm.cleared', function () { applyClearedOverlay_(s); return 0; });   // manager clears survive the feed path
@@ -3635,6 +3648,86 @@ function buildScheduleFromFeed_(feedIndex, maxDaysAhead) {
     });
   });
   return Object.keys(byKey).map(k => byKey[k]);
+}
+
+/**
+ * The full assembly pipeline (the expensive part of a load), in ONE place so the
+ * live portal fallback and the pre-built "near-future Portal feed" tab can never
+ * drift. Pure over already-read data (feed + Weekly_Schedule + overlays); NO Gmail.
+ */
+function assembleSchedule_(feed, horizonDays) {
+  const s = buildScheduleFromFeed_(feed, horizonDays);
+  appendWeeklyScheduleShifts_(s, horizonDays);
+  applyClearedOverlay_(s);
+  applyWeeklyDefaults_(s);
+  applySecondGuideOverlay_(s);
+  applyNoShowOverlay_(s);
+  sortSchedule_(s);
+  return s;
+}
+
+/* ============== NEAR-FUTURE PORTAL FEED (pre-built shift structure) ==============
+ * The portal's heavy per-load cost is ASSEMBLING the shift list (build from feed +
+ * expand recurring offers + overlays + sort). Under Apps Script CPU throttling that
+ * 1.4s spikes to 13s and times loads out. So we pre-build the full-horizon shift
+ * STRUCTURE into a tab IN THE BOOKINGSHEET and the portal just READS it (fast),
+ * slicing to the load's window — regular loads and "Load more" alike. Built ONLY
+ * from sheet data (the Portal Feed + Weekly_Schedule + overlays) — it NEVER reads
+ * Gmail, so it adds no email-poll cost. A ~5-min trigger (installed by
+ * installNearFutureFeedTrigger) keeps it current with new bookings; a load right
+ * after a manager change falls back to a live (windowed) build until it catches up.
+ */
+var NFPF_TAB = 'near-future Portal feed';
+
+function rebuildNearFuturePortalFeed_() {
+  __RRX = {};                                  // fresh per-run memo (trigger context)
+  const feed = readPortalFeed_();              // SHEET read only — never Gmail
+  if (!feed) return { ok: false, error: 'no Portal Feed to build from' };
+  const ver = String(cacheVersion_());
+  const schedule = assembleSchedule_(feed, PORTAL.UPCOMING_DAYS);   // full horizon
+
+  const ss = bookingSS_();
+  let sh = ss.getSheetByName(NFPF_TAB);
+  if (!sh) sh = ss.insertSheet(NFPF_TAB);
+  const rows = [['Date', 'Time', 'Language', 'Guide', 'Shift (JSON — do not edit)']];
+  schedule.forEach(shift => {
+    rows.push([shift.dateKey, shift.timeLabel || shift.time, shift.language,
+      (shift.assigned || []).join(', '), JSON.stringify(shift)]);
+  });
+  const oldRows = sh.getLastRow();
+  if (oldRows > 0) sh.getRange(1, 1, oldRows, Math.max(5, sh.getLastColumn())).clearContent();
+  sh.getRange(1, 1, rows.length, 5).setValues(rows);
+  try {
+    PropertiesService.getScriptProperties().setProperty('NFPF_BUILT',
+      JSON.stringify({ ver: ver, at: Date.now(), n: schedule.length }));
+  } catch (e) { /* stamp best-effort */ }
+  return { ok: true, n: schedule.length, ver: ver };
+}
+
+/** Read the pre-built tab -> { schedule, ver } (the ver it was built at), or null
+ *  when absent/empty/unreadable. Fail-open: any problem returns null -> live build. */
+function readNearFuturePortalFeed_() {
+  try {
+    const sh = bookingSS_().getSheetByName(NFPF_TAB);
+    if (!sh || sh.getLastRow() < 2) return null;
+    const jsons = sh.getRange(2, 5, sh.getLastRow() - 1, 1).getValues();   // col E = Shift JSON
+    const schedule = [];
+    jsons.forEach(r => { try { const o = JSON.parse(r[0]); if (o && o.dateKey) schedule.push(o); } catch (e) { /* skip a bad row */ } });
+    if (!schedule.length) return null;
+    let meta = null;
+    try { meta = JSON.parse(PropertiesService.getScriptProperties().getProperty('NFPF_BUILT') || 'null'); } catch (e) {}
+    return { schedule: schedule, ver: meta ? String(meta.ver) : null };
+  } catch (e) { return null; }
+}
+
+/** Install the ~5-min rebuild trigger (run once from the editor). Safe to re-run. */
+function installNearFutureFeedTrigger() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'rebuildNearFuturePortalFeed_') { try { ScriptApp.deleteTrigger(t); } catch (e) {} }
+  });
+  ScriptApp.newTrigger('rebuildNearFuturePortalFeed_').timeBased().everyMinutes(5).create();
+  rebuildNearFuturePortalFeed_();              // build it now so the portal reads it immediately
+  return 'near-future Portal feed trigger installed (every 5 min) + built once.';
 }
 
 /**
