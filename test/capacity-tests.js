@@ -180,53 +180,56 @@ GmailApp.search = _search;
 check('a digest with a still-upcoming tour is KEPT', digestMixed.trashed === false, digestMixed.trashed);
 check('a digest whose tours have ALL passed is trashed', digestAllPast.trashed === true, digestAllPast.trashed);
 
-console.log('--- PRIVATE alerts: a private booking -> email to close the other privates at that slot ---');
+console.log('--- PRIVATE alerts: ONE email PER private tour, concise subject (source/date/time) ---');
 const resetPriv = () => PropertiesService.getScriptProperties().deleteProperty(RNR.PRIVATE_ALERT_PROP);
 resetPriv(); sent = [];
 setFeed([
-  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private tour', name: 'Smith' },
-  { time: '10:30 AM', lang: 'Spanish', source: 'Viator', adults: 3, notes: 'Private', name: 'Lopez' },   // same slot, other language
-  { time: '5:00 PM',  lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private', name: 'Jones' },
-  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 14 }                              // a REGULAR tour -> not a private alert
+  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private tour', name: 'Smith', id: 'P-RR' },  // main GYG
+  { time: '10:30 AM', lang: 'Spanish', source: 'GYG',          adults: 3, notes: 'Private', name: 'Lopez', id: 'P-SS' },       // 2nd GYG account
+  { time: '5:00 PM',  lang: 'English', source: 'Viator',       adults: 2, notes: 'Private', name: 'Jones', id: 'P-V' },
+  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 14, id: 'REG-1' }                                        // REGULAR -> not a private alert
 ]);
-const pslots = readUpcomingPrivateSlots_();
-check('private slots are grouped by day+time (across languages)', pslots[D + '|10:30 AM'] && pslots[D + '|10:30 AM'].bookings.length === 2, pslots[D + '|10:30 AM']);
-check('a second private slot at another time is its own group', pslots[D + '|5:00 PM'] && pslots[D + '|5:00 PM'].bookings.length === 1, pslots[D + '|5:00 PM']);
-check('the regular (non-private) booking is NOT a private slot', !Object.values(pslots).some(s => s.bookings.some(b => b.people === 14)), Object.keys(pslots));
+const pbk = readUpcomingPrivateBookings_();
+check('private bookings = one entry PER tour (3 privates, regular excluded)', pbk.length === 3 && !pbk.some(b => b.people === 14), pbk.map(b => b.bookingId));
 
 privateBookingAlerts_();
-check('one alert per private slot (two slots -> digest, one email)', sent.length === 1, sent.map(s => s.subject));
-const psub = (sent[0] || {}).subject || '';
-check('digest subject names the private close-the-others action', /private tours booked/i.test(psub) && /close the other private tours/i.test(psub), psub);
-check('the private alert goes to the internal manager address', (sent[0] || {}).to === RNR.INTERNAL_ALERT_TO, sent[0] && sent[0].to);
-const pbody = (sent[0] || {}).body || '';
-check('body lists both slots with their bookings', /10:30 AM/.test(pbody) && /Smith/.test(pbody) && /Lopez/.test(pbody) && /5:00 PM/.test(pbody) && /Jones/.test(pbody), pbody);
-check('body carries a removal marker per slot (for the cleanup)', (pbody.match(/after the tour runs:/g) || []).length === 2, pbody);
+check('ONE email per private tour (3 privates -> 3 emails, no digest)', sent.length === 3, sent.map(s => s.subject));
+const subs = sent.map(s => s.subject);
+const dm = Utilities.formatDate(new Date(D + 'T12:00:00'), 'Europe/Madrid', 'dd/MM');
+check('subject format: "Close Private Tours, GYG_RR hired on DD/MM at HH:MM"',
+  subs.some(x => x === 'Close Private Tours, GYG_RR hired on ' + dm + ' at 10:30'), subs);
+check('source labels map: GYG_RR (main), GYG_SS (2nd account), Viator',
+  subs.some(x => /GYG_RR/.test(x)) && subs.some(x => /GYG_SS/.test(x)) && subs.some(x => /Viator/.test(x)), subs);
+check('time shown 24h (5:00 PM -> 17:00)', subs.some(x => /at 17:00$/.test(x)), subs);
+check('every private email goes to the internal manager address', sent.every(s => s.to === RNR.INTERNAL_ALERT_TO), sent.map(s => s.to));
+check('body is short (two content lines) + a removal marker', sent.every(s => (s.body.match(/after the tour runs:/g) || []).length === 1 && s.body.split('\n').filter(Boolean).length <= 3), sent.map(s => s.body));
 
 sent = [];
 privateBookingAlerts_();                                 // same feed, second pass
-check('fires ONCE: a re-run does NOT re-alert the same private slots', sent.length === 0, sent.map(s => s.subject));
+check('fires ONCE per booking: a re-run does NOT re-alert', sent.length === 0, sent.map(s => s.subject));
 
-// Cancel the 5 PM private (remove it) -> the 10:30 slot stays alerted, nothing new.
+// Cancel P-V (remove it); the others stay alerted, nothing new.
 setFeed([
-  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private tour', name: 'Smith' }
+  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private tour', name: 'Smith', id: 'P-RR' },
+  { time: '10:30 AM', lang: 'Spanish', source: 'GYG',          adults: 3, notes: 'Private', name: 'Lopez', id: 'P-SS' }
 ]);
 sent = [];
 privateBookingAlerts_();
-check('removing a private slot does not re-alert the one still booked', sent.length === 0, sent.map(s => s.subject));
-// Re-book a private at 5 PM -> re-alert (only that slot).
+check('removing a private booking does not re-alert the ones still booked', sent.length === 0, sent.map(s => s.subject));
+// A NEW private (new id) re-alerts just that one.
 setFeed([
-  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private tour', name: 'Smith' },
-  { time: '5:00 PM',  lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private', name: 'NewPriv' }
+  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private tour', name: 'Smith', id: 'P-RR' },
+  { time: '10:30 AM', lang: 'Spanish', source: 'GYG',          adults: 3, notes: 'Private', name: 'Lopez', id: 'P-SS' },
+  { time: '1:00 PM',  lang: 'English', source: 'Viator',       adults: 2, notes: 'Private', name: 'NewPriv', id: 'P-NEW' }
 ]);
 sent = [];
 privateBookingAlerts_();
-check('a NEW private at a previously-cleared slot re-alerts (single email, that slot only)',
-  sent.length === 1 && /5:00 PM/.test((sent[0] || {}).subject + (sent[0] || {}).body) && !/10:30/.test((sent[0] || {}).subject), sent.map(s => s.subject));
+check('a NEW private booking re-alerts (single email, that booking only)',
+  sent.length === 1 && /at 13:00$/.test(sent[0].subject) && /Viator/.test(sent[0].subject), sent.map(s => s.subject));
 
 console.log('--- PRIVATE alert cleanup shares the capacity cleanup (one search) ---');
 const mkPriv = (dk, t) => ({ trashed: false,
-  getFirstMessageSubject: () => '🔒 PRIVATE booked · x ' + t + ' — close the other private tours at this slot',
+  getFirstMessageSubject: () => 'Close Private Tours, GYG_RR hired on 27/10 at ' + t,
   getMessages: () => [makeFakeMsg_('priv', 'This alert is removed automatically after the tour runs: ' + dk + ' ' + t + '.')],
   moveToTrash: function () { this.trashed = true; } });
 const privPast = mkPriv(dayKey(-1), '10:30 AM'), privFuture = mkPriv(dayKey(5), '10:30 AM');
