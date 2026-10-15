@@ -381,6 +381,11 @@ const RNR = {
   // Script Property holding the JSON map { tourKey: peopleWhenAlerted } of tours
   // already alerted, so we never spam the same full tour every 5 minutes.
   CAPACITY_ALERT_PROP: 'rnr_capacity_alerts_v1',
+  // PRIVATE-TOUR ALERTS: a private tour takes the whole slot, so when one is booked
+  // management must CLOSE the other private tours at that same day+time (so a 2nd
+  // private can't be booked for the same slot with no guide free). Fires ONCE per
+  // day+time slot; re-arms if the private is cancelled and a new one is booked.
+  PRIVATE_ALERT_PROP: 'rnr_private_alerts_v1',
 
   INTERNAL_ALERT_TO: 'rootsandroadstours@gmail.com',
 
@@ -728,9 +733,15 @@ function runBookingCore_(skipProcessed) {
     //    can never break the booking pipeline.
     runPhase_('capacityAlerts', capacityAlerts_);
 
-    // 7b. CLEAN UP STALE ALERTS: trash a full-tour alert once its tour has run.
-    //     AUDIT-ONLY (it does a Gmail search every pass): housekeeping that does
-    //     not need the 5-min cadence, and keeping Gmail calls off the fast run
+    // 7a. PRIVATE-TOUR ALERTS: when a private tour is booked at a day+time, email
+    //     management ONCE to close the OTHER private tours at that slot (a private
+    //     takes the whole slot). Reads the same feed; MailApp-send only, no Gmail
+    //     read-quota cost on the fast run.
+    runPhase_('privateAlerts', privateBookingAlerts_);
+
+    // 7b. CLEAN UP STALE ALERTS: trash a full-tour OR private alert once its tour
+    //     has run. AUDIT-ONLY (it does a Gmail search every pass): housekeeping that
+    //     does not need the 5-min cadence, and keeping Gmail calls off the fast run
     //     protects the daily Gmail quota (a quota exhaustion stalls ALL processing).
     runPhase_('capacityAlertCleanup', cleanupExpiredCapacityAlerts_, !RNR_SKIP_PROCESSED_);
 
@@ -4098,14 +4109,19 @@ function sendCapacityDigestEmail_(list, thresh) {
 function cleanupExpiredCapacityAlerts_() {
   let threads;
   try {
-    threads = GmailApp.search('subject:"2nd guide" "after the tour runs" newer_than:400d', 0, 50) || [];
+    // One search covers BOTH full-tour and private alerts — they share the
+    // "after the tour runs: <date> <time>" body marker. The subject check below
+    // guarantees we only ever trash our own alerts.
+    threads = GmailApp.search('"after the tour runs" newer_than:400d', 0, 80) || [];
   } catch (e) { return; }
 
   const now = Date.now();
   threads.forEach(thread => {
     try {
       const subject = thread.getFirstMessageSubject() || '';
-      if (!/close or add (?:a )?2nd guide/i.test(subject)) return;   // our capacity alerts ONLY
+      // our capacity alerts ("… close or add a 2nd guide") OR our private alerts
+      // ("… close the other private tours …") ONLY — never a real booking email.
+      if (!/close or add (?:a )?2nd guide/i.test(subject) && !/close the other private tours/i.test(subject)) return;
 
       let bodyText = '';
       try { bodyText = thread.getMessages().map(m => getBestMessageText_(m)).join('\n'); } catch (e) { bodyText = ''; }
@@ -4123,6 +4139,134 @@ function cleanupExpiredCapacityAlerts_() {
       if (now >= Math.max.apply(null, whens)) safeTrash_(thread);
     } catch (e) { /* best-effort; a leftover alert is harmless */ }
   });
+}
+
+
+/******************************************************
+ * 11c. PRIVATE-TOUR ALERTS  (a private is booked -> close the others at that slot)
+ ******************************************************/
+
+/**
+ * Group every upcoming PRIVATE booking in the Portal Feed by day+time slot
+ * (across languages — a private at 10:30 takes the only guide that slot, whatever
+ * the language). Returns { "date|time" -> {dateKey, time, bookings:[...]} }.
+ * Kept separate from readUpcomingTourGroups_ (which EXCLUDES private) so it is
+ * unit-testable without sending mail.
+ */
+function readUpcomingPrivateSlots_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(RNR.SHEETS.PORTAL_FEED);
+  const out = {};
+  if (!sh || sh.getLastRow() < 2) return out;
+  const H = RNR.PORTAL_FEED_HEADERS;
+  const v = sh.getRange(2, 1, sh.getLastRow() - 1, H.length).getValues();
+  v.forEach(r => {
+    if (String(r[15] || '').trim().toLowerCase() === 'shift') return;   // 0-person placeholder
+    const dateKey = String(r[0] || '').trim();
+    const time = String(r[1] || '').trim();
+    if (!dateKey || !time) return;
+    const source = String(r[7] || '').trim();
+    const isSf = bookingIsSfExtSource_(source);
+    const isPriv = !isSf && /privat/i.test(String(r[10] || ''));
+    if (!isPriv) return;                                 // PRIVATE bookings only
+    const key = dateKey + '|' + time;
+    const s = out[key] || (out[key] = { key, dateKey, time, bookings: [] });
+    s.bookings.push({
+      language: String(r[2] || '').trim(),
+      name: String(r[3] || '').trim(),
+      source: source,
+      people: (Number(r[5] || 0) || 0) + (Number(r[6] || 0) || 0),
+      guide: String(r[14] || '').trim()
+    });
+  });
+  return out;
+}
+
+function readPrivateAlertState_() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(RNR.PRIVATE_ALERT_PROP);
+    const o = raw ? JSON.parse(raw) : {};
+    return (o && typeof o === 'object') ? o : {};
+  } catch (e) { return {}; }
+}
+function writePrivateAlertState_(obj) {
+  try {
+    PropertiesService.getScriptProperties().setProperty(RNR.PRIVATE_ALERT_PROP, JSON.stringify(obj || {}));
+  } catch (e) { logError_('private alert state write failed', e, ''); }
+}
+
+/**
+ * Email management ONCE, the moment a private tour appears at a day+time slot, so
+ * they can CLOSE the other private tours at that slot (a private takes the whole
+ * slot — one guide). Fires once per slot; a slot with no private booking drops out
+ * of the state, so cancelling then re-booking a private re-alerts. Mirrors
+ * capacityAlerts_ (persist only AFTER a successful send, so a mail hiccup retries
+ * instead of silently dropping the alert). MailApp send only — no Gmail read quota.
+ */
+function privateBookingAlerts_() {
+  const slots = readUpcomingPrivateSlots_();
+  const prev = readPrivateAlertState_();
+  const next = {};
+  const crossed = [];
+  Object.keys(slots).forEach(key => {
+    if (prev[key] == null) crossed.push(slots[key]);   // first private at this slot (or re-armed)
+    next[key] = true;                                   // remember we've alerted for this slot
+  });
+  if (crossed.length) {
+    crossed.sort((a, b) => (a.dateKey + a.time).localeCompare(b.dateKey + b.time));
+    if (crossed.length === 1) sendPrivateAlertEmail_(crossed[0]);
+    else sendPrivateDigestEmail_(crossed);
+  }
+  writePrivateAlertState_(next);   // slots with no private now drop out -> re-arm later
+  return crossed.length;
+}
+
+/** One private slot, all the key info in the subject:
+ *  🔒 PRIVATE booked · {date} {time} — close the other private tours at this slot */
+function sendPrivateAlertEmail_(s) {
+  const subject = '🔒 PRIVATE booked · ' + tourDayLabel_(s.dateKey) + ' ' + s.time +
+                  ' — close the other private tours at this slot';
+  MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: privateAlertBody_(s) });
+}
+
+function privateAlertBody_(s) {
+  const L = [];
+  L.push('A PRIVATE tour has been booked at this day/time. A private tour takes the whole');
+  L.push('slot (one guide), so CLOSE the OTHER private tours at this same day + time');
+  L.push('(pause their availability on the platforms / website) — otherwise a second private');
+  L.push('could be booked for the same slot with no guide free.');
+  L.push('');
+  L.push('Slot:  ' + tourDayLabel_(s.dateKey) + ' at ' + s.time);
+  L.push('');
+  L.push('Private booking(s) already at this slot (' + s.bookings.length + '):');
+  s.bookings.slice().sort((a, b) => b.people - a.people).forEach(b =>
+    L.push('  ' + (b.name || '(no name)') + ' — ' + b.people + ' (' + (b.language || '?') +
+           ', ' + (b.source || '?') + ')' + (b.guide ? ' — guide: ' + b.guide : '')));
+  L.push('');
+  L.push('You will not be alerted again for this slot unless the private is cancelled and a new one is booked.');
+  L.push('');
+  // Machine-readable marker: cleanupExpiredCapacityAlerts_ reads the ISO date + time
+  // back from here and trashes this alert once the tour has run.
+  L.push('This alert is removed automatically after the tour runs: ' + s.dateKey + ' ' + s.time + '.');
+  return L.join('\n');
+}
+
+/** Several private slots crossed in one pass -> one digest, not a burst. */
+function sendPrivateDigestEmail_(list) {
+  const subject = '🔒 ' + list.length + ' private tours booked — close the other private tours at each slot';
+  const blocks = list.map(s => {
+    const who = s.bookings.map(b => (b.name || '(no name)')).join(', ');
+    return '• ' + tourDayLabel_(s.dateKey) + ' ' + s.time + ' — ' + s.bookings.length +
+           ' private booking(s): ' + who;
+  });
+  const markers = list.map(s =>
+    'This alert is removed automatically after the tour runs: ' + s.dateKey + ' ' + s.time + '.');
+  const body = list.length + ' private tours were booked. A private takes the whole slot, so close the OTHER ' +
+    'private tours at each day + time below (pause their availability on the platforms / website):\n\n' +
+    blocks.join('\n') +
+    '\n\n(One alert per slot — they will not repeat unless the private is cancelled and re-booked.)' +
+    '\n\n' + markers.join('\n');
+  MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: body });
 }
 
 

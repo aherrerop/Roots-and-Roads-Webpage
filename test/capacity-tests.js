@@ -180,6 +180,62 @@ GmailApp.search = _search;
 check('a digest with a still-upcoming tour is KEPT', digestMixed.trashed === false, digestMixed.trashed);
 check('a digest whose tours have ALL passed is trashed', digestAllPast.trashed === true, digestAllPast.trashed);
 
+console.log('--- PRIVATE alerts: a private booking -> email to close the other privates at that slot ---');
+const resetPriv = () => PropertiesService.getScriptProperties().deleteProperty(RNR.PRIVATE_ALERT_PROP);
+resetPriv(); sent = [];
+setFeed([
+  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private tour', name: 'Smith' },
+  { time: '10:30 AM', lang: 'Spanish', source: 'Viator', adults: 3, notes: 'Private', name: 'Lopez' },   // same slot, other language
+  { time: '5:00 PM',  lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private', name: 'Jones' },
+  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 14 }                              // a REGULAR tour -> not a private alert
+]);
+const pslots = readUpcomingPrivateSlots_();
+check('private slots are grouped by day+time (across languages)', pslots[D + '|10:30 AM'] && pslots[D + '|10:30 AM'].bookings.length === 2, pslots[D + '|10:30 AM']);
+check('a second private slot at another time is its own group', pslots[D + '|5:00 PM'] && pslots[D + '|5:00 PM'].bookings.length === 1, pslots[D + '|5:00 PM']);
+check('the regular (non-private) booking is NOT a private slot', !Object.values(pslots).some(s => s.bookings.some(b => b.people === 14)), Object.keys(pslots));
+
+privateBookingAlerts_();
+check('one alert per private slot (two slots -> digest, one email)', sent.length === 1, sent.map(s => s.subject));
+const psub = (sent[0] || {}).subject || '';
+check('digest subject names the private close-the-others action', /private tours booked/i.test(psub) && /close the other private tours/i.test(psub), psub);
+check('the private alert goes to the internal manager address', (sent[0] || {}).to === RNR.INTERNAL_ALERT_TO, sent[0] && sent[0].to);
+const pbody = (sent[0] || {}).body || '';
+check('body lists both slots with their bookings', /10:30 AM/.test(pbody) && /Smith/.test(pbody) && /Lopez/.test(pbody) && /5:00 PM/.test(pbody) && /Jones/.test(pbody), pbody);
+check('body carries a removal marker per slot (for the cleanup)', (pbody.match(/after the tour runs:/g) || []).length === 2, pbody);
+
+sent = [];
+privateBookingAlerts_();                                 // same feed, second pass
+check('fires ONCE: a re-run does NOT re-alert the same private slots', sent.length === 0, sent.map(s => s.subject));
+
+// Cancel the 5 PM private (remove it) -> the 10:30 slot stays alerted, nothing new.
+setFeed([
+  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private tour', name: 'Smith' }
+]);
+sent = [];
+privateBookingAlerts_();
+check('removing a private slot does not re-alert the one still booked', sent.length === 0, sent.map(s => s.subject));
+// Re-book a private at 5 PM -> re-alert (only that slot).
+setFeed([
+  { time: '10:30 AM', lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private tour', name: 'Smith' },
+  { time: '5:00 PM',  lang: 'English', source: 'GetYourGuide', adults: 2, notes: 'Private', name: 'NewPriv' }
+]);
+sent = [];
+privateBookingAlerts_();
+check('a NEW private at a previously-cleared slot re-alerts (single email, that slot only)',
+  sent.length === 1 && /5:00 PM/.test((sent[0] || {}).subject + (sent[0] || {}).body) && !/10:30/.test((sent[0] || {}).subject), sent.map(s => s.subject));
+
+console.log('--- PRIVATE alert cleanup shares the capacity cleanup (one search) ---');
+const mkPriv = (dk, t) => ({ trashed: false,
+  getFirstMessageSubject: () => '🔒 PRIVATE booked · x ' + t + ' — close the other private tours at this slot',
+  getMessages: () => [makeFakeMsg_('priv', 'This alert is removed automatically after the tour runs: ' + dk + ' ' + t + '.')],
+  moveToTrash: function () { this.trashed = true; } });
+const privPast = mkPriv(dayKey(-1), '10:30 AM'), privFuture = mkPriv(dayKey(5), '10:30 AM');
+GmailApp.search = () => [privPast, privFuture];
+cleanupExpiredCapacityAlerts_();
+GmailApp.search = _search;
+check('an expired PRIVATE alert is trashed by the shared cleanup', privPast.trashed === true, privPast.trashed);
+check('an upcoming PRIVATE alert is kept', privFuture.trashed === false, privFuture.trashed);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
