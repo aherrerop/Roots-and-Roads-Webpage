@@ -3943,6 +3943,20 @@ function tourDayLabel_(dateKey) {
   return Utilities.formatDate(d, 'Europe/Madrid', 'EEE d MMM');
 }
 
+/** A Portal Feed DATE cell -> "yyyy-MM-dd". Sheets returns the column as a real
+ *  Date object in production (text only in unit tests), so normalise both — else
+ *  a date like "Thu Oct 15 2026 00:00:00 GMT+0200" leaks into the subject.
+ *  Built from the Date's components (not Utilities.formatDate) so it is robust. */
+function feedYmd_(v) {
+  const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  if (v instanceof Date && !isNaN(v.getTime())) return ymd(v);
+  const s = String(v || '').trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);           // already "yyyy-MM-dd[...]"
+  if (m) return m[0];
+  const d = new Date(s);                                  // last resort: a raw date string
+  return isNaN(d.getTime()) ? s : ymd(d);
+}
+
 /**
  * Group every upcoming REAL booking in the Portal Feed into its tour card —
  * keyed date|time|language|variant, exactly like the portal (regular "3h" and
@@ -3961,8 +3975,8 @@ function readUpcomingTourGroups_() {
   const v = sh.getRange(2, 1, sh.getLastRow() - 1, H.length).getValues();
   v.forEach(r => {
     if (String(r[15] || '').trim().toLowerCase() === 'shift') return;   // 0-person placeholder
-    const dateKey = String(r[0] || '').trim();
-    const time = String(r[1] || '').trim();
+    const dateKey = feedYmd_(r[0]);                      // Sheets returns the date as a Date object in prod
+    const time = normalizeTime_(r[1]);
     const language = String(r[2] || '').trim();
     if (!dateKey || !time) return;
     const source = String(r[7] || '').trim();
@@ -4161,8 +4175,8 @@ function readUpcomingPrivateBookings_() {
   const v = sh.getRange(2, 1, sh.getLastRow() - 1, H.length).getValues();
   v.forEach(r => {
     if (String(r[15] || '').trim().toLowerCase() === 'shift') return;   // 0-person placeholder
-    const dateKey = String(r[0] || '').trim();
-    const time = String(r[1] || '').trim();
+    const dateKey = feedYmd_(r[0]);                      // Sheets returns the date as a Date object in prod
+    const time = normalizeTime_(r[1]);                   // -> "10:30 AM" (handles a Date cell too)
     const bookingId = String(r[9] || '').trim();
     if (!dateKey || !time || !bookingId) return;
     const source = String(r[7] || '').trim();
@@ -4205,10 +4219,10 @@ function privateSourceLabel_(source) {
   if (s === RNR.SOURCE.VIATOR) return 'Viator';
   return s || '?';
 }
-/** yyyy-MM-dd -> "27/10" (day/month). */
+/** A date (yyyy-MM-dd, Date object, or raw string) -> "27/10" (day/month). */
 function privateDateDM_(dateKey) {
-  const d = new Date(String(dateKey) + 'T12:00:00');
-  return isNaN(d.getTime()) ? String(dateKey || '') : Utilities.formatDate(d, 'Europe/Madrid', 'dd/MM');
+  const m = feedYmd_(dateKey).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? (m[3] + '/' + m[2]) : feedYmd_(dateKey);
 }
 /** "10:30 AM" / "3:30 PM" -> "10:30" / "15:30" (24h, compact subject). */
 function time24FromLabel_(t) {
@@ -4249,15 +4263,14 @@ function privateBookingAlerts_() {
 /** One private tour per email:
  *  "Close Private Tours, GYG_RR hired on 27/10 at 10:30" */
 function sendPrivateAlertEmail_(b) {
-  const subject = 'Close Private Tours, ' + privateSourceLabel_(b.source) +
+  const subject = '🔴 Close Private Tours, ' + privateSourceLabel_(b.source) +
                   ' hired on ' + privateDateDM_(b.dateKey) + ' at ' + time24FromLabel_(b.time);
+  // Essential info is in the subject; the body is one action line + a hidden,
+  // machine-readable marker (cleanupExpiredCapacityAlerts_ reads the ISO date +
+  // time back from it and trashes the alert once the tour has run).
   const body =
-    'Close the OTHER private tours at this day + time (pause their availability on the platforms / website) — a private takes the whole slot.\n\n' +
-    privateSourceLabel_(b.source) + ' · ' + privateDateDM_(b.dateKey) + ' · ' + time24FromLabel_(b.time) +
-    (b.name ? ' · ' + b.name : '') + (b.people ? ' · ' + b.people + 'p' : '') + '\n\n' +
-    // Machine-readable marker: cleanupExpiredCapacityAlerts_ reads the ISO date + time
-    // back from here and trashes this alert once the tour has run.
-    'This alert is removed automatically after the tour runs: ' + b.dateKey + ' ' + b.time + '.';
+    'Close the other private tours at this day + time — a private takes the whole slot.\n\n' +
+    '(auto-removed after the tour runs: ' + b.dateKey + ' ' + b.time + ')';
   MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: body });
 }
 

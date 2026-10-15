@@ -195,9 +195,9 @@ check('private bookings = one entry PER tour (3 privates, regular excluded)', pb
 privateBookingAlerts_();
 check('ONE email per private tour (3 privates -> 3 emails, no digest)', sent.length === 3, sent.map(s => s.subject));
 const subs = sent.map(s => s.subject);
-const dm = Utilities.formatDate(new Date(D + 'T12:00:00'), 'Europe/Madrid', 'dd/MM');
-check('subject format: "Close Private Tours, GYG_RR hired on DD/MM at HH:MM"',
-  subs.some(x => x === 'Close Private Tours, GYG_RR hired on ' + dm + ' at 10:30'), subs);
+const dm = D.split('-')[2] + '/' + D.split('-')[1];   // DD/MM from the yyyy-MM-dd test date
+check('subject format: "🔴 Close Private Tours, GYG_RR hired on DD/MM at HH:MM" (icon + no timezone)',
+  subs.some(x => x === '🔴 Close Private Tours, GYG_RR hired on ' + dm + ' at 10:30') && !subs.some(x => /GMT|\d{4}.*00:00:00/.test(x)), subs);
 check('source labels map: GYG_RR (main), GYG_SS (2nd account), Viator',
   subs.some(x => /GYG_RR/.test(x)) && subs.some(x => /GYG_SS/.test(x)) && subs.some(x => /Viator/.test(x)), subs);
 check('time shown 24h (5:00 PM -> 17:00)', subs.some(x => /at 17:00$/.test(x)), subs);
@@ -226,6 +226,16 @@ sent = [];
 privateBookingAlerts_();
 check('a NEW private booking re-alerts (single email, that booking only)',
   sent.length === 1 && /at 13:00$/.test(sent[0].subject) && /Viator/.test(sent[0].subject), sent.map(s => s.subject));
+
+// PROD bug: Sheets returns the feed DATE cell as a Date OBJECT, which leaked a raw
+// "Thu Oct 15 2026 00:00:00 GMT+0200" into the subject. feedYmd_ must normalise it.
+resetPriv(); sent = [];
+const _fl = feed.getLastRow(); if (_fl >= 2) feed.getRange(2, 1, _fl - 1, FH.length).clearContent();
+feed.getRange(2, 1, 1, FH.length).setValues([[
+  new Date(D + 'T00:00:00'), '10:30 AM', 'English', 'DateObj', '+1', 2, 0, 'Viator', 0, 'P-DOBJ', 'Private', '', '', '', '', 'booking']]);
+privateBookingAlerts_();
+check('a Date-OBJECT feed date renders DD/MM in the subject (no raw Date / timezone)',
+  sent.length === 1 && /hired on \d{2}\/\d{2} at 10:30$/.test(sent[0].subject) && !/GMT|00:00:00/.test(sent[0].subject), sent.map(s => s.subject));
 
 console.log('--- PRIVATE alert cleanup shares the capacity cleanup (one search) ---');
 const mkPriv = (dk, t) => ({ trashed: false,
