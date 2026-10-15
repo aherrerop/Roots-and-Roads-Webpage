@@ -996,6 +996,11 @@ function apiTours_(p) {
       bookingsForShift_(bookingsByKey, s).length > 0);        // closed but has a real booking -> resurface
   });
 
+  // Two private tours at the SAME slot become TWO cards (one per private booking),
+  // each with its own guest + check-in — done here, per request, because the
+  // pre-built feed only carries one private shell per slot.
+  schedule = expandPrivateCards_(schedule, bookingsByKey);
+
   // PRIVATE tours only appear once someone is SIGNED UP: a private slot is never a
   // standing "empty card" (a manager may pre-assign the private guide, but the card
   // stays hidden until a real private booking exists). Regular/SF tours are
@@ -4715,8 +4720,58 @@ function bookingsForShift_(bookingsByKey, shift) {
       const bSf = isSfExtSource_(b.source);
       if (shift.sfExt) return bSf;                    // an SF card takes ONLY the SF bookings
       if (bSf) return false;                          // SF bookings never sit on a 3h/private card
-      return shift.private ? /privat/i.test(b.note || '') : !/privat/i.test(b.note || '');
+      if (shift.private) {
+        if (!/privat/i.test(b.note || '')) return false;
+        // Split private cards (expandPrivateCards_): a card tagged with a booking id
+        // takes ONLY that booking, so two privates at one slot are two cards each
+        // with its own guest + check-in. An untagged private card (the single-private
+        // case) still takes every private booking at the slot.
+        return shift.privBookingId ? String(b.bookingId || '') === String(shift.privBookingId) : true;
+      }
+      return !/privat/i.test(b.note || '');
     });
+}
+
+/** Private bookings at a shift's slot, ordered deterministically by booking id so a
+ *  given booking always maps to the same privIndex / card across loads. */
+function privateBookingsAtSlot_(bookingsByKey, shift) {
+  const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
+  return (bookingsByKey[key] || [])
+    .filter(b => (b.rowType || 'booking') !== 'shift' && !isSfExtSource_(b.source) && /privat/i.test(b.note || ''))
+    .sort((a, b) => String(a.bookingId || '').localeCompare(String(b.bookingId || '')));
+}
+
+/**
+ * Split a slot's SINGLE private shift into ONE card PER private booking, so two
+ * private tours at the same date/time/language render as separate cards — each
+ * with its own guest list and check-in. PER-REQUEST (needs the bookings): the
+ * pre-built feed carries one private shell per slot (privIndex 1). Each resulting
+ * card is tagged privBookingId (bookingsForShift_ then gives it only its booking),
+ * and privIndex 1..N drives the distinct P1/P2 card ids. Each card shows its own
+ * booking's guide (feedGuide); the first keeps the weekly-default guide if it has
+ * none of its own. 0 or 1 private bookings at a slot -> unchanged.
+ */
+function expandPrivateCards_(schedule, bookingsByKey) {
+  const out = [];
+  (schedule || []).forEach(s => {
+    if (!s.private) { out.push(s); return; }
+    const privB = privateBookingsAtSlot_(bookingsByKey, s);
+    if (privB.length <= 1) {
+      if (privB.length === 1) s.privBookingId = privB[0].bookingId;   // tag so counts/check-in stay per-booking
+      out.push(s);
+      return;
+    }
+    privB.forEach((b, i) => {
+      const g = b.feedGuide ? [b.feedGuide] : (i === 0 ? (s.assigned || []).slice() : []);
+      out.push(Object.assign({}, s, {
+        privIndex: i + 1,
+        privBookingId: b.bookingId,
+        assigned: g,
+        status: g.length ? 'OK' : 'Not assigned'
+      }));
+    });
+  });
+  return out;
 }
 
 function buildBusyMap_(schedule) {

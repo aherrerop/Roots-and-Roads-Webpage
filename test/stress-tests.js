@@ -144,6 +144,29 @@ check('a private slot WITH a booking still shows', (r.allTours || []).some(x => 
 apiAssign_({ token: token, dateKey: DATE, time: '12:00', language: 'English', isPrivate: '1', guide: '', force: '1' });   // cleanup
 PropertiesService.getScriptProperties().deleteProperty('PORTAL_CLEARED_SLOTS');
 
+console.log('=== STRESS: TWO private tours at the same slot -> TWO separate cards ===');
+__RRX = {};
+// A SECOND private booking at the SAME slot as B-P (17:00 English).
+feed.getRange(feed.getLastRow() + 1, 1, 1, 16).setValues([
+  [DATE, '5:00 PM', 'English', 'Vip2', '+1', 3, 0, 'GetYourGuide', 60, 'B-P2', 'Private', '', '', '', '', 'booking']]);
+const b2row = feed.getLastRow();
+__RRX = {}; r = tours();
+const privs17 = (r.allTours || []).filter(x => x.dateKey === DATE && x.time === '17:00' && x.isPrivate);
+check('two private bookings at one slot make TWO private cards', privs17.length === 2, privs17.map(p => p.id));
+check('the two private cards have DISTINCT ids (P1 vs P2)', privs17.length === 2 && privs17[0].id !== privs17[1].id, privs17.map(p => p.id));
+check('each private card holds ONLY its own booking (B-P, B-P2)',
+  privs17.length === 2 && privs17.every(p => p.bookings.length === 1) &&
+  privs17.map(p => p.bookings[0].bookingId).sort().join() === 'B-P,B-P2',
+  privs17.map(p => p.bookings.map(b => b.bookingId)));
+check('the two private cards carry their own people counts (B-P=4, B-P2=3)',
+  privs17.length === 2 && privs17.map(p => p.bookedGuests).sort((a, b) => a - b).join() === '3,4',
+  privs17.map(p => p.bookedGuests));
+// Remove the 2nd private -> collapse back to a single private card.
+feed.getRange(b2row, 1, 1, 16).clearContent();
+__RRX = {}; r = tours();
+check('removing the 2nd private returns to a single private card',
+  (r.allTours || []).filter(x => x.dateKey === DATE && x.time === '17:00' && x.isPrivate).length === 1, null);
+
 console.log('=== STRESS: malformed feed rows must not crash the read ===');
 __RRX = {};
 feed.getRange(6, 1, 3, 16).setValues([
