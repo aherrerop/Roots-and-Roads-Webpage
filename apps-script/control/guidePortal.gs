@@ -1277,6 +1277,9 @@ function writeBookingNote_(bookingId, language, note) {
 /** The tour id a shift shows under — regular = key, private = key|P<index>. */
 function shiftDomId_(s) {
   const k = shiftKey_(s.dateKey, s.minutes, s.language);
+  // SF is its OWN tour: it must NOT share a closed-shift id with the 3h tour at the
+  // same slot. Regular keeps the bare key (so existing Closed_Shifts entries match).
+  if (s.sfExt) return k + '|SF';
   return s.private ? k + '|P' + (s.privIndex || 1) : k;
 }
 
@@ -1417,24 +1420,6 @@ function deleteShiftFromGrid_(id) {
   // grid on its next run. Maxim: a manager action must be fast and must not block
   // everyone else.
   return true;
-}
-
-/** Delete any TIME column empty on every date, and any date row with no
- *  assignments. The Date column, title, and header row are never touched. */
-function pruneEmptyGridColumnsAndRows_(sh) {
-  let lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
-  if (lastRow < 3 || lastCol < 2) return;
-  for (let c = lastCol; c >= 2; c--) {                 // right-to-left so indices stay valid
-    if (!parseGridTimeHeader_(sh.getRange(2, c).getDisplayValue())) continue;   // not a time column
-    const filled = sh.getRange(3, c, lastRow - 2, 1).getDisplayValues().some(v => String(v[0] || '').trim() !== '');
-    if (!filled) sh.deleteColumn(c);
-  }
-  lastRow = sh.getLastRow(); lastCol = sh.getLastColumn();
-  for (let r = lastRow; r >= 3; r--) {                 // then empty date rows
-    const filled = lastCol >= 2 &&
-      sh.getRange(r, 2, 1, lastCol - 1).getDisplayValues()[0].some(v => String(v || '').trim() !== '');
-    if (!filled) sh.deleteRow(r);
-  }
 }
 
 /**
@@ -2581,7 +2566,7 @@ function readSchedule_(opts) {
   const seen = {};
   const deduped = [];
   out.forEach(s => {
-    const k = shiftKey_(s.dateKey, s.minutes, s.language) + (s.private ? '|P' + (s.privIndex || 1) : '|R');
+    const k = shiftKey_(s.dateKey, s.minutes, s.language) + '|' + variantKey_(s.sfExt, s.private, s.privIndex);
     if (seen[k]) {
       s.assigned.forEach(n => { if (seen[k].assigned.indexOf(n) === -1) seen[k].assigned.push(n); });
       if (seen[k].status !== 'OK' && s.status === 'OK') seen[k].status = 'OK';
@@ -4592,8 +4577,6 @@ function shiftKey_(dateKey, minutes, language) {
 function variantKey_(sfExt, isPrivate, privIndex) {
   return sfExt ? 'SF' : (isPrivate ? 'P' + (privIndex || 1) : 'R');
 }
-/** Short tour NAME shown on the card / sheet / ledger. */
-function tourNameOf_(source) { return isSfExtSource_(source) ? 'SF' : '3h'; }
 
 
 function round2_(n) { return Math.round(Number(n || 0) * 100) / 100; }
@@ -4931,8 +4914,7 @@ function rebuildUnassignedLedger_() {
   const asg = {};
   try {
     readSchedule_({ includePast: true }).forEach(s => {
-      const k = shiftKey_(s.dateKey, s.minutes, s.language) +
-                (s.private ? '|P' + (s.privIndex || 1) : '|R');
+      const k = shiftKey_(s.dateKey, s.minutes, s.language) + '|' + variantKey_(s.sfExt, s.private, s.privIndex);
       asg[k] = (asg[k] || []).concat(s.assigned || []);
       // Regular shifts also answer for private groups at the same slot when a
       // grid predates the private-column layout.
@@ -4960,8 +4942,8 @@ function rebuildUnassignedLedger_() {
     if (/guruwalk/i.test(source) && guests <= 0) return;      // zero-people Guruwalk
     const isPriv = /privat/i.test(b.notes || '');
 
-    const exact = shiftKey_(b.dateKey, minutes, b.language) +
-                  (isPriv ? '|P1' : '|R');
+    const exact = shiftKey_(b.dateKey, minutes, b.language) + '|' +
+                  variantKey_(isSfExtSource_(source), isPriv, 1);
     const loose = shiftKey_(b.dateKey, minutes, b.language);
     const assigned = (asg[exact] || []).concat(asg[loose] || []);
     if (assigned.length) return;                              // a guide ran it
