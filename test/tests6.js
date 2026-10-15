@@ -643,10 +643,10 @@ wsSf.getRange(1,1,3,11).setValues([
  ['Monday','11:00','English','3h',1,'','','Carlos','','',''],
  ['Monday','9:00', 'English','SF',1,'','','Amalia','Yes','','Yes']]);
 __RRX={};
-check('availWeekTabType_ parses SF vs 3h vs non-week tabs',
-  availWeekTabType_('SF Week 42').isSf===true && availWeekTabType_('SF Week 42').isWeek===true &&
-  availWeekTabType_('Week 42').isSf===false && availWeekTabType_('Week 42').isWeek===true &&
-  availWeekTabType_('Guides').isWeek===false, null);
+check('isAvailWeekTab_ matches plain "Week N" only (SF lives in its own file now)',
+  isAvailWeekTab_('Week 42')===true && isAvailWeekTab_('SF Week 42')===false && isAvailWeekTab_('Guides')===false, null);
+check('availabilityFileId_ routes SF to the separate SF file, 3h to the guide file',
+  availabilityFileId_(true)===SF_GUIDE_FILE_ID && availabilityFileId_(false)===GUIDE_FILE_ID && SF_GUIDE_FILE_ID!==GUIDE_FILE_ID, null);
 check('availabilityRulesFor_(SF) = the SF rule only (ignores Hide-from-availability)',
   availabilityRulesFor_(cSf,true).length===1 && availabilityRulesFor_(cSf,true)[0].sfExt===true, availabilityRulesFor_(cSf,true).map(r=>r.tourName));
 check('availabilityRulesFor_(3h) = non-SF, non-hidden rules only',
@@ -665,7 +665,7 @@ check('availabilityGuideNames_(SF) falls back to all-active when no guide is SF-
 // An SF week tab, rebuilt with the SF rules + SF guides, lists SF guides and the SF time.
 const gfSf=new __mock.MockSS('guidefile-sf'); __mock.SS_BY_ID['GF-SF']=gfSf;
 const mon=day(7); // any upcoming date; the slot's dayName is set to Monday explicitly below
-const sfWk=gfSf.insertSheet('SF Week 50');
+const sfWk=gfSf.insertSheet('Week 50');   // SF file uses plain "Week N" tabs now
 rebuildAvailabilityWeekSheet_(sfWk,[{dateKey:key(mon),dateObj:mon,dayName:'Monday',shortLabel:shortDateLabel_(mon)}],
   availabilityRulesFor_(cSf,true), availabilityGuideNames_(cSf,true), {});
 const sfTimes=sfWk.getRange(4,2,1,1).getDisplayValues()[0];
