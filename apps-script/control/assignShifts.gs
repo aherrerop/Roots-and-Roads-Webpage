@@ -935,13 +935,14 @@ function readPrivateGroups_() {
 /* ---------- availability: 3h vs SF (SEPARATE files) ----------
  * The 3-hour tour and the Sagrada-exterior (SF) tour each get their OWN
  * availability SPREADSHEET in the same Drive folder — 3h in GUIDE_FILE_ID
- * (Guide_Availability_v1), SF in SF_GUIDE_FILE_ID (SF_Availability_v1). Both use
+ * (Guide_3h_Availability_v1), SF in SF_GUIDE_FILE_ID (Guide_SF_Availability_v1).
+ * Files are opened BY ID, so renaming them in Drive changes nothing. Both use
  * plain "Week <N>" tabs; the FILE determines the tour type. "Sync availability"
  * (Control tab) rebuilds BOTH files. Each lists only the guides who run that tour
  * type and only that type's time slots. */
 
-// Dedicated SF availability file (same Drive folder as the 3h file). Empty = SF
-// availability disabled (SF then has no availability sheet).
+// Dedicated SF availability file (same Drive folder as the 3h file), opened by ID
+// so a Drive rename never breaks it. Empty = SF availability disabled.
 var SF_GUIDE_FILE_ID = '1XJXz3tR1aDupSbtsmWKqUd-W6Zepv-VJiAZfGw-649o';
 
 function availabilityFileId_(isSf) { return isSf ? SF_GUIDE_FILE_ID : GUIDE_FILE_ID; }
