@@ -254,29 +254,35 @@ check('so the upcoming tour is NOT wrongly treated as completed',
   strayB && isCompleted_(strayB)===false, strayB && isCompleted_(strayB));
 check('it is still a valid, registerable booking', strayB && isValidBooking_(strayB), strayB);
 
-console.log('--- GYG: Sagrada Família exterior product is tagged SF_EXT (own guide rate) ---');
-// The prepaid ~8€ "Ultimate Exterior" product must be tagged GYG-SF so the ledger
-// pays its lower per-person guide rate, while still landing in the same date/time/
-// language tab as every other booking.
+console.log('--- GYG: Sagrada Família EXTERIOR product is tagged SF_EXT (own guide rate) ---');
+// VERIFIED against the first REAL SF booking (2026-10-16, GYGG45G2M5X2): the product
+// is "Barcelona: Sagrada Família Unlocked Tour w/ Local & Options — Sagrada Família
+// Exterior Unlocked by a Local". It must be tagged GYG-SF so the ledger pays its own
+// per-person rate, while still landing in the same date/time/language tab.
 const sfBody=[
- '¡Hola! Buenas noticias.','Se ha reservado tu producto',
- 'Barcelona: Sagrada Família Ultimate Exterior Tour','Tour en inglés',
- 'Número de referencia GYGSFEXT01',
- 'Fecha August 4, 2027 10:30 AM',
- 'Número de participantes','2 x Adults (Edad 14 - 99)',
- 'Cliente principal','Ext Guest Teléfono: +34600111222 Idioma: English',
- 'Idioma del tour','Inglés (Live tour guide)'
+ 'Hi Supply Partner, great news!','Your offer has been booked:',
+ 'Barcelona: Sagrada Família Unlocked Tour w/ Local & Options Sagrada Família Exterior Unlocked by a Local',
+ 'Reference number GYGSFEXT01',
+ 'Date October 23, 2026, 11:00 AM',
+ 'Number of participants 2 x Adults (Age 14 - 99) 2 x Children (Age 0 - 13)',
+ 'Main customer Ext Guest Phone: +34600111222 Language: English',
+ 'Tour language English (Live tour guide)',
+ 'Price € 21.44'
 ].join('\n');
-const sfB=parseGygMessage_(makeFakeMsg_('Booking - S800 - GYGSFEXT01', sfBody),'confirm');
-check('Sagrada exterior booking tagged source GYG-SF', sfB && sfB.source==='GYG-SF', sfB && sfB.source);
+const sfB=parseGygMessage_(makeFakeMsg_('Booking - S779080 - GYGSFEXT01', sfBody),'confirm');
+check('Sagrada EXTERIOR booking tagged source GYG-SF', sfB && sfB.source==='GYG-SF', sfB && sfB.source);
 check('SF-ext booking carries an "SF" tour-name tag in Notes (BookingSheet visibility)',
   sfB && /\bSF\b/.test(String(sfB.notes||'')), sfB && sfB.notes);
 check('SF-ext lands with its real date/time/language (same slot as other bookings)',
-  sfB && dateKey_(sfB.date)==='2027-08-04' && normalizeTime_(sfB.time)==='10:30 AM' && sfB.language==='English',
+  sfB && dateKey_(sfB.date)==='2026-10-23' && normalizeTime_(sfB.time)==='11:00 AM' && sfB.language==='English',
   sfB && {d:sfB.date&&dateKey_(sfB.date), t:normalizeTime_(sfB.time), l:sfB.language});
 check('the REGULAR "Ultimate Tour" is NOT mistaken for the exterior product',
   gygIsSfExt_('Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town')===false, null);
-check('the exterior title IS detected', gygIsSfExt_('Barcelona: Sagrada Família Ultimate Exterior Tour')===true, null);
+check('the real EXTERIOR option IS detected (Exterior Unlocked / Sagrada Família Exterior)',
+  gygIsSfExt_('Sagrada Família Exterior Unlocked by a Local')===true &&
+  gygIsSfExt_('Barcelona: Sagrada Família Unlocked Tour w/ Local & Options Sagrada Família Exterior Unlocked by a Local')===true, null);
+check('the full "Unlocked Tour" WITHOUT the exterior option is NOT tagged SF',
+  gygIsSfExt_('Barcelona: Sagrada Família Unlocked Tour w/ Local & Options Full Access Interior')===false, null);
 
 console.log('--- GYG: the Barcelona 3-in-1 Tour is tagged source "GYG" and merges into the same slot ---');
 // SAME physical tour as the Ultimate (same route/slot), a separate GYG listing -> tag
@@ -301,7 +307,7 @@ check('the REGULAR Ultimate Tour is NOT mistaken for the 3-in-1', gygIs3in1_('Ba
 check('the 3-in-1 title IS detected', gygIs3in1_('Barcelona 3-in-1 Tour: Sagrada Família, Gaudí & Old Town')===true, null);
 check('the "3 in 1" spacing variant is also detected', gygIs3in1_('Barcelona 3 in 1 Tour')===true, null);
 check('SF-ext still wins over 3-in-1 when both patterns could appear (order)',
-  parseGygMessage_(makeFakeMsg_('Booking - S1 - GYGSF3', ['Se ha reservado tu producto','Sagrada Família Ultimate Exterior Tour 3-in-1','Número de referencia GYGSF3','Fecha August 4, 2027 10:30 AM','2 x Adults','Idioma del tour','Inglés'].join('\n')),'confirm').source==='GYG-SF', null);
+  parseGygMessage_(makeFakeMsg_('Booking - S1 - GYGSF3', ['Se ha reservado tu producto','Sagrada Família Exterior Unlocked by a Local 3-in-1','Número de referencia GYGSF3','Fecha August 4, 2027 10:30 AM','2 x Adults','Idioma del tour','Inglés'].join('\n')),'confirm').source==='GYG-SF', null);
 // Viator gets the same exterior product later, with its OWN source/payout.
 check('Viator exterior product detected -> Viator-SF', viatorIsSfExt_('Tour Grade: Sagrada Família Exterior Ultimate Exterior')===true, null);
 check('a regular Viator tour is NOT tagged Viator-SF', viatorIsSfExt_('Tour Grade: Italian Tour 16:00')===false, null);

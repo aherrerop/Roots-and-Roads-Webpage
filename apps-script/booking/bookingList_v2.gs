@@ -5024,7 +5024,13 @@ function parseGygMessage_(msg, mode) {
  */
 function gygIsSfExt_(text) {
   const s = String(text || '');
-  return /ultimate\s+exterior|sagrad[ae]?\s+fam[ií]lia\s+ultimate|\b2232675\b/i.test(s);
+  // VERIFIED against the first real SF booking (2026-10-16, GYGG45G2M5X2): the
+  // product/option is "Barcelona: Sagrada Família Unlocked Tour w/ Local & Options
+  // — Sagrada Família Exterior Unlocked by a Local". The distinctive marker is
+  // "… Exterior Unlocked" / "Sagrada Família Exterior". NOTE: our 3h product is the
+  // "Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town", so we must NEVER
+  // key off "Ultimate" or "Unlocked" alone — only the EXTERIOR option is SF.
+  return /exterior\s+unlocked|sagrad[ae]?\s+fam[ií]l\w*\s+exterior/i.test(s);
 }
 
 /**
