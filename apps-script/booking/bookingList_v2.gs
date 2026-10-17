@@ -3541,6 +3541,14 @@ function extractBookingIdFromThread_(thread, source) {
  * 11. ACTIVE SHEET WRITE / DELETE
  ******************************************************/
 
+/** Rewrite ONLY the Source cell of an existing row (text format, no re-sort). */
+function reconcileSourceCell_(sh, row, source) {
+  const col = RNR.ACTIVE_HEADERS.indexOf('Source') + 1;
+  if (col < 1) return;
+  sh.getRange(row, col).setNumberFormat('@').setValue(source);
+  if (RNR_RUN_STATS_) RNR_RUN_STATS_.upserts++;   // marks the run dirty -> feed rebuilds
+}
+
 function upsertActiveBooking_(booking, allowUpdate, lenientMatch) {
   if (allowUpdate === undefined) allowUpdate = true;
   const b = normalizeBooking_(booking);
@@ -3564,6 +3572,15 @@ function upsertActiveBooking_(booking, allowUpdate, lenientMatch) {
       if (allowUpdate) {
         if (RNR_RUN_STATS_) RNR_RUN_STATS_.upserts++;
         writeBookingRow_(ref.sh, ref.row, b);   // update fields, keep the tab
+      } else if (ref.booking && ref.booking.source !== b.source &&
+                 sourcesMatchForId_(ref.booking.source, b.source)) {
+        // Insert-only re-read (confirmation/audit), but the product RE-TAG moved
+        // within the GYG family — e.g. a row first saved as 'GetYourGuide' is
+        // really the SF tour ('GYG-SF') now that the parser detects it. Touch
+        // ONLY the Source cell so the portal routes it to the right card; every
+        // other column (manager edits included) stays. Self-heals old rows that
+        // predate a new GYG product tag, so no manual retag is needed.
+        reconcileSourceCell_(ref.sh, ref.row, b.source);
       }
       return;
     }
@@ -7130,7 +7147,7 @@ function retagGygProductsNow() {
         const correct = correctById[id];
         // Only re-tag a GYG-family row to a different GYG-family source.
         if (correct && cur.source !== correct && GYG_FAMILY.indexOf(cur.source) !== -1) {
-          sh.getRange(i + 2, SOURCE_COL).setNumberFormat('@').setValue(correct);
+          reconcileSourceCell_(sh, i + 2, correct);
           fixed++; changes.push(cur.bookingId + ' [' + sheetName + '] ' + cur.source + ' -> ' + correct);
         }
       });

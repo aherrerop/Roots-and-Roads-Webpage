@@ -1053,6 +1053,22 @@ check('manual "Guru fake" row kept its NAME, note and odd source (untouched)',
 check('the duplicate elsewhere still collapsed, other rows intact',
   man.filter(r=>r[7]==='GYGEEE').length===1 && man.some(r=>r[7]==='BR-9'), man.map(r=>r[7]||r[5]));
 
+// --- GYG product RE-TAG self-heals an existing row on an insert-only re-read ---
+// A booking first saved as 'GetYourGuide' (before the parser knew the SF tour)
+// is really 'GYG-SF'. Re-reading its confirmation (allowUpdate=false) must flip
+// ONLY the Source cell — no duplicate row, every other column kept — so the
+// portal routes it to the SF card. Guards the bug that left SF bookings stuck.
+const rtSS=new __mock.MockSS('booking-retag'); SpreadsheetApp._active=rtSS;
+const rtEn=rtSS.insertSheet('English Tours');
+rtEn.getRange(1,1,2,9).setValues([
+ ['Name','Phone','Number of Guests','Tour date','Time','Source','Income','Booking ID','Notes'],
+ ['Bogdan','+40763699095',2,'Fri, Oct 23','11:00 AM','GetYourGuide',21.44,'GYGG45G2M5X2','2 children']]);
+upsertActiveBooking_({name:'Bogdan',phone:'+40763699095',guests:2,children:2,date:'2026-10-23',time:'11:00 AM',language:'English',source:'GYG-SF',income:21.44,bookingId:'GYGG45G2M5X2',notes:'2 children; SF'}, false);
+const rt=rtEn.getRange(2,1,Math.max(1,rtEn.getLastRow()-1),9).getValues().filter(r=>String(r[7]||'').trim());
+check('SF re-tag: GetYourGuide row flips to GYG-SF (insert-only, no duplicate)',
+  rt.length===1 && rt[0][5]==='GYG-SF' && rt[0][7]==='GYGG45G2M5X2', rt.map(r=>r[5]+'/'+r[7]));
+check('SF re-tag: other columns untouched (note kept)', rt[0][8]==='2 children', rt[0][8]);
+
 console.log('--- Guruwalk modification via HTML: the <h1> heading must not swallow the Walker name ---');
 // The REAL email renders the title as <h1> immediately before "Walker:". Without
 // a line break after </h1>, htmlToText_ joined them ("...modification Walker: Sara")
