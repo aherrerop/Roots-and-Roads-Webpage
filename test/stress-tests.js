@@ -374,6 +374,17 @@ const sfElig = pickAutoEligible_(sfShift, true, poolG, byNameG, {}).map(g=>g.nam
 const h3Elig = pickAutoEligible_(h3Shift, true, poolG, byNameG, {}).map(g=>g.name);
 check('SF shift auto-pool = SF-capable only (SfOnly)', sfElig.join()==='SfOnly', sfElig);
 check('3h shift auto-pool excludes the SF-only guide, includes 3h + blank-default', h3Elig.slice().sort().join()==='H3Only,NoTourCol', h3Elig);
+// SF is a short, stackable add-on: a guide already on a NEARBY SF slot stays
+// eligible for the next SF slot (the 5h separation is the 3h rule). This is why
+// Amalia must get 9/11/13/15, not just the 6h-apart pair — the bug staffed only
+// 9 & 15 and left 11 & 13 "Not assigned".
+const sfBusy = { SfOnly:[ new Date('2026-11-02T09:00:00') ] };   // already on the 9:00 SF slot
+const sfElig2 = pickAutoEligible_(sfShift, true, poolG, byNameG, sfBusy).map(g=>g.name);
+check('SF guide STAYS eligible for 11:00 despite a 9:00 SF assignment (stackable)', sfElig2.join()==='SfOnly', sfElig2);
+// A 3h guide on a nearby 3h tour is still blocked by the 5h separation (unchanged).
+const h3Busy = { H3Only:[ new Date('2026-11-02T09:00:00') ], NoTourCol:[ new Date('2026-11-02T09:00:00') ] };
+const h3Elig2 = pickAutoEligible_(h3Shift, true, poolG, byNameG, h3Busy).map(g=>g.name);
+check('3h guide on a nearby 3h tour is NOT eligible (5h separation kept)', h3Elig2.join()==='', h3Elig2);
 
 console.log('=== STRESS: data-subject access (export) + erasure across all stores ===');
 const exHits = exportClientData('B-M1');

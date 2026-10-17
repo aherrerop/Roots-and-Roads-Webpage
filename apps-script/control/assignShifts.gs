@@ -329,9 +329,13 @@ function makeSchedule() {
         a.order - b.order                                         // 5. deterministic
       );
       // Re-check overlap: an earlier pick this shift can't collide (same
-      // start), but a guide may have gained a lock meanwhile.
+      // start), but a guide may have gained a lock meanwhile. SF is a short,
+      // stackable add-on (one guide runs consecutive SF slots), so the 5h
+      // separation is skipped for SF here too — matching pickAutoEligible_.
+      // Without this, an SF guide only got the 6h-apart pair (9 & 15) and 11/13
+      // stayed "Not assigned".
       const pick = pool.shift();
-      if (hasConflict_(assignedByGuide[pick.name], shift.dateTimeObj)) continue;
+      if (!shift.sfExt && hasConflict_(assignedByGuide[pick.name], shift.dateTimeObj)) continue;
       assigned.push(pick);
       accVal[pick.name] += shift.value;
       tourCount[pick.name]++;

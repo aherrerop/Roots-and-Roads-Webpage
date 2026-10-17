@@ -3423,7 +3423,11 @@ function weeklyDefaultGuide_(dateKey, time, language, isSf, isPrivate) {
     // the slot shows "Needs a guide" so a manager staffs it (they can still assign
     // anyone manually, including this guide). Soft block by design.
     if (g && isGuideOnVacation_(g, dateKey)) return '';
-    return (g && g.active && g.languages[language] === true) ? r.guide : '';
+    // Type gate: never default a guide onto a tour type they don't run (an SF rule
+    // that names a 3h-only guide must NOT put e.g. Albert on an SF card). Blank
+    // "Tour" defaults to 3h, so 3h defaults are unaffected.
+    return (g && g.active && g.languages[language] === true &&
+            guideDoesTourType_(r.guide, isSf)) ? r.guide : '';
   }
   return '';
 }
@@ -4812,6 +4816,11 @@ function guideStatusesForShift_(shift, guidesByLanguage, busyMap) {
     let status = 'free';
     for (let i = 0; i < slots.length; i++) {
       if (slots[i].k === thisKey) continue;          // their own assignment here doesn't count
+      // SF exterior tours are ~1h and stackable: the same guide runs consecutive SF
+      // slots (9/11/13/15), so SF-vs-SF never clashes (the 5h separation is the 3h
+      // rule). Only a same-start clash with a non-SF tour still flags. Mirrors the SF
+      // exemptions in applyWeeklyDefaults_/visibleShiftsForGuide_/pickAutoEligible_.
+      if (shift.sfExt && /\|SF$/.test(slots[i].k)) continue;
       const d = Math.abs(slots[i].ms - st);
       if (d === 0) { status = 'busy'; break; }        // same start time -> red (hard clash)
       if (d < sepMs) status = 'overlap';              // nearby -> yellow (keep scanning for a same-time red)

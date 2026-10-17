@@ -294,6 +294,17 @@ check('private 15:30 takes the PRIVATE rule guide (Albert)', weeklyDefaultGuide_
 check('regular 10:30 takes the REGULAR guide (Albert), NOT the private Carlos', weeklyDefaultGuide_(_pKey,'10:30','English',false,false)==='Albert', weeklyDefaultGuide_(_pKey,'10:30','English',false,false));
 check('regular default is unchanged when isPrivate omitted (back-compat)', weeklyDefaultGuide_(_pKey,'15:30','English')==='Carlos', weeklyDefaultGuide_(_pKey,'15:30','English'));
 
+console.log('--- SF weekly default respects tour type: never put a 3h-only guide on an SF card ---');
+__RRX = {};
+__RRX.guidesRaw = { header: ['Guide','Active?','Seniority','English','German','Spanish','French','Italian','Tour','Manager','Email','Password','Vacation dates'],
+  rows: [['Amalia', true, 2, true, false, false, false, false, 'SF', false, 'am@x.com','pw',''],
+         ['Albert', true, 2, true, false, false, false, false, '3h', true,  'a@x.com','pw','']] };
+__RRX.weekly = [
+  { day:'Monday', time:'11:00', language:'English', guidesNeeded:1, isPrivate:false, sfExt:true, activeFrom:null, activeUntil:null, guide:'Amalia', hideFromAvailability:false, hideFromWebsite:false },
+  { day:'Monday', time:'13:00', language:'English', guidesNeeded:1, isPrivate:false, sfExt:true, activeFrom:null, activeUntil:null, guide:'Albert', hideFromAvailability:false, hideFromWebsite:false }];
+check('SF default fills the SF-capable guide (Amalia)', weeklyDefaultGuide_(_pKey,'11:00','English',true,false)==='Amalia', weeklyDefaultGuide_(_pKey,'11:00','English',true,false));
+check('SF default REJECTS a 3h-only guide on an SF rule (no Albert on an SF card)', weeklyDefaultGuide_(_pKey,'13:00','English',true,false)==='', weeklyDefaultGuide_(_pKey,'13:00','English',true,false));
+
 console.log('--- Auto-scheduling master switch (Control tab) ---');
 PropertiesService.getScriptProperties().deleteProperty('AUTO_SCHEDULE');
 check('auto-scheduling defaults ON', autoScheduleEnabled_()===true, null);
