@@ -5867,6 +5867,8 @@ function fullSystemTest() {
     Object.keys(busy).forEach(g => {
       const list = busy[g].slice().sort((a, b) => a.ms - b.ms);
       for (let i = 1; i < list.length; i++) {
+        // SF-vs-SF is stackable (short add-on), so consecutive SF slots are not overlaps.
+        if (/\|SF$/.test(list[i].k) && /\|SF$/.test(list[i - 1].k)) continue;
         if (list[i].ms - list[i - 1].ms < sep) overlaps++;
       }
     });

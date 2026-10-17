@@ -276,7 +276,9 @@ function makeSchedule() {
         if (!g.active) problems.push('inactive');
         if (g.languages[shift.language] !== true) problems.push('does not speak ' + shift.language);
         if (!shift.availableGuides.includes(g.name)) problems.push('not marked available');
-        if (hasConflict_(assignedByGuide[g.name] || [], shift.dateTimeObj)) {
+        // SF is a short, stackable add-on (consecutive SF slots are fine), so the 5h
+        // separation does not apply to an SF lock. 3h locks keep the overlap check.
+        if (!shift.sfExt && hasConflict_(assignedByGuide[g.name] || [], shift.dateTimeObj)) {
           problems.push('overlaps another assigned tour (<' + ASSIGN_CFG.MIN_SEPARATION_HOURS + 'h apart)');
         }
       }
@@ -1961,11 +1963,14 @@ function validateScheduleGrids() {
               }
               if (!seen[nm]) seen[nm] = [];
               seen[nm].forEach(prev => {
-                if (Math.abs(start - prev) / 3600000 < ASSIGN_CFG.MIN_SEPARATION_HOURS) {
-                  problems.push(`${nm}: overlapping tours ${prev.toISOString().slice(0,16)} and ${start.toISOString().slice(0,16)} (<${ASSIGN_CFG.MIN_SEPARATION_HOURS}h apart)`);
+                // SF tours are ~1h and stackable: two SF slots never clash. A clash
+                // between SF and a long 3h tour still counts.
+                if (tabIsSf && prev.sf) return;
+                if (Math.abs(start - prev.d) / 3600000 < ASSIGN_CFG.MIN_SEPARATION_HOURS) {
+                  problems.push(`${nm}: overlapping tours ${prev.d.toISOString().slice(0,16)} and ${start.toISOString().slice(0,16)} (<${ASSIGN_CFG.MIN_SEPARATION_HOURS}h apart)`);
                 }
               });
-              seen[nm].push(start);
+              seen[nm].push({ d: start, sf: tabIsSf });
             });
         });
       }

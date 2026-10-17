@@ -299,7 +299,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-14-sf-tab-order";
+const PORTAL_VERSION = "2026-10-17-sf-source-label";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -515,6 +515,11 @@ const digits = p => String(p||"").replace(/[^\d]/g,"");
 // that attribute, so JSON.parse threw in bindTours and every handler after it — including
 // CHECK-IN — silently failed to bind for the manager. &#39; is valid in text and attributes.
 const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// DISPLAY ONLY: GYG-SF / Viator-SF are internal routing/ledger tags for the SF
+// tour. On the card we show the platform the guest booked through. The booking's
+// real source (b.source) is unchanged and is what gets sent back on check-in, so
+// the ledger still pays the SF rate.
+const srcLabel = s => s==="GYG-SF" ? "GetYourGuide" : (s==="Viator-SF" ? "Viator" : s);
 const cssq = s => String(s).replace(/"/g,'\\"');
 const MONTHS=["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
 const DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
@@ -1076,7 +1081,7 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
       ? '<span class="ckst in">✓ Checked in'+(b.checkedAt?' · '+esc(b.checkedAt):'')+'</span>'
       : '<span class="ckst out">Not checked in</span>';
     return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-      '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+
+      '<span class="src '+(b.paid?'paid':'free')+'">'+esc(srcLabel(b.source)||"?")+'</span>'+
       (b.isPrivate?'<span class="src priv">Private</span>':'')+ph+wa+note+mn+'</div>'+
       inOut +
     '</div></div>';
@@ -1130,7 +1135,7 @@ function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
   // cluster — on a two-guide tour that cluster has two check-in buttons and the
   // icon used to overlap them.
   return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
-    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(b.source||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+wa+note+mnote+noteBtn+moveBtn+'</div>'+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(srcLabel(b.source)||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+wa+note+mnote+noteBtn+moveBtn+'</div>'+
     stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
     checkinButtons(tourId,b,i,tour)+
     '</div>'+ noteEditor + movePanel + '</div>';
