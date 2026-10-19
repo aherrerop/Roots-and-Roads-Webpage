@@ -47,6 +47,7 @@ To just *look at* the old copy without changing anything:
 
 | Blessed (date) | Commit | Deployed versions at that point | Notes |
 |---|---|---|---|
+| 2026-10-19 | `596e8fd` | Control **v143** · Booking **v126** · Portal **2026-10-17-sf-source-label** | SF tour complete to 3h parity: first real SF booking self-heals its source, SF separation exemptions (scheduler/dot/defaults/validators), portal shows platform source. Capacity cap now counts children as ½ once there are >5 (shared `fullTourCount_`). Test harness clock pinned to noon → full suite (1054 tests, 3h + SF) green at any hour. |
 | 2026-09-16 | `known-good` tag | Control **v97** · Booking **v101** · Portal **2026-09-16-assign-dots** | Full system verified green (709 assertions); crisis playbooks added; check-in/assign/apostrophe fixes, website-recovery, Hide-from-website, availability dots all in and working. (`npm run knowngood` prints the exact commit.) |
 
 _When you run `npm run bless`, add a row here (date, `git rev-parse --short HEAD`,
