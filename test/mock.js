@@ -1,3 +1,25 @@
+/* ---- Deterministic clock (TEST-ONLY — does not touch production code) ----
+ * Apps Script runs server-side on its own clock; our suites must not depend on the
+ * developer's wall clock. Several portal/booking tests build "today" tours and check
+ * them against the evening visibility cutoff (hour 23). Those passed all day but
+ * FAILED only when the suite happened to run in the 23:00–24:00 window — a flake, not
+ * a real defect. Pin `new Date()` / Date.now() to TODAY at local noon: the DATE stays
+ * real (so relative-date tests are unchanged, exactly as in a normal daytime run) and
+ * only the time-of-day is fixed, so the suite is green at any hour. `new Date(args)`,
+ * instanceof, parse and UTC are untouched. Override with RR_TEST_NOW=<ISO|ms>. */
+(function(){
+  const RealDate = Date;
+  let fixed = null;
+  if (process.env.RR_TEST_NOW) { const t = new RealDate(process.env.RR_TEST_NOW); if (!isNaN(t)) fixed = t.getTime(); }
+  if (fixed == null) { const d = new RealDate(); d.setHours(12,0,0,0); fixed = d.getTime(); }
+  function RRDate(...a){ return a.length ? new RealDate(...a) : new RealDate(fixed); }
+  RRDate.prototype = RealDate.prototype;
+  RRDate.now = () => fixed;
+  RRDate.parse = RealDate.parse;
+  RRDate.UTC = RealDate.UTC;
+  global.Date = RRDate;
+})();
+
 /* ---- Minimal Google Apps Script mock with the Sheets value-coercion trap ---- */
 const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const MONS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
