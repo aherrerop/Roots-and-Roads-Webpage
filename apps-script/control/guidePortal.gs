@@ -1045,9 +1045,9 @@ function apiTours_(p) {
     const bookedChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
     const checkedGuests = bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0);
     // "Full" GROUP tour: at the cap the card is outlined red (assign a 2nd guide +
-    // reopen). Private tours are never capped. Children do NOT count — the cap is
-    // the number of adults one guide can lead (bookedChildren is still shown).
-    const full = !shift.private && bookedGuests >= PORTAL.TOUR_FULL_THRESHOLD;
+    // reopen). Private tours are never capped. Children are free up to 5, then each
+    // counts as half an adult (fullTourCount_); bookedChildren is still shown.
+    const full = !shift.private && fullTourCount_(bookedGuests, bookedChildren) >= PORTAL.TOUR_FULL_THRESHOLD;
 
     const id = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
     return {
@@ -1167,8 +1167,8 @@ function apiTours_(p) {
       const bGuests = bookings.reduce((s, b) => s + Number(b.guests || 0), 0);
       const bChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
       // "Full" GROUP tour: outline red + prompt a 2nd guide. Private never capped.
-      // Children do NOT count toward the cap (adults only).
-      const full = !shift.private && bGuests >= PORTAL.TOUR_FULL_THRESHOLD;
+      // Children free up to 5, then each counts as half an adult (fullTourCount_).
+      const full = !shift.private && fullTourCount_(bGuests, bChildren) >= PORTAL.TOUR_FULL_THRESHOLD;
       const aid = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
       return {
         id: aid,
@@ -3100,7 +3100,7 @@ function apiHistory_(p) {
     });
     const bGuests = bookings.reduce((s, b) => s + Number(b.guests || 0), 0);
     const bChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
-    const full = !shift.private && bGuests >= PORTAL.TOUR_FULL_THRESHOLD;   // adults only (children don't count)
+    const full = !shift.private && fullTourCount_(bGuests, bChildren) >= PORTAL.TOUR_FULL_THRESHOLD;   // children free up to 5, then half each
     const id = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
     return {
       id, dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
@@ -4584,6 +4584,17 @@ function variantKey_(sfExt, isPrivate, privIndex) {
 
 
 function round2_(n) { return Math.round(Number(n || 0) * 100) / 100; }
+
+/** Effective people toward the full-tour cap. Adults always count. Children are
+ *  free up to 5; once there are MORE than 5 children, EVERY child counts as HALF
+ *  an adult (a group with lots of kids is still a big group to lead). So the cap
+ *  is unchanged for adult-heavy tours but catches a child-heavy one (e.g. 17+13 ->
+ *  17 + 13*0.5 = 23.5 >= 20). Must match the booking project's copy exactly so the
+ *  portal's red "Full" outline and the capacity email always agree. */
+function fullTourCount_(adults, children) {
+  const a = Number(adults || 0), c = Number(children || 0);
+  return a + (c > 5 ? c * 0.5 : 0);
+}
 
 /** Accepts a Date or a string, returns "yyyy-MM-dd" (local tz) or ''. */
 function toDateKey_(v) {

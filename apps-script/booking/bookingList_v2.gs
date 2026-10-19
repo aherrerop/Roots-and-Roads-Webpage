@@ -4040,6 +4040,16 @@ function writeCapacityState_(obj) {
  * per-source and per-booking breakdown. Runs at the end of every booking pass, so
  * the alert lands within one cycle of the booking that filled the tour.
  */
+/** Effective people toward the full-tour cap. Adults always count. Children are
+ *  free up to 5; once there are MORE than 5 children, EVERY child counts as HALF
+ *  an adult. Unchanged for adult-heavy tours, catches a child-heavy one (17+13 ->
+ *  17 + 13*0.5 = 23.5 >= 20). Must match the control project's fullTourCount_ so
+ *  this email and the portal's red "Full" outline always agree. */
+function fullTourCount_(adults, children) {
+  const a = Number(adults || 0), c = Number(children || 0);
+  return a + (c > 5 ? c * 0.5 : 0);
+}
+
 function capacityAlerts_() {
   const groups = readUpcomingTourGroups_();
   const THRESH = Number(RNR.TOUR_FULL_THRESHOLD) || 20;
@@ -4048,11 +4058,12 @@ function capacityAlerts_() {
   const crossed = [];
   Object.keys(groups).forEach(key => {
     const g = groups[key];
-    // ADULTS are the cap (children don't count) — SAME rule as the guide portal's
-    // red "Full" outline, so the email and the portal always agree.
-    if (g.adults >= THRESH) {
-      if (prev[key] == null) crossed.push(g);   // was below the cap / unseen -> just crossed it
-      next[key] = g.adults;                     // remember we've alerted at this level
+    // Cap = adults + half each child once there are >5 children (fullTourCount_) —
+    // SAME rule as the guide portal's red "Full" outline, so the email and the
+    // portal always agree.
+    if (fullTourCount_(g.adults, g.children) >= THRESH) {
+      if (prev[key] == null) crossed.push(g);                 // was below the cap / unseen -> just crossed it
+      next[key] = fullTourCount_(g.adults, g.children);       // remember we've alerted at this level
     }
     // below the cap -> not carried into `next`, so a later refill re-alerts
   });
@@ -4080,7 +4091,7 @@ function sendCapacityAlertEmail_(g, thresh) {
 
 function capacityAlertBody_(g, thresh) {
   const L = [];
-  L.push('This tour has reached the ' + thresh + '-adult cap (children do not count toward it).');
+  L.push('This tour has reached the ' + thresh + '-person cap (children are free up to 5, then each counts as half an adult).');
   L.push('CLOSE it (pause its availability on the platforms / website) OR schedule a second guide.');
   L.push('');
   L.push('Tour:    ' + tourDayLabel_(g.dateKey) + ' at ' + g.time +
@@ -4119,7 +4130,7 @@ function sendCapacityDigestEmail_(list, thresh) {
   // reads these and trashes the digest once EVERY tour it covers has run.
   const markers = list.map(g =>
     'This alert is removed automatically after the tour runs: ' + g.dateKey + ' ' + g.time + '.');
-  const body = list.length + ' upcoming tours have reached the ' + thresh + '-adult cap. ' +
+  const body = list.length + ' upcoming tours have reached the ' + thresh + '-person cap (kids free up to 5, then half each). ' +
     'Close each on the platforms / website, or add a second guide:\n\n' + blocks.join('\n') +
     '\n\n(One alert per tour — they will not repeat unless they drop below ' + thresh + ' and refill.)' +
     '\n\n' + markers.join('\n');

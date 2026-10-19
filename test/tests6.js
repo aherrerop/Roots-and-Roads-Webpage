@@ -634,6 +634,21 @@ check('3h shift offers only 3h-capable guides (Carlos, Flex)',
   eligibleGuidesForShift_({dateKey:d3,minutes:10*60,language:'English',sfExt:false},gblSf).slice().sort().join()==='Carlos,Flex',
   eligibleGuidesForShift_({dateKey:d3,minutes:10*60,language:'English',sfExt:false},gblSf));
 
+// guideStatusesForShift_: the assign-dot. SF is stackable, so an SF guide already
+// on a nearby SF slot shows 🟢 free, NOT 🟡 overlap (the 5h separation is a 3h rule).
+// A 3h guide on a nearby 3h tour still shows 🟡 overlap.
+const _k = s => s.dateKey+'|'+s.minutes+'|'+String(s.language||'').toLowerCase()+'|'+variantKey_(s.sfExt,s.private,s.privIndex);
+const _sf9 ={dateKey:d3,minutes:9*60, language:'English',sfExt:true};
+const _sf11={dateKey:d3,minutes:11*60,language:'English',sfExt:true};
+const _busySf={ amalia:[{ms:shiftStartMs_(d3,9*60), k:_k(_sf9)}] };     // Amalia already on 9:00 SF
+const _stSf=guideStatusesForShift_(_sf11, gblSf, _busySf).find(o=>o.name==='Amalia');
+check('SF assign-dot: an SF guide on a nearby SF slot is free (🟢), not overlap', _stSf && _stSf.status==='free', _stSf);
+const _h310={dateKey:d3,minutes:10*60,language:'English',sfExt:false};
+const _h312={dateKey:d3,minutes:12*60,language:'English',sfExt:false};
+const _busy3h={ carlos:[{ms:shiftStartMs_(d3,10*60), k:_k(_h310)}] };    // Carlos on a 10:00 3h tour
+const _st3h=guideStatusesForShift_(_h312, gblSf, _busy3h).find(o=>o.name==='Carlos');
+check('3h assign-dot: a 3h guide on a nearby 3h tour is overlap (🟡), 5h rule kept', _st3h && _st3h.status==='overlap', _st3h);
+
 console.log('--- SF availability: dedicated SF Week tabs, SF rules + SF guides only ---');
 // Weekly_Schedule on cSf: one 3h row + one SF row (SF flagged Hide-from-availability,
 // which only ever kept it off the 3h sheet).

@@ -98,15 +98,29 @@ sent = [];
 capacityAlerts_();
 check('refilling to the cap alerts again (re-armed)', sent.length === 1, sent.map(s => s.subject));
 
-console.log('--- children do NOT count toward the cap (adults only, matches the portal) ---');
+console.log('--- children: free up to 5, then each counts as HALF an adult toward the cap ---');
+// Up to 5 children are free (unchanged from the old adults-only rule).
 resetState(); sent = [];
-setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 19, children: 5 }]);   // 24 people but only 19 adults
+setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 19, children: 5 }]);   // 19 + 0 = 19
 capacityAlerts_();
-check('19 adults + 5 children does NOT cross the cap (children excluded)', sent.length === 0, sent.map(s => s.subject));
-setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 20, children: 5 }]);   // now 20 adults
-sent = [];
+check('19 adults + 5 children does NOT cross (<=5 kids are free)', sent.length === 0, sent.map(s => s.subject));
+resetState(); sent = [];
+setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 20, children: 5 }]);   // 20 + 0 = 20
 capacityAlerts_();
-check('20 adults crosses the cap regardless of children', sent.length === 1 && /FULL\s+20 adults \+5k/.test(sent[0].subject), sent.map(s => s.subject));
+check('20 adults + 5 children crosses (kids free, adults alone reach 20)', sent.length === 1 && /FULL\s+20 adults \+5k/.test(sent[0].subject), sent.map(s => s.subject));
+// More than 5 children: EVERY child counts as half an adult.
+resetState(); sent = [];
+setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 17, children: 13 }]);  // 17 + 13*0.5 = 23.5
+capacityAlerts_();
+check('17 adults + 13 children CROSSES (17 + 6.5 = 23.5 >= 20) — the reported case', sent.length === 1, sent.map(s => s.subject));
+resetState(); sent = [];
+setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 15, children: 6 }]);   // 15 + 3 = 18
+capacityAlerts_();
+check('15 adults + 6 children does NOT cross (15 + 3 = 18 < 20)', sent.length === 0, sent.map(s => s.subject));
+resetState(); sent = [];
+setFeed([{ time: '11:00 AM', source: 'GetYourGuide', adults: 19, children: 6 }]);   // 19 + 3 = 22
+capacityAlerts_();
+check('19 adults + 6 children CROSSES (the 6th child tips it: 19 + 3 = 22)', sent.length === 1, sent.map(s => s.subject));
 
 console.log('--- SF and 3h at the same slot are counted SEPARATELY (neither crosses alone) ---');
 resetState(); sent = [];

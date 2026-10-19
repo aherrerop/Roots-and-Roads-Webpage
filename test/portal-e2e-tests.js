@@ -129,14 +129,21 @@ check('a 20-guest group tour is flagged full (red outline)', shFull && shFull.fu
 check('a full tour with <2 guides flags needsSecondGuide', shFull && shFull.needsSecondGuide === true, shFull && shFull.needsSecondGuide);
 const shSmall = (rFull.allTours || []).find(s => s.dateKey === DATE && s.time === '12:00' && s.language === 'English');
 check('a small (<20) group tour is NOT full', shSmall && shSmall.full === false, shSmall && [shSmall && shSmall.bookedGuests, shSmall && shSmall.full]);
-// CHILDREN DON'T COUNT toward the 20: 19 adults + 5 children = 24 people but only
-// 19 ADULTS, so the tour is NOT full (the cap is adults one guide can lead).
+// Children are FREE up to 5: 19 adults + 5 children = 19 toward the cap -> NOT full.
 en.getRange(en.getLastRow() + 1, 1, 1, 9).setValues([
   ['Kids Group', '+34600777000', 19, new Date(DATE + 'T12:00:00'), '9:00 AM', 'GetYourGuide', 285, 'GYGKIDS19', 'Family · 5 children']]);
 const rKids = apiTours_({ token: token });
 const shKids = (rKids.allTours || []).find(s => s.dateKey === DATE && s.time === '9:00' && s.language === 'English');
 check('children are counted and shown (bookedChildren=5)', shKids && shKids.bookedChildren === 5, shKids && [shKids && shKids.bookedGuests, shKids && shKids.bookedChildren]);
-check('19 adults + 5 children is NOT full (children excluded from the 20)', shKids && shKids.full === false, shKids && [shKids && shKids.bookedGuests, shKids && shKids.bookedChildren, shKids && shKids.full]);
+check('19 adults + 5 children is NOT full (<=5 kids are free)', shKids && shKids.full === false, shKids && [shKids && shKids.bookedGuests, shKids && shKids.bookedChildren, shKids && shKids.full]);
+// MORE than 5 children: each counts as HALF an adult, so a child-heavy group IS full
+// even below 20 adults. 17 + 13*0.5 = 23.5 (the reported 17+13 case). Portal must
+// agree with the capacity email (both use fullTourCount_).
+en.getRange(en.getLastRow() + 1, 1, 1, 9).setValues([
+  ['Big Kids Group', '+34600555000', 17, new Date(DATE + 'T12:00:00'), '5:00 PM', 'GetYourGuide', 255, 'GYGKIDS17', '13 children']]);
+const rBigKids = apiTours_({ token: token });
+const shBigKids = (rBigKids.allTours || []).find(s => s.dateKey === DATE && s.time === '17:00' && s.language === 'English');
+check('17 adults + 13 children IS full (17 + 13*0.5 = 23.5 >= 20)', shBigKids && shBigKids.full === true, shBigKids && [shBigKids && shBigKids.bookedGuests, shBigKids && shBigKids.bookedChildren, shBigKids && shBigKids.full]);
 
 console.log('--- Second guide (B): a portal overlay, never touches grid/feed/scheduler ---');
 const aSg = apiAssign_({ token: token, dateKey: DATE, time: '14:00', language: 'English', guide: 'Albert', slot: 2 });
