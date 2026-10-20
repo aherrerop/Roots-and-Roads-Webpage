@@ -215,32 +215,39 @@ The slow‑load telemetry in the Portal Log is clear: a 9.8s load breaks down ro
 root cause (documented) is that Apps Script **serializes all executions under one Google
 account**, so concurrent guide loads queue, and CPU throttling stretches each one.
 
-Logic levers, highest value first — none require rewriting code, only changing *what work a
-load does*:
+**Correction after a closer read (2026‑10‑20): the portal already does the obvious logic wins.**
+- **Short window — already in place.** The client loads **3 days** (`WINDOW_DAYS=3`) with "Load 3
+  more days"; the server windows to `MANAGER_WINDOW_DAYS=3`. `UPCOMING_DAYS=45` is only the ceiling.
+  There is no 45‑day‑per‑load cost to cut.
+- **Warm guide/config read — already in place.** `readGuidesRaw_` is cached across requests on a
+  **separate config version** (300s), invalidated only by a password change or close/reopen — never
+  by an assign or check‑in. The `me≈2s` in a slow load is a *cold execution context* (empty cache,
+  spreadsheet re‑open), not a missing cache.
+- **Assembled‑schedule cache — already in place.** The shift structure is cached 180s and
+  invalidated on any assign/move, so repeated polls between changes don't re‑assemble.
 
-1. **Shrink the default horizon.** The portal assembles **45 days** of shifts on every load
-   (`UPCOMING_DAYS`), but a guide only acts on the next day or two. Loading ~7–14 days by default
-   and leaving the rest behind "Load more" cuts the per‑load rows (and the `book`/`asm` cost)
-   several‑fold. This is the single biggest easy win and it's a config number, not a redesign.
-2. **Never cold‑assemble.** When the pre‑built near‑future feed is warm, assembly is ~4ms; when
-   it's stale the load falls back to a ~2s live assembly. Keeping that pre‑built feed reliably
-   fresh (its own trigger) means loads almost never hit the slow path. The goal is "the portal
-   only ever *reads* a ready answer."
-3. **Fewer, longer executions beat many short ones** on a serialized account. The client already
-   backs the poll off (60s when busy); a slightly longer idle poll, and not re‑loading the whole
-   list on every minor action, reduces the queue that makes everyone wait.
-4. **Read the requesting guide cheaply.** `me≈2s` is a lot for "who is asking"; it's a full
-   guides‑tab read + parse. Keeping the parsed‑guides/config cache warm across loads (so it's a
-   cache hit, not a cold read) removes ~2s from a cold load. This is logic — *when* you read the
-   guides, not *how*.
-5. **Pre‑slice the feed to the window.** The feed is ~200 rows and the whole thing is read per
-   load; serving only the loaded window's rows (the pre‑built feed can store it already‑sliced)
-   trims the `book` cost.
+**The one "always‑warm feed" idea left — rebuild the pre‑built feed right after each manager action
+instead of on its 5‑minute trigger — is NOT worth it here, left as‑is deliberately.** A full
+rebuild assembles the whole 45‑day horizon (~3–4s); doing it inside every assign/move pushes those
+from ~3s to ~6–7s, and on a single‑execution serialized runtime a slow mutation *blocks* the guide
+loads it was meant to help. The 180s structure cache + the 5‑minute trigger already cover the common
+case; the synchronous rebuild trades a frequent small win for an occasional large stall.
 
-In short: **load less (shorter horizon), precompute more (always‑warm feed), and read less per
-request (warm guide/config cache, windowed feed).** The ceiling is the single‑account
-serialization; everything above is about making each execution short enough that the queue never
-builds.
+**What actually limits speed — architectural, not a tweak.** Apps Script runs this script one
+execution at a time under the owner's account and periodically recycles to a **cold context** (empty
+cache → must re‑open the BookingSheet + Guides sheet: `me≈2s + book≈2s`). No in‑script cache survives
+a cold context, and every guide's poll competes for that one slot. The real levers are projects, not
+flags, each with its own correctness risk (today's design is careful never to serve a stale
+assignment or check‑in):
+  1. **Serve the tours response as one versioned blob** (one read per cold load, not three) — hard
+     as‑is because check‑in counts must stay live, which is exactly why structure and counts are
+     cached separately today.
+  2. **Give the portal its own deployment / execution identity** so guide loads don't serialize
+     behind the booking triggers and each other.
+  3. **Move the portal read path off Sheets** (a cached JSON endpoint refreshed by the booking side)
+     so a load never re‑opens a spreadsheet.
+
+Recommend scoping one of these deliberately rather than bolting speed onto the current path.
 
 ---
 
@@ -252,8 +259,8 @@ builds.
 3. Decide on **Miguel's German 10:00/10:30** overlap (reassign one, or accept it).
 4. Keep watching the **Gmail quota** via the Status tab; it's the one thing that can quietly
    stop bookings processing.
-5. When you want the portal faster, say so and I'll implement lever #1 (shorter default horizon) —
-   it's the biggest win and low‑risk.
+5. Portal speed: the easy caching wins are already in place (§8). A real step‑change is an
+   architectural project (own deployment, or a cached JSON read path) — say the word to scope one.
 
 ---
 
