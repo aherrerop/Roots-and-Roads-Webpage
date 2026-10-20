@@ -133,14 +133,14 @@ const PORTAL = {
   // Show tours from today up to this many days ahead.
   UPCOMING_DAYS: 45,
 
-  // A GROUP tour is "full" at this ADULT head-count. Children do NOT count toward
-  // the cap (a family of 2 adults + 3 kids is 2 toward the 20, not 5) — the cap is
-  // about how many walking adults one guide can manage. At the cap the portal
-  // outlines the card red and prompts a second guide + reopen. Private tours are
-  // never capped. Re-declared here because the portal is a SEPARATE Apps Script
-  // project and cannot read the booking project's property; it recomputes "full"
-  // from the feed's per-shift ADULT count. (The booking project's capacity-alert
-  // email still counts adults + children — that threshold is deliberately separate.)
+  // A GROUP tour is "full" at this PEOPLE count, via fullTourCount_(adults,
+  // children): adults always count, children are FREE up to 5, then each counts
+  // as HALF an adult (a child-heavy group is still big to lead). At the cap the
+  // portal outlines the card red and prompts a second guide + reopen. Private
+  // tours are never capped. Re-declared here because the portal is a SEPARATE
+  // Apps Script project and cannot read the booking project's property; the
+  // booking capacity-alert email uses an IDENTICAL fullTourCount_, so the email
+  // and the red outline always agree.
   TOUR_FULL_THRESHOLD: 20,
 
   // Flat € we owe a guide who showed up and ran a tour where NOBODY in the whole
@@ -6120,7 +6120,7 @@ function runPortalSelfTest(opts) {
         const r = apiSave_({ token: token, data: JSON.stringify({
           dateKey: dateKey, time: ST.time24, timeLabel: ST.timeLabel, day: dayNameFromKey_(dateKey),
           language: sfLang, guide: sfGuide.name,
-          bookings: [{ bookingId: sfBid, source: (PORTAL.SF_EXT_SOURCE || 'GYG-SF'), name: 'Testing SF', phone: '', guests: 2, income: 0, isPrivate: false, checked: true, checkedIn: 2 }]
+          bookings: [{ bookingId: sfBid, source: PORTAL.SF_EXT_SOURCES[0], name: 'Testing SF', phone: '', guests: 2, income: 0, isPrivate: false, checked: true, checkedIn: 2 }]
         }) });
         if (!r.ok) throw new Error(r.error || 'SF save failed');
         const tab = ledgerSS_().getSheetByName(sfGuide.name);
@@ -6144,7 +6144,7 @@ function runPortalSelfTest(opts) {
  *  isSf -> an SF exterior test booking (source GYG-SF + the feed's SF marker), so
  *  the self-test can exercise the dedicated SF card / grid / 3€ ledger path. */
 function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests, isSf) {
-  const source = isSf ? (PORTAL.SF_EXT_SOURCE || 'GYG-SF') : 'Website';
+  const source = isSf ? PORTAL.SF_EXT_SOURCES[0] : 'Website';
   const ss = bookingSS_();
   const sh = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
   if (!sh) throw new Error(language + ' Tours tab not found');

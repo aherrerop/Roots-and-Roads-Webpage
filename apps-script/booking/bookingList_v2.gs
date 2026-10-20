@@ -372,11 +372,12 @@ const RNR = {
    * ============================================================ */
   // When an upcoming GROUP tour (a date/time/language/variant card — private
   // tours are excluded, they are their own single group) reaches this many
-  // ADULTS, email management ONCE so they can close it on the platforms or add a
-  // second guide. Children do NOT count toward the cap — the SAME rule as the
-  // guide portal's red "Full" outline (PORTAL.TOUR_FULL_THRESHOLD), so the email
-  // and the portal always agree. Fires again only if it drops back below and later
-  // refills. Set to 21 if you want "strictly more than 20".
+  // PEOPLE, email management ONCE so they can close it on the platforms or add a
+  // second guide. The count is fullTourCount_(adults, children): adults always
+  // count, and children are FREE up to 5 — beyond that each child counts as HALF
+  // an adult. SAME rule as the guide portal's red "Full" outline (its own
+  // fullTourCount_, kept identical), so the email and the portal always agree.
+  // Fires again only if it drops back below and later refills.
   TOUR_FULL_THRESHOLD: 20,
   // Script Property holding the JSON map { tourKey: peopleWhenAlerted } of tours
   // already alerted, so we never spam the same full tour every 5 minutes.
@@ -4897,7 +4898,12 @@ function parseAirbnbMessage_(msg, mode) {
     /Total\s*€\s*([0-9]+(?:[.,][0-9]+)?)/i
   ]);
 
-  const date = normalizeAirbnbDate_(dateText, msg.getDate());
+  // msg.getDate() can throw a transient "Could not locate target object" when the
+  // Gmail object goes stale mid-run (seen once on an Airbnb cancellation re-read).
+  // It only supplies the YEAR for a month/day Airbnb date, so fall back to now —
+  // never let one stale message abort the whole parse pass.
+  let msgDate; try { msgDate = msg.getDate(); } catch (e) { msgDate = new Date(); }
+  const date = normalizeAirbnbDate_(dateText, msgDate);
   const kidsM = text.match(/(\d+)\s+child(?:ren)?/i);
   const infM = text.match(/(\d+)\s+infants?/i);
   const abChildren = kidsM ? Number(kidsM[1]) : 0;
