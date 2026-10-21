@@ -196,7 +196,8 @@ check('one Move applies BOTH language and time in a single call', /api\("move",\
 check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime && \(!dateSel \|\| dateSel\.value===info\.fromDate\)\)/.test(html), null);
 // Assign dropdown shows an availability dot per guide (info only) but every guide
 // stays assignable; the option VALUE is still the plain name so assign sends it.
-check('the assign dropdown renders a status dot per guide from guideOptions', /DOT=\{free:"🟢",overlap:"🟡",busy:"🔴",vacation:"🌴"\}/.test(html) && /Array\.isArray\(t\.guideOptions\)/.test(html), null);
+check('the assign dropdown renders a status dot per guide from guideOptions', /DOT=\{free:"🟢",overlap:"🟡",busy:"🔴",unavailable:"⚪",vacation:"🌴"\}/.test(html) && /Array\.isArray\(t\.guideOptions\)/.test(html), null);
+check('a guide with no availability shows the ⚪ grey dot, and a visible legend explains the dots', /unavailable:"⚪"/.test(html) && /⚪ not marked avail · 🌴 vacation —<\/option>/.test(html), null);
 check('a guide on vacation shows the 🌴 dot (and stays selectable)', /vacation:"🌴"/.test(html) && /on vacation — you can still pick anyone/.test(html), null);
 check('the assign option value stays the plain guide name (dot is display-only)', /value="'\+esc\(o\.name\)\+'"[\s\S]*?>'\+d\+esc\(o\.name\)/.test(html), null);
 check('a day move is offered (date input) and passed to the move call', /class="mvsel mv-date"/.test(html) && /toDate: dateChange\? toDate : ""/.test(html), null);

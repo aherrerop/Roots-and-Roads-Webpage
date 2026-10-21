@@ -4805,24 +4805,77 @@ function guideDoesTourType_(name, isSf) {
 }
 
 /**
+ * Per-slot availability for the assign dropdown's dots: which guides TICKED
+ * availability for each date+time, read FRESH from the availability files (the 3h
+ * guide file + the SF file) so a grey "not available" dot reflects what guides
+ * actually marked, not the last schedule generation. Only the MANAGER path builds
+ * guideOptions, so only manager loads pay this, and it is cached (CONFIG_TTL) so a
+ * manager's poll reads the files at most once per cache window. Fail-open: any read
+ * problem -> empty -> no grey (unchanged behaviour).
+ * Returns { bySlot: { 'yyyy-MM-dd|minutes': { lowerGuideName: true } }, fromKey, toKey }.
+ * fromKey..toKey is the date range we actually read, so a shift outside it keeps the
+ * clash-based dot instead of a false grey.
+ */
+function availBySlot_() {
+  if (__RRX.availBySlot) return __RRX.availBySlot;
+  const built = cachedReadConfig_('availslots', PORTAL.CONFIG_TTL, function () {
+    const out = { bySlot: {}, fromKey: '', toKey: '' };
+    try {
+      const tz = Session.getScriptTimeZone();
+      const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
+      const sfSS = availabilityFile_(true);
+      const weeks = weekTabsToSchedule_(guideSS) || [];
+      const add = function (ss, week) {
+        if (!ss) return;
+        let rows; try { rows = readAvailability_(ss, week); } catch (e) { return; }
+        rows.forEach(function (a) {
+          const dk = Utilities.formatDate(a.dateObj, tz, 'yyyy-MM-dd');
+          const mins = timeToMinutes_(normTime24_(a.time));
+          if (!dk || !(mins >= 0)) return;
+          if (!out.fromKey || dk < out.fromKey) out.fromKey = dk;
+          if (!out.toKey || dk > out.toKey) out.toKey = dk;
+          const k = dk + '|' + mins;
+          (out.bySlot[k] = out.bySlot[k] || {})[String(a.guideName).trim().toLowerCase()] = true;
+        });
+      };
+      weeks.forEach(function (w) { add(guideSS, w); if (sfSS && sfSS !== guideSS) add(sfSS, w); });
+    } catch (e) { /* fail-open */ }
+    return out;
+  });
+  return (__RRX.availBySlot = built);
+}
+
+/**
  * For the assign dropdown: every active guide who speaks this shift's language,
  * each tagged with an availability STATUS relative to this shift — so the manager
  * gets a colour dot but can still assign ANYONE (no filtering).
- *   'free'    -> 🟢 available: no other tour within the separation window
+ *   'unavailable' -> ⚪ did NOT mark availability for this slot (grey)
+ *   'free'    -> 🟢 available and free: no other tour within the separation window
  *   'overlap' -> 🟡 has another tour within the separation window (a nearby clash)
  *   'busy'    -> 🔴 has another tour at the SAME time (a hard double-book)
- * Uses the schedule's already-built busy map, so it costs NO extra reads. A guide's
- * own assignment ON THIS shift never counts against them.
+ *   'vacation'-> 🌴 on their blocked/vacation dates
+ * Precedence: vacation, then not-available (grey), then the clash dots among the
+ * guides who DID mark available. The busy map costs no extra reads; the availability
+ * index is a cached, manager-only read (availBySlot_). A guide's own assignment ON
+ * THIS shift never counts against them, and the manager can still pick anyone.
  */
 function guideStatusesForShift_(shift, guidesByLanguage, busyMap) {
   const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
   const st = shiftStartMs_(shift.dateKey, shift.minutes);
   const thisKey = shiftKeyFull_(shift);
+  // Who ticked availability for THIS slot. Only when we actually have availability
+  // data covering this shift's date (fromKey..toKey) do we grey the guides who did
+  // not tick — outside that range a far-out slot keeps its clash dot (no false grey).
+  const avail = availBySlot_();
+  const haveAvail = avail.fromKey && shift.dateKey >= avail.fromKey && shift.dateKey <= avail.toKey;
+  const slotSet = haveAvail ? (avail.bySlot[shift.dateKey + '|' + shift.minutes] || {}) : null;
   return (guidesByLanguage[shift.language] || []).filter(n => guideDoesTourType_(n, shift.sfExt)).map(function (name) {
     // On vacation this date -> flag it so a manager doesn't reassign them by accident
     // (they still CAN — the option stays selectable; this is only the status dot).
     const gv = findGuideByName_(name);
     if (gv && isGuideOnVacation_(gv, shift.dateKey)) return { name: name, status: 'vacation' };
+    // Did not mark available for this slot -> grey (still selectable).
+    if (slotSet && !slotSet[String(name).trim().toLowerCase()]) return { name: name, status: 'unavailable' };
     const slots = busyMap[String(name).trim().toLowerCase()] || [];
     let status = 'free';
     for (let i = 0; i < slots.length; i++) {

@@ -299,7 +299,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-17-sf-source-label";
+const PORTAL_VERSION = "2026-10-21-avail-dot";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -975,10 +975,11 @@ function assignSelect(t, slot){
   slot = slot||1;
   // EVERY guide who speaks the language is assignable — the dot is only INFO, never
   // a block. Server sends guideOptions [{name,status}] where status is:
-  //   free 🟢 (available) · overlap 🟡 (a tour within 5h) · busy 🔴 (a tour at the
-  //   SAME time) · vacation 🌴 (on their blocked/vacation dates). Falls back to the
-  //   plain eligible list if guideOptions is absent.
-  const DOT={free:"🟢",overlap:"🟡",busy:"🔴",vacation:"🌴"};
+  //   free 🟢 (marked available, no clash) · overlap 🟡 (a tour within 5h) ·
+  //   busy 🔴 (a tour at the SAME time) · unavailable ⚪ (did NOT mark availability
+  //   for this slot) · vacation 🌴 (on their blocked/vacation dates). Falls back to
+  //   the plain eligible list if guideOptions is absent.
+  const DOT={free:"🟢",overlap:"🟡",busy:"🔴",unavailable:"⚪",vacation:"🌴"};
   let opts = (Array.isArray(t.guideOptions)&&t.guideOptions.length)
     ? t.guideOptions.slice()
     : (t.eligible||guidesForType(GUIDES_BY_LANG[t.language]||[], t.sfExt)).map(n=>({name:n,status:""}));
@@ -987,9 +988,11 @@ function assignSelect(t, slot){
   const other = slot===2 ? g1 : g2;               // already on the other slot -> not offered here
   if(other) opts=opts.filter(o=>o.name!==other);
   if(cur && !opts.some(o=>o.name===cur)) opts=[{name:cur,status:""}].concat(opts);
-  const legend="🟢 available · 🟡 overlapping tour · 🔴 already booked this time · 🌴 on vacation — you can still pick anyone";
+  const legend="🟢 available · 🟡 overlapping tour (within 5h) · 🔴 already on a tour this time · ⚪ did not mark availability · 🌴 on vacation — you can still pick anyone";
   let html='<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",slot:slot}))+'\'>';
   html+='<option value=""'+(cur?'':' selected')+'>Not assigned</option>';
+  // Visible legend so the colour code is self-explanatory at the point of use.
+  html+='<option disabled>— 🟢 available · 🟡 clash &lt;5h · 🔴 same time · ⚪ not marked avail · 🌴 vacation —</option>';
   opts.forEach(o=>{ const d=DOT[o.status]?DOT[o.status]+" ":""; html+='<option value="'+esc(o.name)+'"'+(o.name===cur?' selected':'')+'>'+d+esc(o.name)+'</option>'; });
   return html+'</select>';
 }
