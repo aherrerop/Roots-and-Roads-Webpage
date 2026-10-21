@@ -650,15 +650,23 @@ const _busy3h={ carlos:[{ms:shiftStartMs_(d3,10*60), k:_k(_h310)}] };    // Carl
 const _st3h=guideStatusesForShift_(_h312, gblSf, _busy3h).find(o=>o.name==='Carlos');
 check('3h assign-dot: a 3h guide on a nearby 3h tour is overlap (🟡), 5h rule kept', _st3h && _st3h.status==='overlap', _st3h);
 
-// Grey "not available" dot: with availability data covering the slot, a guide who
-// did NOT tick availability shows ⚪ ('unavailable'); one who ticked keeps a clash dot.
-__RRX.availBySlot = { bySlot: { [d3+'|'+(11*60)]: { amalia:true } }, fromKey:d3, toKey:d3 };
+// Grey "not available" dot, by HALF-DAY bucket (SF = any SF tick that day). A guide
+// who did NOT tick shows ⚪ ('unavailable'); one who ticked keeps a clash dot.
+__RRX.availBySlot = { bySlot: { [d3+'|SF']: { amalia:true } }, fromKey:d3, toKey:d3 };
 const _av = guideStatusesForShift_(_sf11, gblSf, {});
 check('avail dot: a guide who DID mark available is not grey', (_av.find(o=>o.name==='Amalia')||{}).status==='free', _av);
 check('avail dot: a guide who did NOT mark available shows unavailable (grey)', (_av.find(o=>o.name==='Flex')||{}).status==='unavailable', _av);
 // Outside the read date range -> never a false grey (keeps the clash-based dot).
 const _avOut = guideStatusesForShift_({dateKey:'2099-01-01',minutes:11*60,language:'English',sfExt:true}, gblSf, {});
 check('avail dot: a slot outside the read range is never greyed', (_avOut.find(o=>o.name==='Flex')||{}).status==='free', _avOut);
+// MORNING/AFTERNOON block: an AFTERNOON tick covers BOTH 15:30 and 16:00 (the 4pm
+// Italian tour), and a MORNING tick covers 10:00 / 10:30 / 11:00 — not the other half.
+__RRX.availBySlot = { bySlot: { [d3+'|PM']: { carlos:true }, [d3+'|AM']: { flex:true } }, fromKey:d3, toKey:d3 };
+const _pm16 = guideStatusesForShift_({dateKey:d3,minutes:16*60,language:'English',sfExt:false}, gblSf, {});
+check('avail dot: an afternoon (15:30) tick covers a 16:00 (4pm) tour', (_pm16.find(o=>o.name==='Carlos')||{}).status!=='unavailable', _pm16);
+const _am10 = guideStatusesForShift_({dateKey:d3,minutes:10*60,language:'English',sfExt:false}, gblSf, {});
+check('avail dot: a morning (10:30) tick covers a 10:00 tour', (_am10.find(o=>o.name==='Flex')||{}).status!=='unavailable', _am10);
+check('avail dot: an afternoon-only guide is grey on a morning tour', (_am10.find(o=>o.name==='Carlos')||{}).status==='unavailable', _am10);
 __RRX.availBySlot = null;
 
 console.log('--- SF availability: dedicated SF Week tabs, SF rules + SF guides only ---');

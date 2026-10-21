@@ -4805,14 +4805,28 @@ function guideDoesTourType_(name, isSf) {
 }
 
 /**
- * Per-slot availability for the assign dropdown's dots: which guides TICKED
- * availability for each date+time, read FRESH from the availability files (the 3h
- * guide file + the SF file) so a grey "not available" dot reflects what guides
- * actually marked, not the last schedule generation. Only the MANAGER path builds
- * guideOptions, so only manager loads pay this, and it is cached (CONFIG_TTL) so a
- * manager's poll reads the files at most once per cache window. Fail-open: any read
- * problem -> empty -> no grey (unchanged behaviour).
- * Returns { bySlot: { 'yyyy-MM-dd|minutes': { lowerGuideName: true } }, fromKey, toKey }.
+ * The availability BUCKET a shift falls in. Guides mark MORNING or AFTERNOON
+ * availability, not an exact time — the schedule is split in two half-days and a
+ * morning tick covers 10:00 / 10:30 / 11:00 while an afternoon tick covers
+ * 15:30 / 16:00. So a guide available at 15:30 is available for the 16:00 Italian
+ * tour, and a 10:30 tick covers a 10:00 tour. 14:00 (840 min) splits the two. SF is
+ * a stackable add-on run back-to-back, so ANY SF tick that day counts for every SF
+ * slot. Both the availability index and the per-shift lookup use this, so they agree.
+ */
+function availSlotKey_(dateKey, minutes, sfExt) {
+  if (sfExt) return dateKey + '|SF';
+  return dateKey + '|' + (Number(minutes) < 840 ? 'AM' : 'PM');
+}
+
+/**
+ * Availability for the assign dropdown's dots: which guides TICKED availability for
+ * each date + HALF-DAY (morning/afternoon, or SF), read FRESH from the availability
+ * files (the 3h guide file + the SF file) so a grey "not available" dot reflects what
+ * guides actually marked, not the last schedule generation. Only the MANAGER path
+ * builds guideOptions, so only manager loads pay this, and it is cached (CONFIG_TTL)
+ * so a manager's poll reads the files at most once per cache window. Fail-open: any
+ * read problem -> empty -> no grey (unchanged behaviour).
+ * Returns { bySlot: { availSlotKey_: { lowerGuideName: true } }, fromKey, toKey }.
  * fromKey..toKey is the date range we actually read, so a shift outside it keeps the
  * clash-based dot instead of a false grey.
  */
@@ -4825,7 +4839,7 @@ function availBySlot_() {
       const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
       const sfSS = availabilityFile_(true);
       const weeks = weekTabsToSchedule_(guideSS) || [];
-      const add = function (ss, week) {
+      const add = function (ss, week, isSf) {
         if (!ss) return;
         let rows; try { rows = readAvailability_(ss, week); } catch (e) { return; }
         rows.forEach(function (a) {
@@ -4834,11 +4848,11 @@ function availBySlot_() {
           if (!dk || !(mins >= 0)) return;
           if (!out.fromKey || dk < out.fromKey) out.fromKey = dk;
           if (!out.toKey || dk > out.toKey) out.toKey = dk;
-          const k = dk + '|' + mins;
+          const k = availSlotKey_(dk, mins, isSf);
           (out.bySlot[k] = out.bySlot[k] || {})[String(a.guideName).trim().toLowerCase()] = true;
         });
       };
-      weeks.forEach(function (w) { add(guideSS, w); if (sfSS && sfSS !== guideSS) add(sfSS, w); });
+      weeks.forEach(function (w) { add(guideSS, w, false); if (sfSS && sfSS !== guideSS) add(sfSS, w, true); });
     } catch (e) { /* fail-open */ }
     return out;
   });
@@ -4868,7 +4882,7 @@ function guideStatusesForShift_(shift, guidesByLanguage, busyMap) {
   // not tick — outside that range a far-out slot keeps its clash dot (no false grey).
   const avail = availBySlot_();
   const haveAvail = avail.fromKey && shift.dateKey >= avail.fromKey && shift.dateKey <= avail.toKey;
-  const slotSet = haveAvail ? (avail.bySlot[shift.dateKey + '|' + shift.minutes] || {}) : null;
+  const slotSet = haveAvail ? (avail.bySlot[availSlotKey_(shift.dateKey, shift.minutes, shift.sfExt)] || {}) : null;
   return (guidesByLanguage[shift.language] || []).filter(n => guideDoesTourType_(n, shift.sfExt)).map(function (name) {
     // On vacation this date -> flag it so a manager doesn't reassign them by accident
     // (they still CAN — the option stays selectable; this is only the status dot).
