@@ -4248,10 +4248,10 @@ function privateSourceLabel_(source) {
   if (s === RNR.SOURCE.VIATOR) return 'Viator';
   return s || '?';
 }
-/** A date (yyyy-MM-dd, Date object, or raw string) -> "27/10" (day/month). */
-function privateDateDM_(dateKey) {
+/** A date (yyyy-MM-dd, Date object, or raw string) -> "10/21/2026" (US month/day/year). */
+function privateDateMDY_(dateKey) {
   const m = feedYmd_(dateKey).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return m ? (m[3] + '/' + m[2]) : feedYmd_(dateKey);
+  return m ? (Number(m[2]) + '/' + Number(m[3]) + '/' + m[1]) : feedYmd_(dateKey);
 }
 /** "10:30 AM" / "3:30 PM" -> "10:30" / "15:30" (24h, compact subject). */
 function time24FromLabel_(t) {
@@ -4289,11 +4289,12 @@ function privateBookingAlerts_() {
   return sentN;
 }
 
-/** One private tour per email:
- *  "Close Private Tours, GYG_RR hired on 27/10 at 10:30" */
+/** One private tour per email. Everything is in the subject so management sees it
+ *  from the phone notification without opening it:
+ *  "🔴 Private GYG_RR 10:30 10/21/2026"  (icon · Private · source · time · date) */
 function sendPrivateAlertEmail_(b) {
-  const subject = '🔴 Close Private Tours, ' + privateSourceLabel_(b.source) +
-                  ' hired on ' + privateDateDM_(b.dateKey) + ' at ' + time24FromLabel_(b.time);
+  const subject = '🔴 Private ' + privateSourceLabel_(b.source) + ' ' +
+                  time24FromLabel_(b.time) + ' ' + privateDateMDY_(b.dateKey);
   // Essential info is in the subject; the body is one action line + a hidden,
   // machine-readable marker (cleanupExpiredCapacityAlerts_ reads the ISO date +
   // time back from it and trashes the alert once the tour has run).

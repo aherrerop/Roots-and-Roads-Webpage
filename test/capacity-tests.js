@@ -209,12 +209,12 @@ check('private bookings = one entry PER tour (3 privates, regular excluded)', pb
 privateBookingAlerts_();
 check('ONE email per private tour (3 privates -> 3 emails, no digest)', sent.length === 3, sent.map(s => s.subject));
 const subs = sent.map(s => s.subject);
-const dm = D.split('-')[2] + '/' + D.split('-')[1];   // DD/MM from the yyyy-MM-dd test date
-check('subject format: "🔴 Close Private Tours, GYG_RR hired on DD/MM at HH:MM" (icon + no timezone)',
-  subs.some(x => x === '🔴 Close Private Tours, GYG_RR hired on ' + dm + ' at 10:30') && !subs.some(x => /GMT|\d{4}.*00:00:00/.test(x)), subs);
+const mdy = Number(D.split('-')[1]) + '/' + Number(D.split('-')[2]) + '/' + D.split('-')[0];   // M/D/YYYY from the test date
+check('subject format: "🔴 Private {source} {HH:MM} {M/D/YYYY}" — all info, no timezone',
+  subs.some(x => x === '🔴 Private GYG_RR 10:30 ' + mdy) && !subs.some(x => /GMT|\d{4}.*00:00:00/.test(x)), subs);
 check('source labels map: GYG_RR (main), GYG_SS (2nd account), Viator',
   subs.some(x => /GYG_RR/.test(x)) && subs.some(x => /GYG_SS/.test(x)) && subs.some(x => /Viator/.test(x)), subs);
-check('time shown 24h (5:00 PM -> 17:00)', subs.some(x => /at 17:00$/.test(x)), subs);
+check('time shown 24h (5:00 PM -> 17:00)', subs.some(x => / 17:00 /.test(x)), subs);
 check('every private email goes to the internal manager address', sent.every(s => s.to === RNR.INTERNAL_ALERT_TO), sent.map(s => s.to));
 check('body is short (two content lines) + a removal marker', sent.every(s => (s.body.match(/after the tour runs:/g) || []).length === 1 && s.body.split('\n').filter(Boolean).length <= 3), sent.map(s => s.body));
 
@@ -239,7 +239,7 @@ setFeed([
 sent = [];
 privateBookingAlerts_();
 check('a NEW private booking re-alerts (single email, that booking only)',
-  sent.length === 1 && /at 13:00$/.test(sent[0].subject) && /Viator/.test(sent[0].subject), sent.map(s => s.subject));
+  sent.length === 1 && / 13:00 /.test(sent[0].subject) && /Viator/.test(sent[0].subject), sent.map(s => s.subject));
 
 // PROD bug: Sheets returns the feed DATE cell as a Date OBJECT, which leaked a raw
 // "Thu Oct 15 2026 00:00:00 GMT+0200" into the subject. feedYmd_ must normalise it.
@@ -248,8 +248,8 @@ const _fl = feed.getLastRow(); if (_fl >= 2) feed.getRange(2, 1, _fl - 1, FH.len
 feed.getRange(2, 1, 1, FH.length).setValues([[
   new Date(D + 'T00:00:00'), '10:30 AM', 'English', 'DateObj', '+1', 2, 0, 'Viator', 0, 'P-DOBJ', 'Private', '', '', '', '', 'booking']]);
 privateBookingAlerts_();
-check('a Date-OBJECT feed date renders DD/MM in the subject (no raw Date / timezone)',
-  sent.length === 1 && /hired on \d{2}\/\d{2} at 10:30$/.test(sent[0].subject) && !/GMT|00:00:00/.test(sent[0].subject), sent.map(s => s.subject));
+check('a Date-OBJECT feed date renders M/D/YYYY in the subject (no raw Date / timezone)',
+  sent.length === 1 && / 10:30 \d{1,2}\/\d{1,2}\/\d{4}$/.test(sent[0].subject) && !/GMT|00:00:00/.test(sent[0].subject), sent.map(s => s.subject));
 
 console.log('--- PRIVATE alert cleanup shares the capacity cleanup (one search) ---');
 const mkPriv = (dk, t) => ({ trashed: false,
