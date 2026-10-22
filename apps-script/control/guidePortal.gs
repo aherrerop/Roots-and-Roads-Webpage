@@ -4358,6 +4358,16 @@ function historyTab_(ss) {
   return sh;
 }
 
+/** Run from the Apps Script editor to create the Ledger "History" tab immediately
+ *  (the 5-min feed trigger also creates it). Safe to re-run — idempotent. */
+function setupLedgerHistoryTab() {
+  const sh = historyTab_(ledgerSS_());
+  try { PropertiesService.getScriptProperties().setProperty('HISTORY_TAB_READY', '1'); } catch (e) {}
+  const msg = 'History tab ready in the Ledger "' + sh.getName() + '" (header + Date/Time as text).';
+  console.log(msg);
+  return msg;
+}
+
 function writeLedgerHistory_(o) {
   try {
     const sh = historyTab_(ledgerSS_());
