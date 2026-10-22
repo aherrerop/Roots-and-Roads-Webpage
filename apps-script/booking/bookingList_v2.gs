@@ -4942,7 +4942,7 @@ function parseAirbnbMessage_(msg, mode) {
     source: RNR.SOURCE.AIRBNB,
     income: parseMoney_(incomeText),
     bookingId,
-    notes: composeNotes_(false, abChildren, abInfants, 'Airbnb'),
+    notes: composeNotes_(false, abChildren, abInfants, ''),   // no 'Airbnb' tag — the Source column already says Airbnb
     isCancellation: isCancel,
     hasExplicitGuests: Boolean(guestsText),
     hasExplicitDate: Boolean(date),
@@ -5550,7 +5550,7 @@ function parseFreetourMessage_(msg, mode) {
     source: source,
     income: incomeForFreeSource_(source, guests),
     bookingId,
-    notes: composeNotes_(false, ftChildren, 0, 'Free Tour'),
+    notes: composeNotes_(false, ftChildren, 0, ''),   // no 'Free Tour' tag — the Source column already says Free Tour
     isCancellation: isCancel,
     hasExplicitGuests: Boolean(guestsText),
     hasExplicitDate: Boolean(dateText),

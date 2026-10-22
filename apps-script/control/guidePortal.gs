@@ -3757,6 +3757,13 @@ var NFPF_TAB = 'near-future Portal feed';
 
 function rebuildNearFuturePortalFeed_() {
   __RRX = {};                                  // fresh per-run memo (trigger context)
+  // One-time: create the Ledger History tab so the manager can see it even before
+  // the first check-in (it self-fills on check-ins). Flag-guarded so it opens the
+  // ledger only until the tab exists, then it is just a cheap property read.
+  try {
+    const _p = PropertiesService.getScriptProperties();
+    if (_p.getProperty('HISTORY_TAB_READY') !== '1') { historyTab_(ledgerSS_()); _p.setProperty('HISTORY_TAB_READY', '1'); }
+  } catch (e) { /* best-effort */ }
   const feed = readPortalFeed_();              // SHEET read only — never Gmail
   if (!feed) return { ok: false, error: 'no Portal Feed to build from' };
   const ver = String(cacheVersion_());
@@ -4333,29 +4340,36 @@ function readCompletedLogReservations_() {
  * a split tour) keeps ONE current row instead of stacking duplicates. Best-effort:
  * any failure is swallowed so it can never block a check-in save.
  */
+/** Ensure the Ledger "History" tab exists (header + text-formatted Date/Time), and
+ *  return it. Split out so a trigger can create it BEFORE the first check-in, so the
+ *  manager sees the (empty) tab right away instead of only after a tour is saved. */
+function historyTab_(ss) {
+  const HEADERS = ['Date', 'Day', 'Time', 'Language', 'Guide', 'Guests', 'Guest names'];
+  let sh = ss.getSheetByName('History');
+  if (!sh) sh = ss.insertSheet('History');
+  if (sh.getLastRow() < 1 || String(sh.getRange(1, 1).getValue()).trim() !== 'Date') {
+    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    sh.setFrozenRows(1);
+  }
+  // Keep Date + Time as TEXT so Sheets does not coerce "2026-10-21" / "4:00 PM" into
+  // date/time values (which would break the upsert key on re-read).
+  sh.getRange('A:A').setNumberFormat('@');
+  sh.getRange('C:C').setNumberFormat('@');
+  return sh;
+}
+
 function writeLedgerHistory_(o) {
   try {
-    const ss = ledgerSS_();
-    const HEADERS = ['Date', 'Day', 'Time', 'Language', 'Guide', 'Guests', 'Guest names'];
-    let sh = ss.getSheetByName('History');
-    if (!sh) sh = ss.insertSheet('History');
-    if (sh.getLastRow() < 1 || String(sh.getRange(1, 1).getValue()).trim() !== 'Date') {
-      sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
-      sh.setFrozenRows(1);
-    }
-    // Keep Date + Time as TEXT so Sheets does not coerce "2026-10-21"/"4:00 PM" into
-    // date/time values (which would break the upsert key on re-read).
-    sh.getRange('A:A').setNumberFormat('@');
-    sh.getRange('C:C').setNumberFormat('@');
+    const sh = historyTab_(ledgerSS_());
     // Coercion-proof key (handles a date cell that came back as a Date object).
     const key = (dk, t, l) => toDateKey_(dk) + '|' + normalizeTime_(t) + '|' + String(l || '').toLowerCase();
     const myKey = key(o.dateKey, o.timeLabel, o.language);
     const row = [o.dateKey, o.day, o.timeLabel, o.language, o.guide, o.guests, o.names];
     if (sh.getLastRow() >= 2) {
-      const vals = sh.getRange(2, 1, sh.getLastRow() - 1, HEADERS.length).getValues();
+      const vals = sh.getRange(2, 1, sh.getLastRow() - 1, row.length).getValues();
       for (let i = 0; i < vals.length; i++) {
         if (key(vals[i][0], vals[i][2], vals[i][3]) === myKey) {
-          sh.getRange(i + 2, 1, 1, HEADERS.length).setValues([row]);   // update in place
+          sh.getRange(i + 2, 1, 1, row.length).setValues([row]);   // update in place
           return;
         }
       }
