@@ -2191,6 +2191,18 @@ function apiSave_(p) {
     (d.bookings || []).filter(b => b.checked && b.bookingId).forEach(b => {
       setCheckinGuide2_(b.bookingId, d.dateKey, (Number(b.guideIndex) || 1) === 2 && g2valid);
     });
+    // TOUR HISTORY: one row per tour in the Ledger's History tab — date/day/time/
+    // language/guide(s) + how many guests came + their names joined by " | ".
+    _s('history', function () {
+      const checked = (d.bookings || []).filter(b => b.checked);
+      if (checked.length) writeLedgerHistory_({
+        dateKey: d.dateKey, day: day, timeLabel: timeLabel, language: d.language,
+        guide: [primaryGuide, (g2valid ? secondGuide : '')].filter(Boolean).join(' / '),
+        guests: checked.reduce((s, b) => s + Math.max(0, Number(b.checkedIn || 0)), 0),
+        names: checked.map(b => String(b.name || '').trim()).filter(Boolean).join(' | ')
+      });
+      return 0;
+    });
     _s('flush', function () { SpreadsheetApp.flush(); return 0; });   // commit before returning, so a reload can't read stale
     // NOTE: the GuruWalk queue used to be rebuilt HERE, on every save. That read
     // the whole ledger + Completed Log and made check-ins take 7-22s to return.
@@ -4314,6 +4326,44 @@ function readCompletedLogReservations_() {
  *  the incoming Booking IDs on the same date are removed before the rewrite,
  *  so a repeated save can never stack duplicates even if a time cell was
  *  stored in a weird format by an older version. */
+/**
+ * One row per TOUR in the Ledger's "History" tab: date, weekday, time, language, the
+ * guide(s) who ran it, how many guests came, and the checked-in guests' names joined
+ * by " | ". Upserted by date+time+language, so re-saving a tour (or guide 2 saving on
+ * a split tour) keeps ONE current row instead of stacking duplicates. Best-effort:
+ * any failure is swallowed so it can never block a check-in save.
+ */
+function writeLedgerHistory_(o) {
+  try {
+    const ss = ledgerSS_();
+    const HEADERS = ['Date', 'Day', 'Time', 'Language', 'Guide', 'Guests', 'Guest names'];
+    let sh = ss.getSheetByName('History');
+    if (!sh) sh = ss.insertSheet('History');
+    if (sh.getLastRow() < 1 || String(sh.getRange(1, 1).getValue()).trim() !== 'Date') {
+      sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+      sh.setFrozenRows(1);
+    }
+    // Keep Date + Time as TEXT so Sheets does not coerce "2026-10-21"/"4:00 PM" into
+    // date/time values (which would break the upsert key on re-read).
+    sh.getRange('A:A').setNumberFormat('@');
+    sh.getRange('C:C').setNumberFormat('@');
+    // Coercion-proof key (handles a date cell that came back as a Date object).
+    const key = (dk, t, l) => toDateKey_(dk) + '|' + normalizeTime_(t) + '|' + String(l || '').toLowerCase();
+    const myKey = key(o.dateKey, o.timeLabel, o.language);
+    const row = [o.dateKey, o.day, o.timeLabel, o.language, o.guide, o.guests, o.names];
+    if (sh.getLastRow() >= 2) {
+      const vals = sh.getRange(2, 1, sh.getLastRow() - 1, HEADERS.length).getValues();
+      for (let i = 0; i < vals.length; i++) {
+        if (key(vals[i][0], vals[i][2], vals[i][3]) === myKey) {
+          sh.getRange(i + 2, 1, 1, HEADERS.length).setValues([row]);   // update in place
+          return;
+        }
+      }
+    }
+    sh.appendRow(row);
+  } catch (e) { /* history is best-effort; never block a check-in save */ }
+}
+
 function writeGuideLedger_(name, dateKey, time, language, rows) {
   const ss = ledgerSS_();
   const sh = guideTab_(ss, name);

@@ -395,6 +395,21 @@ check('erase removes every matching row and reports a count', erased >= 2, erase
 check('after erasure nothing references the id anywhere', exportClientData('B-M1').length === 0, null);
 check('an unrelated booking is untouched by the erase', exportClientData('B-M3').length >= 1, null);
 
+console.log('=== STRESS: Ledger History tab — one upserted row per tour ===');
+const histSS = new __mock.MockSS('ledger-hist'); if (typeof __RRX === 'undefined' || !__RRX) __RRX = {}; __RRX.ledgerSS = histSS;
+writeLedgerHistory_({ dateKey:'2026-10-21', day:'Wednesday', timeLabel:'4:00 PM', language:'Italian', guide:'Chiara', guests:12, names:'Smith | Lopez' });
+const _hsh = histSS.getSheetByName('History');
+check('History tab is created with a header row', _hsh && String(_hsh.getRange(1,1).getValue())==='Date' && String(_hsh.getRange(1,7).getValue())==='Guest names', _hsh && _hsh.getRange(1,1,1,7).getValues());
+let _hr = _hsh.getRange(2,1,Math.max(1,_hsh.getLastRow()-1),7).getValues().filter(r=>String(r[0]).trim());
+check('History: a tour row carries date/time/lang/guide/guests/names', _hr.length===1 && _hr[0][3]==='Italian' && _hr[0][4]==='Chiara' && _hr[0][5]===12 && _hr[0][6]==='Smith | Lopez', _hr[0]);
+writeLedgerHistory_({ dateKey:'2026-10-21', day:'Wednesday', timeLabel:'4:00 PM', language:'Italian', guide:'Chiara', guests:17, names:'Smith | Lopez | Rossi' });
+_hr = _hsh.getRange(2,1,Math.max(1,_hsh.getLastRow()-1),7).getValues().filter(r=>String(r[0]).trim());
+check('History: re-saving the SAME tour upserts (one row, updated counts + names)', _hr.length===1 && _hr[0][5]===17 && _hr[0][6]==='Smith | Lopez | Rossi', _hr.map(r=>r[5]));
+writeLedgerHistory_({ dateKey:'2026-10-21', day:'Wednesday', timeLabel:'10:30 AM', language:'English', guide:'Albert', guests:5, names:'A | B' });
+_hr = _hsh.getRange(2,1,Math.max(1,_hsh.getLastRow()-1),7).getValues().filter(r=>String(r[0]).trim());
+check('History: a different tour appends a second row', _hr.length===2, _hr.map(r=>r[2]+'/'+r[3]));
+__RRX.ledgerSS = null;
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
