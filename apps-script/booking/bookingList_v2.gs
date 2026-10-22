@@ -4568,7 +4568,7 @@ function parseViatorMessage_(msg, mode) {
 
   return normalizeBooking_({
     name,
-    phone: cleanPhone_(rawPhone),
+    phone: cleanPhone_(rawPhone) || cleanPhone_(labeledPhoneFallback_(text)),   // fail-safe: a labelled phone anywhere
     guests: explicitGuests || 1,
     date: normalizeDate_(dateText),
     time: rawTime ? normalizeTime_(rawTime) : '',
@@ -4697,6 +4697,21 @@ function extractViatorNetRate_(text) {
  * 17. GURUWALK PARSER
  ******************************************************/
 
+/**
+ * Last-resort phone: a LABELLED phone value anywhere in the email — used only when a
+ * parser's primary (often section-anchored) phone read comes back empty. A real
+ * number can sit in a shared header (e.g. a Guruwalk modification's "Phone:" line
+ * above the booking blocks) or under a localised label. Labelled only (Phone /
+ * Mobile / Telephone / Teléfono / Móvil / Cellulare / Tel / Cell) — NEVER a bare
+ * "+digits" scan — so it can't accidentally grab a support hotline from the footer.
+ */
+function labeledPhoneFallback_(text) {
+  return valueAfterLabel_(String(text || ''), [
+    /^Phone\b/i, /^Mobile\b/i, /^Telephone\b/i, /^Cell(?:phone)?\b/i,
+    /^Tel[eé]fono\b/i, /^M[oó]vil\b/i, /^Telefono\b/i, /^Cellulare\b/i, /^T[eé]l[eé]phone\b/i
+  ]);
+}
+
 function parseGuruwalkMessage_(msg, mode) {
   const subject = msg.getSubject() || '';
   const text = subject + '\n' + getBestMessageText_(msg);
@@ -4759,6 +4774,11 @@ function parseGuruwalkBlocks_(text) {
   // email and use it as the fallback for every block, or the previous-booking
   // block would be nameless -> dropped as invalid -> the old code never removed.
   const globalName = valueAfterLabel_(s, [/^Walker\b/i, /^Name\b/i, /^Traveler\b/i, /^Traveller\b/i]);
+  // The Phone line ALSO sits in the shared header of a MODIFICATION email (above the
+  // new/previous blocks), so a per-block read misses it and the phone was lost on
+  // every Guruwalk modification. Read it globally and use it as the block fallback,
+  // exactly like the name.
+  const globalPhone = valueAfterLabel_(s, [/^Phone\b/i, /^Mobile\b/i, /^Telephone\b/i]);
 
   for (const block of blocks) {
     // valueAfterLabel_ reads a value whether it is on the same line ("X: v") or
@@ -4768,7 +4788,7 @@ function parseGuruwalkBlocks_(text) {
     if (!bookingId) continue;
 
     const name = valueAfterLabel_(block, [/^Walker\b/i, /^Name\b/i, /^Traveler\b/i, /^Traveller\b/i]) || globalName;
-    const rawPhone = valueAfterLabel_(block, [/^Phone\b/i, /^Mobile\b/i, /^Telephone\b/i]);
+    const rawPhone = valueAfterLabel_(block, [/^Phone\b/i, /^Mobile\b/i, /^Telephone\b/i]) || globalPhone;
 
     // Attendees can break the party down — "1 adult, 1 child" — so parse each
     // group, not just the first number (that dropped the children entirely).
@@ -5009,7 +5029,7 @@ function parseGygMessage_(msg, mode) {
 
   return normalizeBooking_({
     name: f.name,
-    phone: cleanPhone_(f.phone),
+    phone: cleanPhone_(f.phone) || cleanPhone_(labeledPhoneFallback_(text)),   // fail-safe: a labelled phone anywhere
     guests: pp.adults || 1,               // ADULTS only; children live in Notes
     children: pp.children,
     infants: pp.infants,
@@ -5521,7 +5541,7 @@ function parseFreetourMessage_(msg, mode) {
 
   return normalizeBooking_({
     name,
-    phone: cleanPhone_(rawPhone),
+    phone: cleanPhone_(rawPhone) || cleanPhone_(labeledPhoneFallback_(text)),   // fail-safe: a labelled phone anywhere
     guests,
     children: ftChildren,
     date,

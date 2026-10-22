@@ -1087,6 +1087,12 @@ check('the <h1> no longer swallows the name — NEW booking parsed WITH its name
   gwMM.newBooking && gwMM.newBooking.name==='Sara Dervishi' && gwMM.newBooking.bookingId==='BAR12755275', gwMM.newBooking);
 check('the PREVIOUS booking is parsed too (so the move can remove the old code)',
   gwMM.oldBooking && gwMM.oldBooking.bookingId==='BAR12719547' && gwMM.oldBooking.name==='Sara Dervishi', gwMM.oldBooking);
+// The Phone sits in the shared header (above the new/previous blocks), so a per-block
+// read missed it and the phone was blank on every Guruwalk modification. The global
+// fallback now keeps it on BOTH bookings.
+check('the shared-header phone is kept on the new AND previous booking (modification phone fix)',
+  /3484482294/.test(String(gwMM.newBooking.phone)) && /3484482294/.test(String(gwMM.oldBooking.phone)),
+  [gwMM.newBooking.phone, gwMM.oldBooking.phone]);
 check('htmlToText_ breaks the line after a heading', /booking modification on a tour\nWalker:/.test(htmlToText_('<h1>You have a booking modification on a tour</h1><p>Walker: X</p>')), htmlToText_('<h1>a</h1><p>b</p>'));
 
 console.log('=================================');
