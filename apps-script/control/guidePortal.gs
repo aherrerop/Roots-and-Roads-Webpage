@@ -143,6 +143,13 @@ const PORTAL = {
   // and the red outline always agree.
   TOUR_FULL_THRESHOLD: 20,
 
+  // One guide assigned OVERLAPPING tours (e.g. 10:00 + 10:30) is leading both groups
+  // at once, so their headcounts add toward the 20 cap. Two tours count as concurrent
+  // when their start times are less than this many hours apart (a 3h tour still
+  // running when the next starts). Within a half-day this catches 10:00/10:30/11:00
+  // and 15:30/16:00; across half-days (10:30 vs 15:30 = 5h) it does not.
+  OVERLAP_LOAD_HOURS: 3,
+
   // Flat € we owe a guide who showed up and ran a tour where NOBODY in the whole
   // group turned up (a full no-show). Any tour type / platform. Logged once per
   // tour as a 'No-show' ledger line via apiNoShow_. Editable here.
@@ -1010,6 +1017,11 @@ function apiTours_(p) {
 
   const mine = schedule.filter(s => s.assigned.some(a => sameName_(a, name)));
 
+  // A guide on OVERLAPPING tours (10:00 + 10:30) leads both groups at once, so their
+  // guests combine toward the 20 cap -> both cards flag full. Computed over the WHOLE
+  // schedule (not just `mine`) so every one of a guide's concurrent tours is counted.
+  const overloaded = _t('overload', function () { return overloadedShiftKeys_(schedule, bookingsByKey); });
+
   const tours = _t('mine', function () { return mine.map(shift => {
     const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
     // A private shift shows only its private booking(s); a regular shift only
@@ -1045,9 +1057,10 @@ function apiTours_(p) {
     const bookedChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
     const checkedGuests = bookings.reduce((s, b) => s + (b.checked ? Number(b.checkedIn || 0) : 0), 0);
     // "Full" GROUP tour: at the cap the card is outlined red (assign a 2nd guide +
-    // reopen). Private tours are never capped. Children are free up to 5, then each
-    // counts as half an adult (fullTourCount_); bookedChildren is still shown.
-    const full = !shift.private && fullTourCount_(bookedGuests, bookedChildren) >= PORTAL.TOUR_FULL_THRESHOLD;
+    // reopen). Private tours are never capped. Children free up to 5, then half each
+    // (fullTourCount_). A guide's OVERLAPPING tours are combined (overloadedShiftKeys_),
+    // so two concurrent tours can flag full even if neither alone reaches 20.
+    const full = !shift.private && !!overloaded[shiftKeyFull_(shift)];
 
     const id = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
     return {
@@ -1167,8 +1180,9 @@ function apiTours_(p) {
       const bGuests = bookings.reduce((s, b) => s + Number(b.guests || 0), 0);
       const bChildren = bookings.reduce((s, b) => s + Number(b.children || 0), 0);
       // "Full" GROUP tour: outline red + prompt a 2nd guide. Private never capped.
-      // Children free up to 5, then each counts as half an adult (fullTourCount_).
-      const full = !shift.private && fullTourCount_(bGuests, bChildren) >= PORTAL.TOUR_FULL_THRESHOLD;
+      // Children free up to 5, then half each; a guide's OVERLAPPING tours combine
+      // toward the cap (overloadedShiftKeys_), so two concurrent tours can flag full.
+      const full = !shift.private && !!overloaded[shiftKeyFull_(shift)];
       const aid = key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
       return {
         id: aid,
@@ -4668,6 +4682,36 @@ function round2_(n) { return Math.round(Number(n || 0) * 100) / 100; }
 function fullTourCount_(adults, children) {
   const a = Number(adults || 0), c = Number(children || 0);
   return a + (c > 5 ? c * 0.5 : 0);
+}
+
+/** Shift keys (shiftKeyFull_) that count as FULL once each ASSIGNED GUIDE's
+ *  OVERLAPPING tours are combined: one guide leading two concurrent tours (e.g.
+ *  10:00 + 10:30) leads both groups at once, so their fullTourCount_ headcounts add
+ *  toward the cap and BOTH cards flag full. Private tours are never capped or
+ *  combined; an UNASSIGNED tour counts only its own guests (a lone 20 still flags).
+ *  Concurrency = starts < PORTAL.OVERLAP_LOAD_HOURS apart. */
+function overloadedShiftKeys_(schedule, bookingsByKey) {
+  const sepMs = PORTAL.OVERLAP_LOAD_HOURS * 3600000;
+  const items = (schedule || []).filter(s => !s.private).map(function (s) {
+    const bk = bookingsForShift_(bookingsByKey, s);
+    return {
+      key: shiftKeyFull_(s),
+      guide: String((s.assigned && s.assigned[0]) || '').trim().toLowerCase(),
+      ms: shiftStartMs_(s.dateKey, s.minutes),
+      load: fullTourCount_(bk.reduce((n, b) => n + Number(b.guests || 0), 0),
+                           bk.reduce((n, b) => n + Number(b.children || 0), 0))
+    };
+  });
+  const out = {};
+  items.forEach(function (it) {
+    let combined = it.load;                       // unassigned -> only its own guests
+    if (it.guide) {
+      combined = 0;
+      items.forEach(function (ot) { if (ot.guide === it.guide && Math.abs(ot.ms - it.ms) < sepMs) combined += ot.load; });
+    }
+    if (combined >= PORTAL.TOUR_FULL_THRESHOLD) out[it.key] = true;
+  });
+  return out;
 }
 
 /** Accepts a Date or a string, returns "yyyy-MM-dd" (local tz) or ''. */

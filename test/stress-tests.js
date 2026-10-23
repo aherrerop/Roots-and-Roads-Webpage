@@ -410,6 +410,28 @@ _hr = _hsh.getRange(2,1,Math.max(1,_hsh.getLastRow()-1),7).getValues().filter(r=
 check('History: a different tour appends a second row', _hr.length===2, _hr.map(r=>r[2]+'/'+r[3]));
 __RRX.ledgerSS = null;
 
+console.log('=== STRESS: combined 20-cap across a guide\'s OVERLAPPING tours ===');
+const _dk = '2026-11-02';
+const bk = g => [{ guests:g, children:0, source:'GetYourGuide', note:'', rowType:'booking', bookingId:'b'+g }];
+const sh = (mins, guide) => ({ dateKey:_dk, minutes:mins, language:'English', sfExt:false, private:false, privIndex:1, assigned:guide?[guide]:[] });
+const _s10 = sh(10*60,'Albert'), _s1030 = sh(10*60+30,'Albert'), _s1530 = sh(15*60+30,'Carlos');
+const _bbk = {};
+_bbk[shiftKey_(_dk,10*60,'English')]    = bk(12);
+_bbk[shiftKey_(_dk,10*60+30,'English')] = bk(10);
+_bbk[shiftKey_(_dk,15*60+30,'English')] = bk(8);
+const _ov = overloadedShiftKeys_([_s10,_s1030,_s1530], _bbk);
+check('overlap cap: 10:00 (12) + 10:30 (10) same guide -> BOTH full (combined 22)',
+  !!_ov[shiftKeyFull_(_s10)] && !!_ov[shiftKeyFull_(_s1030)], Object.keys(_ov));
+check('overlap cap: a non-overlapping 15:30 (8) is NOT full', !_ov[shiftKeyFull_(_s1530)], null);
+const _s1030b = sh(10*60+30,'Mario');   // different guide on 10:30
+const _ov2 = overloadedShiftKeys_([_s10,_s1030b], _bbk);
+check('overlap cap: DIFFERENT guides on 10:00/10:30 -> neither alone is full (12, 10)',
+  !_ov2[shiftKeyFull_(_s10)] && !_ov2[shiftKeyFull_(_s1030b)], Object.keys(_ov2));
+const _s9 = sh(9*60, '');   // lone, unassigned
+const _bbk3 = {}; _bbk3[shiftKey_(_dk,9*60,'English')] = bk(20);
+check('overlap cap: a lone unassigned 20-guest tour is full on its own',
+  !!overloadedShiftKeys_([_s9], _bbk3)[shiftKeyFull_(_s9)], null);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
