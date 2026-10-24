@@ -1095,11 +1095,16 @@ check('the shared-header phone is kept on the new AND previous booking (modifica
   [gwMM.newBooking.phone, gwMM.oldBooking.phone]);
 check('htmlToText_ breaks the line after a heading', /booking modification on a tour\nWalker:/.test(htmlToText_('<h1>You have a booking modification on a tour</h1><p>Walker: X</p>')), htmlToText_('<h1>a</h1><p>b</p>'));
 
-console.log('--- Gmail poll cadence by time of day (overnight slowdown saves quota) ---');
-check('01:00-04:00 -> every 30 min', fastPollWindowMin_(1)===30 && fastPollWindowMin_(3)===30, [fastPollWindowMin_(1),fastPollWindowMin_(3)]);
-check('00:00-01:00 and 04:00-08:00 -> every 10 min', fastPollWindowMin_(0)===10 && fastPollWindowMin_(4)===10 && fastPollWindowMin_(7)===10, [fastPollWindowMin_(0),fastPollWindowMin_(4),fastPollWindowMin_(7)]);
-check('08:00-24:00 -> normal 5 min', fastPollWindowMin_(8)===5 && fastPollWindowMin_(12)===5 && fastPollWindowMin_(23)===5, [fastPollWindowMin_(8),fastPollWindowMin_(12),fastPollWindowMin_(23)]);
-check('boundaries: 04:00 is 10 min (not 30), 08:00 is back to 5 min', fastPollWindowMin_(4)===10 && fastPollWindowMin_(8)===5, null);
+console.log('--- Gmail poll cadence by time of day (tighter near tour starts, slower overnight) ---');
+const at=(h,m)=>new Date(2026,0,5,h,m||0,0,0);   // mock passes new Date(args) through to a real Date
+check('00:00-06:00 -> every 30 min', fastPollWindowMin_(at(0,0))===30 && fastPollWindowMin_(at(3,0))===30 && fastPollWindowMin_(at(5,59))===30, [fastPollWindowMin_(at(0,0)),fastPollWindowMin_(at(3,0)),fastPollWindowMin_(at(5,59))]);
+check('06:00-08:00 -> every 10 min', fastPollWindowMin_(at(6,0))===10 && fastPollWindowMin_(at(7,59))===10, [fastPollWindowMin_(at(6,0)),fastPollWindowMin_(at(7,59))]);
+check('08:00-24:00 -> normal 5 min', fastPollWindowMin_(at(8,0))===5 && fastPollWindowMin_(at(12,0))===5 && fastPollWindowMin_(at(23,0))===5, [fastPollWindowMin_(at(8,0)),fastPollWindowMin_(at(12,0)),fastPollWindowMin_(at(23,0))]);
+check('boundaries: 06:00 is 10 min (not 30), 08:00 is back to 5 min', fastPollWindowMin_(at(6,0))===10 && fastPollWindowMin_(at(8,0))===5, null);
+check('2 min around the 10:30 start (-20 before, +10 after)', fastPollWindowMin_(at(10,10))===2 && fastPollWindowMin_(at(10,30))===2 && fastPollWindowMin_(at(10,40))===2, [fastPollWindowMin_(at(10,10)),fastPollWindowMin_(at(10,30)),fastPollWindowMin_(at(10,40))]);
+check('2 min around the 15:30 start', fastPollWindowMin_(at(15,10))===2 && fastPollWindowMin_(at(15,30))===2 && fastPollWindowMin_(at(15,40))===2, [fastPollWindowMin_(at(15,10)),fastPollWindowMin_(at(15,30)),fastPollWindowMin_(at(15,40))]);
+check('2 min around the 16:00 italian start', fastPollWindowMin_(at(15,50))===2 && fastPollWindowMin_(at(16,0))===2 && fastPollWindowMin_(at(16,10))===2, [fastPollWindowMin_(at(15,50)),fastPollWindowMin_(at(16,0)),fastPollWindowMin_(at(16,10))]);
+check('just outside a tour window is back to the 5-min base', fastPollWindowMin_(at(10,9))===5 && fastPollWindowMin_(at(10,41))===5 && fastPollWindowMin_(at(16,11))===5, [fastPollWindowMin_(at(10,9)),fastPollWindowMin_(at(10,41)),fastPollWindowMin_(at(16,11))]);
 PropertiesService.getScriptProperties().deleteProperty('LAST_FAST_POLL_AT');
 const _due1 = fastPollDue_(), _due2 = fastPollDue_();   // first fire due; an immediate repeat is gated out
 check('fastPollDue_: first fire runs, an immediate repeat is skipped', _due1===true && _due2===false, [_due1,_due2]);

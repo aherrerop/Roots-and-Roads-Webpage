@@ -602,19 +602,44 @@ function safeTriggerRun_(label, fn) {
   }
 }
 
-// Gmail poll cadence by TIME OF DAY (Europe/Madrid). No tours run overnight, so the
-// fast poll runs LESS then to save the ~20k/day Gmail read quota; that saved budget
-// pays for the normal daytime cadence (and leaves room to poll faster around tour
-// times). The time-based trigger still fires every 5 min — this just SKIPS fires
-// until the current window's interval has elapsed. EDIT THE WINDOWS HERE:
-//   01:00–04:00 -> every 30 min · 00:00–01:00 & 04:00–08:00 -> every 10 min · else 5 min
-// A skipped night poll can never miss a booking: the next poll catches up and the
-// twice-daily audit + reconcile backstop everything. `h` is injectable for tests.
-function fastPollWindowMin_(h) {
-  if (h == null) { try { h = Number(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'H')); } catch (e) { return 5; } }
-  if (h >= 1 && h < 4) return 30;
-  if (h < 1 || (h >= 4 && h < 8)) return 10;
-  return 5;
+// Gmail poll cadence by TIME OF DAY (Europe/Madrid), and FASTER around tour starts so
+// last-minute sign-ups land on the sheet before/just after the tour begins:
+//   around 10:30 / 15:30 / 16:00 (±window)  -> every 2 min
+//   00:00–06:00 -> every 30 min · 06:00–08:00 -> every 10 min · 08:00–24:00 -> every 5 min
+// The 2-min tier needs the time trigger to fire every 1 MINUTE (run
+// installBookingFastTrigger once); each fire is gated to the window's interval, so most
+// are a cheap no-op (no Gmail read). Overnight polling is cut to save the ~20k/day Gmail
+// read quota, which pays for the tighter daytime + tour-window polling. A skipped poll
+// can never miss a booking — the next poll catches up and the audit + reconcile backstop
+// everything. EDIT the tour times / windows / intervals here. `now` is injectable for tests.
+function fastPollWindowMin_(now) {
+  let mins;
+  try {
+    const hm = Utilities.formatDate(now || new Date(), Session.getScriptTimeZone(), 'HH:mm').split(':');
+    mins = Number(hm[0]) * 60 + Number(hm[1]);
+  } catch (e) { const d = now || new Date(); mins = d.getHours() * 60 + d.getMinutes(); }
+  const TOUR_STARTS = [10 * 60 + 30, 15 * 60 + 30, 16 * 60];   // 10:30, 15:30, 16:00
+  const BEFORE = 20, AFTER = 10;                               // minutes around a start
+  for (let i = 0; i < TOUR_STARTS.length; i++) {
+    if (mins >= TOUR_STARTS[i] - BEFORE && mins <= TOUR_STARTS[i] + AFTER) return 2;
+  }
+  const h = Math.floor(mins / 60);
+  if (h < 6) return 30;     // 00:00–06:00
+  if (h < 8) return 10;     // 06:00–08:00
+  return 5;                 // 08:00–24:00
+}
+
+/** Run ONCE from the editor to switch the booking poll to a 1-MINUTE trigger (needed
+ *  for the 2-min near-tour cadence). Every fire is gated by fastPollWindowMin_, so most
+ *  fires are a cheap no-op. Replaces any existing runBookingSystem trigger. */
+function installBookingFastTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'runBookingSystem') { try { ScriptApp.deleteTrigger(t); } catch (e) {} }
+  });
+  ScriptApp.newTrigger('runBookingSystem').timeBased().everyMinutes(1).create();
+  const msg = 'Booking poll now fires every 1 min (gated: 2-min near 10:30/15:30/16:00, 5/10/30-min otherwise).';
+  console.log(msg);
+  return msg;
 }
 function fastPollDue_() {
   try {
