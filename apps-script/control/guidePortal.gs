@@ -4491,19 +4491,24 @@ function refreshRatesSummary() {
 
 // Click-to-refresh control on the Rates tab: a checkbox the manager ticks to
 // recompute the Summary on the spot — the ONLY thing that recomputes it (no
-// background job). Lives on the "Summary" header row: "Summary [Refresh ▶ ☑]".
+// background job). Sits on the "Summary" header row: "Summary [☑ ◄ Refresh]".
+// To move the checkbox, change RATES_REFRESH_COL (the label follows, to its right).
 const RATES_REFRESH_ROW = 12;   // the "Summary" header row on the Rates tab
-const RATES_REFRESH_COL = 4;    // column D — the checkbox (label sits in C)
+const RATES_REFRESH_COL = 2;    // column B — the checkbox (label sits one column to its right)
 
-/** Put the "Refresh ▶" label + checkbox on the Rates tab (idempotent). */
+/** Put the checkbox + "◄ Refresh" label on the Rates tab (idempotent). */
 function ensureRatesRefreshBox_(ss) {
   ss = ss || ledgerSS_();
   const rates = ss.getSheetByName('Rates');
   if (!rates) return;
-  rates.getRange(RATES_REFRESH_ROW, RATES_REFRESH_COL - 1).setValue('Refresh ▶');
+  // Clear any prior checkbox/label on this row (e.g. an earlier column) so
+  // re-running never leaves a stray box behind.
+  const strip = rates.getRange(RATES_REFRESH_ROW, 2, 1, 4);   // B..E on the Summary row
+  strip.clearDataValidations(); strip.clearContent();
   const box = rates.getRange(RATES_REFRESH_ROW, RATES_REFRESH_COL);
   box.insertCheckboxes();
   box.setValue(false);
+  rates.getRange(RATES_REFRESH_ROW, RATES_REFRESH_COL + 1).setValue('◄ Refresh');
   try { box.setNote('Tick to update the Summary totals now.'); } catch (e) {}
 }
 
@@ -4533,7 +4538,7 @@ function installLedgerRefreshButton() {
   });
   ScriptApp.newTrigger('onLedgerEdit_').forSpreadsheet(ss).onEdit().create();
   writeRatesSummary_(ss);
-  const msg = 'Refresh box ready on the Rates tab (cell D12). Tick it to update the Summary totals.';
+  const msg = 'Refresh box ready on the Rates tab (cell B12). Tick it to update the Summary totals.';
   console.log(msg);
   return msg;
 }
