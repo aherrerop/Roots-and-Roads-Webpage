@@ -181,7 +181,7 @@ check('a timeout does NOT fall back to JSONP (no second server execution)', /if\
 check('a timeout skips the quiet fast-retry (waits for the next poll)', /LOAD_FAILS < 2 && !\(err && err\.kind==="timeout"\)/.test(html), null);
 check('the fetch + JSONP load timeout is 60s (a slow-but-alive load finishes)', /setTimeout\(\(\)=>\{ timedOut=true; ctrl\.abort\(\); \}, 60000\)/.test(html) && /reject\(mkErr\("timeout","TIMEOUT"\)\);\} \}, 60000\)/.test(html), null);
 check('the auto-refresh poll base is 30s (fewer serialized executions)', /POLL_MS = 30000;/.test(html), null);
-check('the passive poll is adaptive (self-rescheduling on POLL_MS)', /setTimeout\(\(\)=>\{ ckFlush\(\); asgFlush\(\); if\(canAutoRefresh\(\)\) loadTours\("poll"\); scheduleNextPoll\(\); \}, POLL_MS\)/.test(html), null);
+check('the passive poll is adaptive (self-rescheduling on the computed delay)', /setTimeout\(\(\)=>\{ ckFlush\(\); asgFlush\(\); if\(canAutoRefresh\(\)\) loadTours\("poll"\); scheduleNextPoll\(\); \}, pollDelayMs\(\)\)/.test(html), null);
 check('the client adopts the server pollHint (backpressure) and reschedules', /if\(r\.pollHint\)\{[\s\S]*?POLL_MS=next; if\(window\._rrReschedulePoll\) window\._rrReschedulePoll\(\)/.test(html), null);
 check('pollHint is clamped so a bad value cannot wedge the poll', /Math\.max\(20000, Math\.min\(180000, Number\(r\.pollHint\)\*1000\)\)/.test(html), null);
 // Backpressure stays SILENT: pollHint still widens the poll under load (asserted
@@ -335,6 +335,20 @@ check('"12:30" -> 12:30 PM (noon stays PM)', (function(){ const r=parseTypedTime
 check('"4:30 PM" explicit is honoured', (function(){ const r=parseTypedTime('4:30 PM'); return r && r.t24==='16:30'; })(), parseTypedTime('4:30 PM'));
 check('"9 am" and "5pm" shorthand parse', parseTypedTime('9 am').t24==='9:00' && parseTypedTime('5pm').t24==='17:00', [parseTypedTime('9 am'), parseTypedTime('5pm')]);
 check('garbage input is rejected (null), never a wrong time', parseTypedTime('later')===null && parseTypedTime('25:99')===null, [parseTypedTime('later'), parseTypedTime('25:99')]);
+
+console.log('--- Near tour start: poll FASTER so last-minute sign-ups show ---');
+const nearSrc = html.slice(html.indexOf('const NEAR_POLL_MS'), html.indexOf('function pollDelayMs(){'))
+  + 'function pollDelayMs(){ return nearTourNow() ? Math.min(POLL_MS, NEAR_POLL_MS) : POLL_MS; }';
+const makeNear = (tours, pollMs) => (new Function('TOURS_CACHE','POLL_MS', nearSrc + '\n;return {nearTourNow, pollDelayMs};'))(tours, pollMs);
+const _n = new Date();
+const _dk = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const _t24 = d => String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+const _soon = new Date(_n.getTime()+5*60000), _far = new Date(_n.getTime()+3*3600000);
+const _N1 = makeNear([{dateKey:_dk(_soon), time:_t24(_soon)}], 30000);
+check('a tour starting in 5 min -> nearTourNow true, poll uses the 15s fast interval', _N1.nearTourNow()===true && _N1.pollDelayMs()===15000, _N1.pollDelayMs());
+const _N2 = makeNear([{dateKey:_dk(_far), time:_t24(_far)}], 30000);
+check('far from any tour -> normal cadence (30s)', _N2.nearTourNow()===false && _N2.pollDelayMs()===30000, _N2.pollDelayMs());
+check('the fast interval never goes below the server-adaptive floor when it is tighter', makeNear([{dateKey:_dk(_soon), time:_t24(_soon)}], 12000).pollDelayMs()===12000, null);
 
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');

@@ -299,7 +299,7 @@ const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hc
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-21-avail-dot2";
+const PORTAL_VERSION = "2026-10-24-near-tour-poll";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -653,7 +653,7 @@ function startAutoRefresh(){
   // the inflight guard still drops any poll that would overlap a running load.
   function scheduleNextPoll(){
     if(window._rrPollTimer) clearTimeout(window._rrPollTimer);
-    window._rrPollTimer = setTimeout(()=>{ ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("poll"); scheduleNextPoll(); }, POLL_MS);
+    window._rrPollTimer = setTimeout(()=>{ ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("poll"); scheduleNextPoll(); }, pollDelayMs());
   }
   scheduleNextPoll();
   window._rrReschedulePoll = scheduleNextPoll;   // loadTours calls this when pollHint changes
@@ -673,6 +673,25 @@ function startAutoRefresh(){
 let LOAD_SEQ = 0;
 let LOADING = false;   // one tours request at a time — never let polls pile up
 let POLL_MS = 30000;   // passive-refresh interval; the server adjusts it via r.pollHint under load
+// Around a tour's START, last-minute sign-ups are still landing on the BookingSheet,
+// so refresh FASTER — a guide should see everyone who signed up right as the tour
+// begins. From NEAR_BEFORE_MIN before to NEAR_AFTER_MIN after ANY shown tour's start
+// we poll every NEAR_POLL_MS instead of the normal/adaptive POLL_MS. The window is
+// narrow and only the few guides running that tour are in it, so the extra load is
+// small; the rest of the day keeps the usual (quieter) cadence. Still gated by
+// canAutoRefresh(), so it never clobbers a card a guide is mid-check-in on.
+const NEAR_POLL_MS = 15000, NEAR_BEFORE_MIN = 15, NEAR_AFTER_MIN = 10;
+function nearTourNow(){
+  const now = Date.now(), list = (typeof TOURS_CACHE!=="undefined" && TOURS_CACHE) || [];
+  for(const t of list){
+    const tm = String((t&&t.time)||"").match(/^(\d{1,2}):(\d{2})/);
+    if(!t || !t.dateKey || !tm) continue;
+    const start = new Date(t.dateKey+"T"+String(tm[1]).padStart(2,"0")+":"+tm[2]+":00").getTime();
+    if(!isNaN(start) && now >= start - NEAR_BEFORE_MIN*60000 && now <= start + NEAR_AFTER_MIN*60000) return true;
+  }
+  return false;
+}
+function pollDelayMs(){ return nearTourNow() ? Math.min(POLL_MS, NEAR_POLL_MS) : POLL_MS; }
 async function loadTours(nav){
   // A tours load can take several seconds. The 20s poll (and focus/visibility
   // events) must NOT start a second one while the first is still running, or
