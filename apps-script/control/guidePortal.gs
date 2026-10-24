@@ -4487,6 +4487,55 @@ function refreshRatesSummary() {
   return msg;
 }
 
+// Click-to-refresh control on the Rates tab: a checkbox the manager ticks to
+// recompute the Summary on the spot (it also refreshes hourly). Lives on the
+// "Summary" header row so it reads as "Summary [Refresh ▶ ☑]".
+const RATES_REFRESH_ROW = 12;   // the "Summary" header row on the Rates tab
+const RATES_REFRESH_COL = 4;    // column D — the checkbox (label sits in C)
+
+/** Put the "Refresh ▶" label + checkbox on the Rates tab (idempotent). */
+function ensureRatesRefreshBox_(ss) {
+  ss = ss || ledgerSS_();
+  const rates = ss.getSheetByName('Rates');
+  if (!rates) return;
+  rates.getRange(RATES_REFRESH_ROW, RATES_REFRESH_COL - 1).setValue('Refresh ▶');
+  const box = rates.getRange(RATES_REFRESH_ROW, RATES_REFRESH_COL);
+  box.insertCheckboxes();
+  box.setValue(false);
+  try { box.setNote('Tick to update the Summary now (it also refreshes automatically every hour).'); } catch (e) {}
+}
+
+/** Installable onEdit handler (bound to the Ledger spreadsheet by
+ *  installLedgerRefreshButton). Ticking the Rates refresh box recomputes the
+ *  Summary and then clears the box. Any other edit is ignored. */
+function onLedgerEdit_(e) {
+  try {
+    if (!e || !e.range) return;
+    const sh = e.range.getSheet();
+    if (sh.getName() !== 'Rates') return;
+    if (e.range.getRow() !== RATES_REFRESH_ROW || e.range.getColumn() !== RATES_REFRESH_COL) return;
+    const on = e.value === 'TRUE' || e.range.getValue() === true;   // tick only; an untick is a no-op
+    if (!on) return;
+    writeRatesSummary_(e.source || ledgerSS_());
+    e.range.setValue(false);                                        // reset so it's ready for the next click
+  } catch (err) { console.log('onLedgerEdit_ ' + err); }
+}
+
+/** Run ONCE from the editor: adds the Rates refresh checkbox, wires the onEdit
+ *  trigger to the Ledger spreadsheet, and fills the Summary now. */
+function installLedgerRefreshButton() {
+  const ss = ledgerSS_();
+  ensureRatesRefreshBox_(ss);
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'onLedgerEdit_') { try { ScriptApp.deleteTrigger(t); } catch (e) {} }
+  });
+  ScriptApp.newTrigger('onLedgerEdit_').forSpreadsheet(ss).onEdit().create();
+  writeRatesSummary_(ss);
+  const msg = 'Refresh box ready on the Rates tab (cell D12). Tick it to update the Summary; it also refreshes hourly.';
+  console.log(msg);
+  return msg;
+}
+
 function writeGuideLedger_(name, dateKey, time, language, rows) {
   const ss = ledgerSS_();
   const sh = guideTab_(ss, name);

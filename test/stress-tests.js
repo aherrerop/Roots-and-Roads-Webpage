@@ -474,6 +474,20 @@ check('overlap cap: a lone unassigned 20-guest tour is full on its own',
   check('rates summary: values are written next to their labels (found by column A)',
     rates.getRange(13, 2).getValue() === 115 && rates.getRange(14, 2).getValue() === 6 && rates.getRange(15, 2).getValue() === 109,
     [rates.getRange(13, 2).getValue(), rates.getRange(14, 2).getValue(), rates.getRange(15, 2).getValue()]);
+
+  // Click-to-refresh box: ticking it recomputes; an untick / other cell is a no-op.
+  ensureRatesRefreshBox_(led);
+  const box = rates.getRange(RATES_REFRESH_ROW, RATES_REFRESH_COL);
+  led.getSheetByName('Amalia').getRange(3, 1, 1, LEDGER_HEADERS.length).setValues([grow(25, 0)]);  // Amalia 75->100, owedTo should become 140
+  box.setValue(true);
+  onLedgerEdit_({ source: led, range: box, value: 'TRUE' });
+  check('refresh box: ticking it recomputes the totals', rates.getRange(13, 2).getValue() === 140, rates.getRange(13, 2).getValue());
+  check('refresh box: it clears itself after running (ready for next click)', box.getValue() === false, box.getValue());
+  rates.getRange(13, 2).setValue(0);
+  onLedgerEdit_({ source: led, range: box, value: 'FALSE' });            // an untick must NOT recompute
+  check('refresh box: an untick (FALSE) is a no-op', rates.getRange(13, 2).getValue() === 0, rates.getRange(13, 2).getValue());
+  onLedgerEdit_({ source: led, range: rates.getRange(5, 2), value: 'TRUE' });   // a tick on another cell
+  check('refresh box: an edit on another cell is a no-op', rates.getRange(13, 2).getValue() === 0, rates.getRange(13, 2).getValue());
 })();
 
 console.log('=================================');
