@@ -4424,63 +4424,74 @@ function setupLedgerHistoryTab() {
   return msg;
 }
 
-// Tabs on the Ledger that are NOT a guide's per-booking ledger (so the Rates
-// summary never sums them): the Rates sheet itself, the unassigned-tour roster,
-// the History roster, and the no-shows / check-ins helper tabs.
+// Tell a guide's money ledger apart from the Ledger's helper tabs, so the Rates
+// summary only ever sums real guide pay. Every line here answers one question:
+// "is this tab one guide's per-booking ledger?"
 function isGuideLedgerTab_(sh) {
   const name = sh.getName();
+
+  // Reject the known non-guide tabs by name.
+  // Rates = settings + summary; Unassigned = tours with no guide yet; History =
+  // the past-tours roster; no-shows / check-ins = manager helper tabs.
   if (name === 'Rates' || name === 'Unassigned' || name === 'History') return false;
   if (/no-shows|check-ins/i.test(name)) return false;
+
+  // Reject anything too narrow to even be a guide ledger (fewer columns than the layout).
   if (sh.getLastColumn() < LEDGER_HEADERS.length) return false;
-  // Confirm it really is a guide ledger: the money columns must be where we expect.
+
+  // Confirm the money columns sit where we expect, so a tab with a coincidental
+  // name can't slip through. head[10] = col K "We owe guide (€)", head[11] = col L.
   const head = sh.getRange(1, 1, 1, LEDGER_HEADERS.length).getValues()[0].map(String);
   return head[10] === 'We owe guide (€)' && head[11] === 'Guide owes us (€)';
 }
 
-/**
- * Roll up every guide tab's "We owe guide (€)" (col K) and "Guide owes us (€)"
- * (col L) into the Rates tab's Summary block, so the manager gets the totals
- * without touching any guide tab. Computed ON DEMAND only — when the manager
- * ticks the Rates refresh box (onLedgerEdit_) or runs refreshRatesSummary();
- * nothing recomputes it in the background. Values are WRITTEN (not a formula) because
- * Sheets can't sum a column across all tabs on its own, and the guide roster
- * changes. Rows are found by their label in column A (falls back to 13/14/15),
- * so re-labelling or inserting a row won't put the numbers in the wrong place.
- * `ss` is injectable for tests. Returns {owedTo, owedBy, balance}.
- */
+// Total what every guide is owed and what every guide owes, and write the three
+// numbers into the Rates > Summary block. Runs on demand only (the refresh box or
+// refreshRatesSummary); nothing recomputes it in the background. `ss` is injectable
+// for tests. Returns { owedTo, owedBy, balance }.
 function writeRatesSummary_(ss) {
-  ss = ss || ledgerSS_();
+  ss = ss || ledgerSS_();                 // live Ledger by default; a test passes its own
+
+  // Walk every guide tab and add up its two money columns.
+  // owedTo = sum of column K (we owe the guide); owedBy = sum of column L (they owe us).
   let owedTo = 0, owedBy = 0;
   ss.getSheets().forEach(function (sh) {
-    if (!isGuideLedgerTab_(sh)) return;
+    if (!isGuideLedgerTab_(sh)) return;                         // skip non-guide tabs
     const last = sh.getLastRow();
-    if (last < 2) return;
+    if (last < 2) return;                                       // header only -> nothing to add
     const vals = sh.getRange(2, 11, last - 1, 2).getValues();   // K:L, data rows only
     vals.forEach(function (r) {
-      const k = Number(r[0]), l = Number(r[1]);
-      if (!isNaN(k)) owedTo += k;
+      const k = Number(r[0]), l = Number(r[1]);                 // a blank/bad cell becomes NaN
+      if (!isNaN(k)) owedTo += k;                               // ...and NaN is skipped
       if (!isNaN(l)) owedBy += l;
     });
   });
+
+  // Balance is positive when we owe the guides more than they owe us.
   const balance = owedTo - owedBy;
 
+  // Write each total next to its label on the Rates tab.
+  // Rows are found by their column-A label, not a fixed number, so inserting a row
+  // or renaming can't land a total in the wrong cell; 13/14/15 are the fallback.
   const rates = ss.getSheetByName('Rates');
   if (rates) {
     const n = rates.getLastRow();
     const colA = n >= 1 ? rates.getRange(1, 1, n, 1).getValues().map(function (r) { return String(r[0] || '').trim().toLowerCase(); }) : [];
-    const rowOf = function (label, fallback) {
+    const rowOf = function (label, fallback) {                  // label -> its 1-based row
       const i = colA.indexOf(label);
       return i >= 0 ? i + 1 : fallback;
     };
-    rates.getRange(rowOf('owed to guides', 13), 2).setValue(owedTo);
+    rates.getRange(rowOf('owed to guides', 13), 2).setValue(owedTo);   // col 2 = B, the value column
     rates.getRange(rowOf('owed by guides', 14), 2).setValue(owedBy);
     rates.getRange(rowOf('balance', 15), 2).setValue(balance);
   }
+
+  // Hand the totals back so the caller (box / editor) can report them.
   return { owedTo: owedTo, owedBy: owedBy, balance: balance };
 }
 
-/** Run from the Apps Script editor to refresh the Rates > Summary totals now
- *  (same as ticking the refresh box on the Rates tab). */
+// Editor shortcut: recompute the Summary now and log the result — the same thing
+// ticking the refresh box does, for when you're already in the Apps Script editor.
 function refreshRatesSummary() {
   const r = writeRatesSummary_();
   const msg = 'Rates summary updated — owed to guides €' + r.owedTo +
@@ -4489,54 +4500,68 @@ function refreshRatesSummary() {
   return msg;
 }
 
-// Click-to-refresh control on the Rates tab: a checkbox the manager ticks to
-// recompute the Summary on the spot — the ONLY thing that recomputes it (no
-// background job). Sits on the "Summary" header row: "Summary [☑ ◄ Refresh]".
-// To move the checkbox, change RATES_REFRESH_COL (the label follows, to its right).
+// --- The Rates "Refresh" checkbox -------------------------------------------
+// A checkbox the manager ticks to recompute the Summary on the spot. It is the
+// ONLY thing that recomputes it — there is no background job. It sits on the
+// "Summary" header row and reads:  Summary  [☑ ◄ Refresh].
+// Move the box by changing RATES_REFRESH_COL; the label always follows to its right.
 const RATES_REFRESH_ROW = 12;   // the "Summary" header row on the Rates tab
-const RATES_REFRESH_COL = 2;    // column B — the checkbox (label sits one column to its right)
+const RATES_REFRESH_COL = 2;    // column B — the checkbox cell
 
-/** Put the checkbox + "◄ Refresh" label on the Rates tab (idempotent). */
+// Draw (or redraw) the checkbox and its label on the Rates tab. Safe to re-run.
 function ensureRatesRefreshBox_(ss) {
   ss = ss || ledgerSS_();
   const rates = ss.getSheetByName('Rates');
-  if (!rates) return;
-  // Clear any prior checkbox/label on this row (e.g. an earlier column) so
-  // re-running never leaves a stray box behind.
+  if (!rates) return;                       // no Rates tab yet -> nothing to draw
+
+  // Wipe the row's control cells first, so moving the box never leaves an old one behind.
   const strip = rates.getRange(RATES_REFRESH_ROW, 2, 1, 4);   // B..E on the Summary row
-  strip.clearDataValidations(); strip.clearContent();
+  strip.clearDataValidations();             // a checkbox is a data validation — remove it
+  strip.clearContent();                     // remove the old label / value
+
+  // Place the checkbox unticked, and write its label one column to the right.
   const box = rates.getRange(RATES_REFRESH_ROW, RATES_REFRESH_COL);
   box.insertCheckboxes();
   box.setValue(false);
   rates.getRange(RATES_REFRESH_ROW, RATES_REFRESH_COL + 1).setValue('◄ Refresh');
-  try { box.setNote('Tick to update the Summary totals now.'); } catch (e) {}
+  try { box.setNote('Tick to update the Summary totals now.'); } catch (e) {}   // note is best-effort
 }
 
-/** Installable onEdit handler (bound to the Ledger spreadsheet by
- *  installLedgerRefreshButton). Ticking the Rates refresh box recomputes the
- *  Summary and then clears the box. Any other edit is ignored. */
+// Fires on every edit to the Ledger spreadsheet (wired by installLedgerRefreshButton).
+// It reacts to exactly one thing: the manager ticking the Rates refresh box.
 function onLedgerEdit_(e) {
   try {
-    if (!e || !e.range) return;
+    // Ignore any edit that isn't the refresh box.
+    if (!e || !e.range) return;                                 // no edit info
     const sh = e.range.getSheet();
-    if (sh.getName() !== 'Rates') return;
-    if (e.range.getRow() !== RATES_REFRESH_ROW || e.range.getColumn() !== RATES_REFRESH_COL) return;
-    const on = e.value === 'TRUE' || e.range.getValue() === true;   // tick only; an untick is a no-op
+    if (sh.getName() !== 'Rates') return;                       // wrong tab
+    if (e.range.getRow() !== RATES_REFRESH_ROW || e.range.getColumn() !== RATES_REFRESH_COL) return;  // wrong cell
+
+    // Act only on a TICK (turned on); an untick or a clear does nothing.
+    const on = e.value === 'TRUE' || e.range.getValue() === true;
     if (!on) return;
-    writeRatesSummary_(e.source || ledgerSS_());
-    e.range.setValue(false);                                        // reset so it's ready for the next click
-  } catch (err) { console.log('onLedgerEdit_ ' + err); }
+
+    // Recompute, then clear the box so it's ready for the next click.
+    writeRatesSummary_(e.source || ledgerSS_());                // e.source is the Ledger spreadsheet
+    e.range.setValue(false);
+  } catch (err) { console.log('onLedgerEdit_ ' + err); }        // a trigger must never throw
 }
 
-/** Run ONCE from the editor: adds the Rates refresh checkbox, wires the onEdit
- *  trigger to the Ledger spreadsheet, and fills the Summary now. */
+// Run ONCE from the editor to set everything up: draw the box, attach the
+// edit-trigger to the Ledger spreadsheet, and fill the Summary straight away.
 function installLedgerRefreshButton() {
   const ss = ledgerSS_();
+
+  // Draw the checkbox + label.
   ensureRatesRefreshBox_(ss);
+
+  // Attach the onEdit trigger, replacing any copy a previous run left behind.
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'onLedgerEdit_') { try { ScriptApp.deleteTrigger(t); } catch (e) {} }
   });
   ScriptApp.newTrigger('onLedgerEdit_').forSpreadsheet(ss).onEdit().create();
+
+  // Fill the totals now so the sheet isn't blank until the first tick.
   writeRatesSummary_(ss);
   const msg = 'Refresh box ready on the Rates tab (cell B12). Tick it to update the Summary totals.';
   console.log(msg);
@@ -4814,48 +4839,55 @@ function variantKey_(sfExt, isPrivate, privIndex) {
 
 function round2_(n) { return Math.round(Number(n || 0) * 100) / 100; }
 
-/** Effective people toward the full-tour cap. Adults always count. Children are
- *  free up to 5; once there are MORE than 5 children, EVERY child counts as HALF
- *  an adult (a group with lots of kids is still a big group to lead). So the cap
- *  is unchanged for adult-heavy tours but catches a child-heavy one (e.g. 17+13 ->
- *  17 + 13*0.5 = 23.5 >= 20). Must match the booking project's copy exactly so the
- *  portal's red "Full" outline and the capacity email always agree. */
+// How many "people" a tour counts for the 20-person cap. Adults always count.
+// Children are free up to 5; once there are MORE than 5, every child counts as
+// half an adult (a group with lots of kids is still a big group to lead). So an
+// adult-heavy tour is unchanged, but a child-heavy one is caught: 17 adults + 13
+// kids -> 17 + 13*0.5 = 23.5, over 20. The booking project keeps an identical
+// copy, so the portal's red "Full" outline and the capacity email never disagree.
 function fullTourCount_(adults, children) {
   const a = Number(adults || 0), c = Number(children || 0);
   return a + (c > 5 ? c * 0.5 : 0);
 }
 
-/** Shift keys (shiftKeyFull_) that count as FULL once each ASSIGNED GUIDE's
- *  OVERLAPPING tours are combined: one guide leading two concurrent tours (e.g.
- *  10:00 + 10:30) leads both groups at once, so their fullTourCount_ headcounts add
- *  toward the cap and BOTH cards flag full. Private tours are never capped or
- *  combined; an UNASSIGNED tour counts only its own guests (a lone 20 still flags).
- *  Concurrency = starts < PORTAL.OVERLAP_LOAD_HOURS apart. */
+// Work out which cards should show the red "Full" outline. The twist: one guide
+// can lead two tours that overlap (10:00 + 10:30 run at the same time), and then
+// the 20-cap applies to the COMBINED crowd, so both cards go full together.
+// Returns a lookup { shiftKeyFull_ : true } of the cards that are full.
 function overloadedShiftKeys_(schedule, bookingsByKey) {
-  const sepMs = PORTAL.OVERLAP_LOAD_HOURS * 3600000;
+  const sepMs = PORTAL.OVERLAP_LOAD_HOURS * 3600000;   // "overlapping" = starts this close, in ms
+
+  // Reduce each (non-private) shift to a small record we can compare fast:
+  // its key, whether it's SF, its guide, its start time, and its headcount.
   const items = (schedule || []).filter(s => !s.private).map(function (s) {
-    const bk = bookingsForShift_(bookingsByKey, s);
+    const bk = bookingsForShift_(bookingsByKey, s);   // the bookings sitting on this card
     return {
       key: shiftKeyFull_(s),
-      sf: !!s.sfExt,                              // SF slots are short + stackable (run back-to-back)
+      sf: !!s.sfExt,                                  // SF = short, stackable tour
       guide: String((s.assigned && s.assigned[0]) || '').trim().toLowerCase(),
-      ms: shiftStartMs_(s.dateKey, s.minutes),
+      ms: shiftStartMs_(s.dateKey, s.minutes),        // start time in ms, for the overlap test
       load: fullTourCount_(bk.reduce((n, b) => n + Number(b.guests || 0), 0),
                            bk.reduce((n, b) => n + Number(b.children || 0), 0))
     };
   });
+
+  // Give each card its effective headcount, then flag it if it reaches the cap.
   const out = {};
   items.forEach(function (it) {
-    let combined = it.load;                       // unassigned (or SF) -> only its own guests
-    // Only REGULAR tours combine: a guide leading two overlapping 3h tours leads
-    // both groups at once. SF slots are short and stackable (9/11/13/15 are
-    // sequential, not concurrent), so they are never merged — each stands alone.
+    // Start from the card's own guests. An unassigned or SF card stays on its own.
+    let combined = it.load;
+
+    // Only REGULAR, assigned tours combine: a guide leading two overlapping 3h
+    // tours leads both crowds at once, so add every same-guide tour starting close
+    // by. SF is excluded on both sides — its 9/11/13/15 slots run one after another.
     if (it.guide && !it.sf) {
       combined = 0;
       items.forEach(function (ot) {
         if (!ot.sf && ot.guide === it.guide && Math.abs(ot.ms - it.ms) < sepMs) combined += ot.load;
       });
     }
+
+    // At or over the cap -> this card is full.
     if (combined >= PORTAL.TOUR_FULL_THRESHOLD) out[it.key] = true;
   });
   return out;

@@ -606,62 +606,83 @@ function safeTriggerRun_(label, fn) {
   }
 }
 
-// Gmail poll cadence by TIME OF DAY (Europe/Madrid), and FASTER around tour starts so
-// last-minute sign-ups land on the sheet before/just after the tour begins:
-//   around 10:30 / 15:30 / 16:00 (±window)  -> every 2 min
-//   00:00–06:00 -> every 30 min · 06:00–08:00 -> every 10 min · 08:00–24:00 -> every 5 min
-// The 2-min tier needs the time trigger to fire every 1 MINUTE (run
-// installBookingFastTrigger once); each fire is gated to the window's interval, so most
-// are a cheap no-op (no Gmail read). Overnight polling is cut to save the ~20k/day Gmail
-// read quota, which pays for the tighter daytime + tour-window polling. A skipped poll
-// can never miss a booking — the next poll catches up and the audit + reconcile backstop
-// everything. EDIT the tour times / windows / intervals here. `now` is injectable for tests.
+// --- How often to poll Gmail for new bookings -------------------------------
+// Poll more when it matters, less overnight. Two ideas combine: (1) a base rate
+// by time of day, and (2) a faster burst around each tour's start so a last-minute
+// sign-up lands on the sheet before/just after the tour begins.
+// The time trigger fires every 1 MINUTE (run installBookingFastTrigger once); each
+// fire asks fastPollDue_ "is a poll due yet?", so most fires are a cheap no-op with
+// no Gmail read. Cutting the overnight polls saves the ~20k reads/day Gmail budget,
+// which pays for the tighter daytime + tour-window polling. A skipped poll can never
+// miss a booking: the next poll catches up, and the daily audit + reconcile backstop
+// it. EDIT the tour times, windows and intervals right here. `now` is injectable so
+// tests can pin the clock; it returns the minutes-between-polls for the given moment.
 function fastPollWindowMin_(now) {
+  // Turn the current time into minutes-past-midnight, in the Barcelona timezone.
+  // The try uses the sheet's timezone; the catch is a plain-clock fallback if it throws.
   let mins;
   try {
     const hm = Utilities.formatDate(now || new Date(), Session.getScriptTimeZone(), 'HH:mm').split(':');
     mins = Number(hm[0]) * 60 + Number(hm[1]);
   } catch (e) { const d = now || new Date(); mins = d.getHours() * 60 + d.getMinutes(); }
+
+  // Fast burst: inside the window around any tour start, poll every 2 minutes.
+  // BEFORE/AFTER set how wide that window is: 20 min before, 10 min after a start.
   const TOUR_STARTS = [10 * 60 + 30, 15 * 60 + 30, 16 * 60];   // 10:30, 15:30, 16:00
   const BEFORE = 20, AFTER = 10;                               // minutes around a start
   for (let i = 0; i < TOUR_STARTS.length; i++) {
     if (mins >= TOUR_STARTS[i] - BEFORE && mins <= TOUR_STARTS[i] + AFTER) return 2;
   }
+
+  // Otherwise use the base rate for this time of day.
   const h = Math.floor(mins / 60);
-  if (h < 6) return 30;     // 00:00–06:00
-  if (h < 8) return 10;     // 06:00–08:00
-  return 5;                 // 08:00–24:00
+  if (h < 6) return 30;     // 00:00–06:00 — quiet hours
+  if (h < 8) return 10;     // 06:00–08:00 — waking up
+  return 5;                 // 08:00–24:00 — daytime
 }
 
-/** Run ONCE from the editor to switch the booking poll to a 1-MINUTE trigger (needed
- *  for the 2-min near-tour cadence). Every fire is gated by fastPollWindowMin_, so most
- *  fires are a cheap no-op. Replaces any existing runBookingSystem trigger. */
+// Run ONCE from the editor to switch the poll to a 1-minute trigger (the 2-minute
+// tour bursts need it). Every fire is still gated, so most of them do nothing.
 function installBookingFastTrigger() {
+  // Remove any existing poll trigger first, so we never end up with two.
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'runBookingSystem') { try { ScriptApp.deleteTrigger(t); } catch (e) {} }
   });
+
+  // Create the fresh 1-minute trigger and report what changed.
   ScriptApp.newTrigger('runBookingSystem').timeBased().everyMinutes(1).create();
   const msg = 'Booking poll now fires every 1 min (gated: 2-min near 10:30/15:30/16:00, 5/10/30-min otherwise).';
   console.log(msg);
   return msg;
 }
+
+// The gate. The trigger fires every minute; this decides whether THIS minute is
+// actually due for a Gmail read, based on the current window's interval.
 function fastPollDue_() {
   try {
     const props = PropertiesService.getScriptProperties();
-    const needMs = fastPollWindowMin_() * 60000 - 30000;   // 30s grace for 1-min trigger jitter
+
+    // How long must pass between real polls right now. The -30s is slack so a
+    // minute of trigger jitter doesn't bump a poll just past its window.
+    const needMs = fastPollWindowMin_() * 60000 - 30000;
+
+    // Compare now against the last poll time; too soon -> skip this fire.
     const last = Number(props.getProperty('LAST_FAST_POLL_AT') || 0);
     const now = Date.now();
-    if (now - last < needMs) return false;                 // not due yet in this window -> skip
+    if (now - last < needMs) return false;
+
+    // Due: record this moment and let the poll run.
     props.setProperty('LAST_FAST_POLL_AT', String(now));
     return true;
-  } catch (e) { return true; }                             // fail-open: never block a real poll
+  } catch (e) { return true; }   // if the gate itself errors, poll anyway — never block a booking
 }
 
-// Frequent trigger (every 1 min): skips already-processed threads. Gated by the
-// time-of-day cadence above (opts.force bypasses it for manual / reprocess runs).
+// The entry point the 1-minute trigger calls. It asks the gate whether a poll is
+// due, then runs one fast pass. A manual / reprocess call passes { force:true } to
+// skip the gate and always run.
 function runBookingSystem(opts) {
-  if (!(opts && opts.force) && !fastPollDue_()) return;
-  safeTriggerRun_('runBookingSystem', function () { runBookingCore_(true); });
+  if (!(opts && opts.force) && !fastPollDue_()) return;                            // not due this minute -> stop
+  safeTriggerRun_('runBookingSystem', function () { runBookingCore_(true); });     // true = skip already-processed threads
 }
 
 // Audit trigger: identical pipeline, ignores PROCESSED so every labelled thread
