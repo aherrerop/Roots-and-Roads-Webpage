@@ -1,3 +1,34 @@
+# System Audit — Addendum 2026‑10‑24
+
+Follow‑up pass after the changes shipped since the Oct‑20 baseline (Control v144→v156,
+Booking v127→v133): booking‑driven Ledger History, AM/PM‑block availability dot, private‑email
+subject rewrite, Guruwalk phone fallback, time‑of‑day Gmail poll cadence, overlapping‑tour cap,
+Rates‑Summary roll‑up + one‑click refresh. Full suite **1093 assertions, all green**.
+
+**Two real bugs found and fixed (Control v156):**
+
+1. **Balancer valued paid shifts as free.** `assignShifts.gs` kept its *own* paid‑source list
+   (`ASSIGN_CFG.PAID_SOURCES`) with only `Viator, GetYourGuide, Airbnb` — a **third** hand‑copy of
+   the registry the Oct‑20 audit named as the top drift risk (§5/§7). `GYG` (2nd account), `GYG-SF`
+   and `Viator-SF` were therefore valued at the *free* rate (14 €/guest) in the auto‑schedule
+   balancer instead of *paid* (10). Impact was limited to balancing fairness — never money,
+   capacity, or a missed booking — but it was a genuine divergence. Now mirrors the booking `MODEL`
+   paid set (6 sources). *All three registries (Booking `MODEL`, Portal `PAID_SOURCES`, assign
+   `ASSIGN_CFG.PAID_SOURCES`) now agree.*
+2. **Overlap cap merged sequential SF slots.** `overloadedShiftKeys_` combined *every* same‑guide
+   tour within the 3 h window, including SF. SF slots (9/11/13/15, 2 h apart) are short and
+   stackable — a guide runs them back‑to‑back, not at once — so two 12‑guest SF slots were falsely
+   flagged "full" (combined 24). This misfired on the *normal* SF schedule (regular tours need a
+   manual override to even overlap). Fixed: SF shifts never combine; each counts only its own load.
+   A lone SF slot that alone hits 20 still flags full.
+
+**Looked at, deliberately left as‑is:** the labeled‑phone global fallback (Viator/GYG/FreeTour/
+Guruwalk) could in theory cross‑assign a phone if one email ever carried *several different*
+bookings — confirmations are one booking per email, so no live risk; not worth the regression
+surface. The Oct‑20 owner actions below still stand.
+
+---
+
 # System Audit — 2026‑10‑20
 
 Scope: verify the capacity change live, confirm the SF (Sagrada exterior) tour is fully

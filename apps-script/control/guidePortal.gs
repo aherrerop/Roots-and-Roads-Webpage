@@ -4837,6 +4837,7 @@ function overloadedShiftKeys_(schedule, bookingsByKey) {
     const bk = bookingsForShift_(bookingsByKey, s);
     return {
       key: shiftKeyFull_(s),
+      sf: !!s.sfExt,                              // SF slots are short + stackable (run back-to-back)
       guide: String((s.assigned && s.assigned[0]) || '').trim().toLowerCase(),
       ms: shiftStartMs_(s.dateKey, s.minutes),
       load: fullTourCount_(bk.reduce((n, b) => n + Number(b.guests || 0), 0),
@@ -4845,10 +4846,15 @@ function overloadedShiftKeys_(schedule, bookingsByKey) {
   });
   const out = {};
   items.forEach(function (it) {
-    let combined = it.load;                       // unassigned -> only its own guests
-    if (it.guide) {
+    let combined = it.load;                       // unassigned (or SF) -> only its own guests
+    // Only REGULAR tours combine: a guide leading two overlapping 3h tours leads
+    // both groups at once. SF slots are short and stackable (9/11/13/15 are
+    // sequential, not concurrent), so they are never merged — each stands alone.
+    if (it.guide && !it.sf) {
       combined = 0;
-      items.forEach(function (ot) { if (ot.guide === it.guide && Math.abs(ot.ms - it.ms) < sepMs) combined += ot.load; });
+      items.forEach(function (ot) {
+        if (!ot.sf && ot.guide === it.guide && Math.abs(ot.ms - it.ms) < sepMs) combined += ot.load;
+      });
     }
     if (combined >= PORTAL.TOUR_FULL_THRESHOLD) out[it.key] = true;
   });

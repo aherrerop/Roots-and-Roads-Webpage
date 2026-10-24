@@ -445,6 +445,21 @@ const _bbk3 = {}; _bbk3[shiftKey_(_dk,9*60,'English')] = bk(20);
 check('overlap cap: a lone unassigned 20-guest tour is full on its own',
   !!overloadedShiftKeys_([_s9], _bbk3)[shiftKeyFull_(_s9)], null);
 
+// SF slots are short + stackable (9/11/13/15 run back-to-back, not at once), so a
+// guide's consecutive SF slots must NOT be combined toward the 20 cap.
+const bkSF = g => [{ guests:g, children:0, source:'GYG-SF', note:'', rowType:'booking', bookingId:'sf'+g }];
+const shSF = (mins, guide) => ({ dateKey:_dk, minutes:mins, language:'English', sfExt:true, private:false, privIndex:1, assigned:guide?[guide]:[] });
+const _sf9 = shSF(9*60,'Amalia'), _sf11 = shSF(11*60,'Amalia');   // same guide, 2h apart (inside the 3h window)
+const _bbkSF = {};
+_bbkSF[shiftKey_(_dk,9*60,'English')]  = bkSF(12);
+_bbkSF[shiftKey_(_dk,11*60,'English')] = bkSF(12);
+const _ovSF = overloadedShiftKeys_([_sf9,_sf11], _bbkSF);
+check('overlap cap: sequential SF slots (same guide) are NOT combined -> 12 each stays under 20',
+  !_ovSF[shiftKeyFull_(_sf9)] && !_ovSF[shiftKeyFull_(_sf11)], Object.keys(_ovSF));
+const _bbkSF2 = {}; _bbkSF2[shiftKey_(_dk,9*60,'English')] = bkSF(20);
+check('overlap cap: a lone SF slot that alone hits 20 is still full',
+  !!overloadedShiftKeys_([shSF(9*60,'Amalia')], _bbkSF2)[shiftKeyFull_(shSF(9*60,'Amalia'))], null);
+
 // --- Rates > Summary roll-up: sum guide tabs' K/L, skip non-guide tabs --------
 (function () {
   const led = new __mock.MockSS('ledger');

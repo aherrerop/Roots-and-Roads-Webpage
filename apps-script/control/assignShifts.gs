@@ -108,7 +108,11 @@ const ASSIGN_CFG = {
   VALUE_FREE_NET_PER_GUEST: 14, // free tour: ~20 € tip − 6 € commission per guest
   VALUE_PRIVATE_FLAT: 75,       // private tour: flat 75 € to the guide
 
-  PAID_SOURCES: ["Viator", "GetYourGuide", "Airbnb"],
+  // Must mirror the booking project's MODEL paid sources (and the portal's
+  // PAID_SOURCES), or the balancer values a paid shift as free. The SF tags are
+  // paid too; their real pay is the low SF rate, but SF is scheduled on its own
+  // stackable path, not balanced here, so "paid" is the right class for them.
+  PAID_SOURCES: ["Viator", "GetYourGuide", "GYG", "GYG-SF", "Viator-SF", "Airbnb"],
 
   // Where schedule problems (lock conflicts, missing eligibility) are logged.
   ERRORS_TAB: "Errors"
