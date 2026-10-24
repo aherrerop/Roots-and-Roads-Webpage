@@ -395,20 +395,33 @@ check('erase removes every matching row and reports a count', erased >= 2, erase
 check('after erasure nothing references the id anywhere', exportClientData('B-M1').length === 0, null);
 check('an unrelated booking is untouched by the erase', exportClientData('B-M3').length >= 1, null);
 
-console.log('=== STRESS: Ledger History tab — one upserted row per tour ===');
-const histSS = new __mock.MockSS('ledger-hist'); if (typeof __RRX === 'undefined' || !__RRX) __RRX = {}; __RRX.ledgerSS = histSS;
-writeLedgerHistory_({ dateKey:'2026-10-21', day:'Wednesday', timeLabel:'4:00 PM', language:'Italian', guide:'Chiara', guests:12, names:'Smith | Lopez' });
-const _hsh = histSS.getSheetByName('History');
-check('History tab is created with a header row', _hsh && String(_hsh.getRange(1,1).getValue())==='Date' && String(_hsh.getRange(1,7).getValue())==='Guest names', _hsh && _hsh.getRange(1,1,1,7).getValues());
-let _hr = _hsh.getRange(2,1,Math.max(1,_hsh.getLastRow()-1),7).getValues().filter(r=>String(r[0]).trim());
-check('History: a tour row carries date/time/lang/guide/guests/names', _hr.length===1 && _hr[0][3]==='Italian' && _hr[0][4]==='Chiara' && _hr[0][5]===12 && _hr[0][6]==='Smith | Lopez', _hr[0]);
-writeLedgerHistory_({ dateKey:'2026-10-21', day:'Wednesday', timeLabel:'4:00 PM', language:'Italian', guide:'Chiara', guests:17, names:'Smith | Lopez | Rossi' });
-_hr = _hsh.getRange(2,1,Math.max(1,_hsh.getLastRow()-1),7).getValues().filter(r=>String(r[0]).trim());
-check('History: re-saving the SAME tour upserts (one row, updated counts + names)', _hr.length===1 && _hr[0][5]===17 && _hr[0][6]==='Smith | Lopez | Rossi', _hr.map(r=>r[5]));
-writeLedgerHistory_({ dateKey:'2026-10-21', day:'Wednesday', timeLabel:'10:30 AM', language:'English', guide:'Albert', guests:5, names:'A | B' });
-_hr = _hsh.getRange(2,1,Math.max(1,_hsh.getLastRow()-1),7).getValues().filter(r=>String(r[0]).trim());
-check('History: a different tour appends a second row', _hr.length===2, _hr.map(r=>r[2]+'/'+r[3]));
-__RRX.ledgerSS = null;
+console.log('=== STRESS: Ledger History — booking-driven roster (all guests, unassigned too) ===');
+if (typeof __RRX === 'undefined' || !__RRX) __RRX = {};
+// historyTab_ creates the 9-col header (upgrading an old one in place).
+const histSS = new __mock.MockSS('ledger-hist');
+const _oldH = histSS.insertSheet('History'); _oldH.getRange(1,1,1,7).setValues([['Date','Day','Time','Language','Guide','Guests','Guest names']]); // old 7-col
+const _ht = historyTab_(histSS);
+check('History header upgraded in place to 9 cols incl Type + Sources',
+  _ht.getRange(1,1,1,9).getValues()[0].join('|')==='Date|Day|Time|Language|Type|Guide|Guests|Guest names|Sources', _ht.getRange(1,1,1,9).getValues()[0]);
+// ledgerHistoryRows_: all booked guests (adults+children), unassigned tours kept, names + sources, future excluded.
+const _dkH='2026-11-02';
+const bkR=(name,src,g,ch)=>({name:name, source:src, guests:g, children:ch||0, note:'', rowType:'booking', bookingId:name});
+const feedH={};
+feedH[shiftKey_(_dkH,10*60+30,'English')]=[bkR('Smith','GetYourGuide',2,0), bkR('Lopez','Guruwalk',3,1)];
+feedH[shiftKey_(_dkH,16*60,'Italian')]=[bkR('Rossi','Viator',2,0)];
+feedH[shiftKey_('2099-01-01',10*60,'English')]=[bkR('Future','GetYourGuide',2,0)];
+const schedH=[
+  {dateKey:_dkH,minutes:10*60+30,timeLabel:'10:30 AM',time:'10:30',day:'Monday',language:'English',sfExt:false,private:false,privIndex:1,assigned:['Albert']},
+  {dateKey:_dkH,minutes:16*60,timeLabel:'4:00 PM',time:'16:00',day:'Monday',language:'Italian',sfExt:false,private:false,privIndex:1,assigned:[]},
+  {dateKey:'2099-01-01',minutes:10*60,timeLabel:'10:00 AM',time:'10:00',day:'X',language:'English',sfExt:false,private:false,privIndex:1,assigned:['Carlos']}
+];
+const _rowsH=ledgerHistoryRows_(schedH, feedH, _dkH);
+const _kEng=historyKey_(_dkH,'10:30 AM','English','3h');
+check('History: row lists ALL booked guests (adults+children=6) with guide + names + sources',
+  _rowsH[_kEng] && _rowsH[_kEng][5]==='Albert' && _rowsH[_kEng][6]===6 && _rowsH[_kEng][7]==='Smith | Lopez' && _rowsH[_kEng][8]==='GetYourGuide | Guruwalk', _rowsH[_kEng]);
+const _kIt=historyKey_(_dkH,'4:00 PM','Italian','3h');
+check('History: an UNASSIGNED tour is kept with names + sources', _rowsH[_kIt] && _rowsH[_kIt][5]==='Not assigned' && _rowsH[_kIt][7]==='Rossi' && _rowsH[_kIt][8]==='Viator', _rowsH[_kIt]);
+check('History: FUTURE tours are excluded (not history yet)', Object.keys(_rowsH).filter(k=>/2099/.test(k)).length===0, Object.keys(_rowsH));
 
 console.log('=== STRESS: combined 20-cap across a guide\'s OVERLAPPING tours ===');
 const _dk = '2026-11-02';

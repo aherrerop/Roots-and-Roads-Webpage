@@ -2205,18 +2205,9 @@ function apiSave_(p) {
     (d.bookings || []).filter(b => b.checked && b.bookingId).forEach(b => {
       setCheckinGuide2_(b.bookingId, d.dateKey, (Number(b.guideIndex) || 1) === 2 && g2valid);
     });
-    // TOUR HISTORY: one row per tour in the Ledger's History tab — date/day/time/
-    // language/guide(s) + how many guests came + their names joined by " | ".
-    _s('history', function () {
-      const checked = (d.bookings || []).filter(b => b.checked);
-      if (checked.length) writeLedgerHistory_({
-        dateKey: d.dateKey, day: day, timeLabel: timeLabel, language: d.language,
-        guide: [primaryGuide, (g2valid ? secondGuide : '')].filter(Boolean).join(' / '),
-        guests: checked.reduce((s, b) => s + Math.max(0, Number(b.checkedIn || 0)), 0),
-        names: checked.map(b => String(b.name || '').trim()).filter(Boolean).join(' | ')
-      });
-      return 0;
-    });
+    // (The Ledger History tab is a booking-driven roster of every tour — all booked
+    // guests, unassigned tours included — so it is built by the hourly
+    // syncLedgerHistory_ sweep, not here from the check-ins.)
     _s('flush', function () { SpreadsheetApp.flush(); return 0; });   // commit before returning, so a reload can't read stale
     // NOTE: the GuruWalk queue used to be rebuilt HERE, on every save. That read
     // the whole ledger + Completed Log and made check-ins take 7-22s to return.
@@ -4347,22 +4338,17 @@ function readCompletedLogReservations_() {
  *  the incoming Booking IDs on the same date are removed before the rewrite,
  *  so a repeated save can never stack duplicates even if a time cell was
  *  stored in a weird format by an older version. */
-/**
- * One row per TOUR in the Ledger's "History" tab: date, weekday, time, language, the
- * guide(s) who ran it, how many guests came, and the checked-in guests' names joined
- * by " | ". Upserted by date+time+language, so re-saving a tour (or guide 2 saving on
- * a split tour) keeps ONE current row instead of stacking duplicates. Best-effort:
- * any failure is swallowed so it can never block a check-in save.
- */
-/** Ensure the Ledger "History" tab exists (header + text-formatted Date/Time), and
- *  return it. Split out so a trigger can create it BEFORE the first check-in, so the
- *  manager sees the (empty) tab right away instead of only after a tour is saved. */
+const LEDGER_HISTORY_HEADERS = ['Date', 'Day', 'Time', 'Language', 'Type', 'Guide', 'Guests', 'Guest names', 'Sources'];
+
+/** Ensure the Ledger "History" tab exists with the current header (upgrading an old
+ *  header in place) and Date/Time kept as text, then return it. Split out so a
+ *  trigger / the setup function can create it before any tour runs. */
 function historyTab_(ss) {
-  const HEADERS = ['Date', 'Day', 'Time', 'Language', 'Guide', 'Guests', 'Guest names'];
   let sh = ss.getSheetByName('History');
   if (!sh) sh = ss.insertSheet('History');
-  if (sh.getLastRow() < 1 || String(sh.getRange(1, 1).getValue()).trim() !== 'Date') {
-    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+  const cur = sh.getLastRow() >= 1 ? sh.getRange(1, 1, 1, LEDGER_HISTORY_HEADERS.length).getValues()[0].map(String) : [];
+  if (cur.join('|') !== LEDGER_HISTORY_HEADERS.join('|')) {
+    sh.getRange(1, 1, 1, LEDGER_HISTORY_HEADERS.length).setValues([LEDGER_HISTORY_HEADERS]);
     sh.setFrozenRows(1);
   }
   // Keep Date + Time as TEXT so Sheets does not coerce "2026-10-21" / "4:00 PM" into
@@ -4372,34 +4358,70 @@ function historyTab_(ss) {
   return sh;
 }
 
-/** Run from the Apps Script editor to create the Ledger "History" tab immediately
- *  (the 5-min feed trigger also creates it). Safe to re-run — idempotent. */
-function setupLedgerHistoryTab() {
-  const sh = historyTab_(ledgerSS_());
-  try { PropertiesService.getScriptProperties().setProperty('HISTORY_TAB_READY', '1'); } catch (e) {}
-  const msg = 'History tab ready in the Ledger "' + sh.getName() + '" (header + Date/Time as text).';
-  console.log(msg);
-  return msg;
+/** The History key for a tour: date|time|language|type, so a regular/SF/private tour
+ *  at the same slot stays a distinct row and a re-sweep updates in place. */
+function historyKey_(dateKey, timeLabel, language, type) {
+  return toDateKey_(dateKey) + '|' + normalizeTime_(timeLabel) + '|' + String(language || '').toLowerCase() + '|' + String(type || '');
 }
 
-function writeLedgerHistory_(o) {
+/**
+ * Build one History row per BOOKED tour (today or earlier) from the assembled
+ * schedule + feed. ALL booked guests are listed whether or not they checked in — the
+ * ledger shows who actually showed (by their presence there); History is the full
+ * roster. UNASSIGNED tours are kept too, with their guests' names + sources. Row:
+ * [Date, Day, Time, Language, Type(3h/SF/Private), Guide|"Not assigned", Guests
+ * (all booked, adults+children), names joined " | ", sources joined " | "].
+ * Returns a { historyKey_: row } map. Future tours are skipped (not history yet).
+ */
+function ledgerHistoryRows_(schedule, bookingsByKey, today) {
+  const out = {};
+  (schedule || []).forEach(function (shift) {
+    if (shift.dateKey > today) return;                                   // today + past only
+    const bk = bookingsForShift_(bookingsByKey, shift);
+    if (!bk.length) return;                                              // only tours that have guests
+    const type = shift.sfExt ? 'SF' : (shift.private ? 'Private' : '3h');
+    out[historyKey_(shift.dateKey, shift.timeLabel || shift.time, shift.language, type)] = [
+      shift.dateKey, shift.day, shift.timeLabel || shift.time, shift.language, type,
+      (shift.assigned && shift.assigned.length) ? shift.assigned.join(' / ') : 'Not assigned',
+      bk.reduce(function (n, b) { return n + Number(b.guests || 0) + Number(b.children || 0); }, 0),
+      bk.map(function (b) { return String(b.name || '').trim(); }).join(' | '),
+      bk.map(function (b) { return String(b.source || '').trim(); }).join(' | ')
+    ];
+  });
+  return out;
+}
+
+/** Sweep today's (and recent) tours from the feed into the Ledger History tab —
+ *  one read + one write. Idempotent (upsert by historyKey_); keeps past rows. Driven
+ *  by bookings, so it captures tours with no check-in and unassigned tours. */
+function syncLedgerHistory_() {
   try {
+    const feed = readPortalFeed_();
+    if (!feed) return 0;
+    const rowsByKey = ledgerHistoryRows_(assembleSchedule_(feed, PORTAL.UPCOMING_DAYS), feed, todayKey_());
     const sh = historyTab_(ledgerSS_());
-    // Coercion-proof key (handles a date cell that came back as a Date object).
-    const key = (dk, t, l) => toDateKey_(dk) + '|' + normalizeTime_(t) + '|' + String(l || '').toLowerCase();
-    const myKey = key(o.dateKey, o.timeLabel, o.language);
-    const row = [o.dateKey, o.day, o.timeLabel, o.language, o.guide, o.guests, o.names];
-    if (sh.getLastRow() >= 2) {
-      const vals = sh.getRange(2, 1, sh.getLastRow() - 1, row.length).getValues();
-      for (let i = 0; i < vals.length; i++) {
-        if (key(vals[i][0], vals[i][2], vals[i][3]) === myKey) {
-          sh.getRange(i + 2, 1, 1, row.length).setValues([row]);   // update in place
-          return;
-        }
-      }
-    }
-    sh.appendRow(row);
-  } catch (e) { /* history is best-effort; never block a check-in save */ }
+    const W = LEDGER_HISTORY_HEADERS.length;
+    const existing = sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, W).getValues() : [];
+    const idx = {};
+    existing.forEach(function (r, i) { idx[historyKey_(r[0], r[2], r[3], r[4])] = i; });
+    Object.keys(rowsByKey).forEach(function (k) {
+      if (k in idx) existing[idx[k]] = rowsByKey[k];
+      else { idx[k] = existing.length; existing.push(rowsByKey[k]); }
+    });
+    if (existing.length) sh.getRange(2, 1, existing.length, W).setValues(existing);
+    return Object.keys(rowsByKey).length;
+  } catch (e) { console.log('syncLedgerHistory_ ' + e); return 0; }
+}
+
+/** Run from the Apps Script editor to create the History tab AND populate it now.
+ *  Idempotent; safe to re-run. */
+function setupLedgerHistoryTab() {
+  historyTab_(ledgerSS_());
+  try { PropertiesService.getScriptProperties().setProperty('HISTORY_TAB_READY', '1'); } catch (e) {}
+  let n = 0; try { n = syncLedgerHistory_(); } catch (e) {}
+  const msg = 'History tab ready; ' + n + ' tour row(s) synced.';
+  console.log(msg);
+  return msg;
 }
 
 function writeGuideLedger_(name, dateKey, time, language, rows) {
@@ -5544,6 +5566,7 @@ function updateManagementQueuesCore_() {
     step(updateNoShowQueues_);
     step(updateGuruwalkCheckinQueue_);
     step(rebuildUnassignedLedger_);
+    step(syncLedgerHistory_);        // booking-driven roster of every tour -> Ledger History tab
     markHealthEvent_('HB_QUEUES');
     step(updateControlHealth_);
   } finally {
