@@ -602,8 +602,38 @@ function safeTriggerRun_(label, fn) {
   }
 }
 
-// Frequent trigger (every 5 min): skips already-processed threads.
-function runBookingSystem() { safeTriggerRun_('runBookingSystem', function () { runBookingCore_(true); }); }
+// Gmail poll cadence by TIME OF DAY (Europe/Madrid). No tours run overnight, so the
+// fast poll runs LESS then to save the ~20k/day Gmail read quota; that saved budget
+// pays for the normal daytime cadence (and leaves room to poll faster around tour
+// times). The time-based trigger still fires every 5 min — this just SKIPS fires
+// until the current window's interval has elapsed. EDIT THE WINDOWS HERE:
+//   01:00–04:00 -> every 30 min · 00:00–01:00 & 04:00–08:00 -> every 10 min · else 5 min
+// A skipped night poll can never miss a booking: the next poll catches up and the
+// twice-daily audit + reconcile backstop everything. `h` is injectable for tests.
+function fastPollWindowMin_(h) {
+  if (h == null) { try { h = Number(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'H')); } catch (e) { return 5; } }
+  if (h >= 1 && h < 4) return 30;
+  if (h < 1 || (h >= 4 && h < 8)) return 10;
+  return 5;
+}
+function fastPollDue_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const needMs = fastPollWindowMin_() * 60000 - 30000;   // 30s grace for 5-min trigger jitter
+    const last = Number(props.getProperty('LAST_FAST_POLL_AT') || 0);
+    const now = Date.now();
+    if (now - last < needMs) return false;                 // not due yet in this window -> skip
+    props.setProperty('LAST_FAST_POLL_AT', String(now));
+    return true;
+  } catch (e) { return true; }                             // fail-open: never block a real poll
+}
+
+// Frequent trigger (every 5 min): skips already-processed threads. Gated by the
+// time-of-day cadence above (opts.force bypasses it for manual / reprocess runs).
+function runBookingSystem(opts) {
+  if (!(opts && opts.force) && !fastPollDue_()) return;
+  safeTriggerRun_('runBookingSystem', function () { runBookingCore_(true); });
+}
 
 // Audit trigger: identical pipeline, ignores PROCESSED so every labelled thread
 // is re-read for full consistency. The FULL (heavy) re-read is the single biggest
@@ -6830,7 +6860,7 @@ function reprocessBookingById() {
   });
   console.log('Processed label removed from ' + stripped + ' thread(s) for ' + wanted +
               '. Running one fast pass now...');
-  runBookingSystem();
+  runBookingSystem({ force: true });   // manual reprocess must run regardless of the poll window
   console.log('Done. Check the result with debugBooking if needed.');
 }
 
