@@ -4439,8 +4439,10 @@ function isGuideLedgerTab_(sh) {
 
 /**
  * Roll up every guide tab's "We owe guide (€)" (col K) and "Guide owes us (€)"
- * (col L) into the Rates tab's Summary block, so the manager has a live indicator
- * without touching any guide tab. Values are WRITTEN (not a formula) because
+ * (col L) into the Rates tab's Summary block, so the manager gets the totals
+ * without touching any guide tab. Computed ON DEMAND only — when the manager
+ * ticks the Rates refresh box (onLedgerEdit_) or runs refreshRatesSummary();
+ * nothing recomputes it in the background. Values are WRITTEN (not a formula) because
  * Sheets can't sum a column across all tabs on its own, and the guide roster
  * changes. Rows are found by their label in column A (falls back to 13/14/15),
  * so re-labelling or inserting a row won't put the numbers in the wrong place.
@@ -4477,8 +4479,8 @@ function writeRatesSummary_(ss) {
   return { owedTo: owedTo, owedBy: owedBy, balance: balance };
 }
 
-/** Run from the Apps Script editor to refresh the Rates > Summary totals now.
- *  (They also refresh automatically every hour with the management queues.) */
+/** Run from the Apps Script editor to refresh the Rates > Summary totals now
+ *  (same as ticking the refresh box on the Rates tab). */
 function refreshRatesSummary() {
   const r = writeRatesSummary_();
   const msg = 'Rates summary updated — owed to guides €' + r.owedTo +
@@ -4488,8 +4490,8 @@ function refreshRatesSummary() {
 }
 
 // Click-to-refresh control on the Rates tab: a checkbox the manager ticks to
-// recompute the Summary on the spot (it also refreshes hourly). Lives on the
-// "Summary" header row so it reads as "Summary [Refresh ▶ ☑]".
+// recompute the Summary on the spot — the ONLY thing that recomputes it (no
+// background job). Lives on the "Summary" header row: "Summary [Refresh ▶ ☑]".
 const RATES_REFRESH_ROW = 12;   // the "Summary" header row on the Rates tab
 const RATES_REFRESH_COL = 4;    // column D — the checkbox (label sits in C)
 
@@ -4502,7 +4504,7 @@ function ensureRatesRefreshBox_(ss) {
   const box = rates.getRange(RATES_REFRESH_ROW, RATES_REFRESH_COL);
   box.insertCheckboxes();
   box.setValue(false);
-  try { box.setNote('Tick to update the Summary now (it also refreshes automatically every hour).'); } catch (e) {}
+  try { box.setNote('Tick to update the Summary totals now.'); } catch (e) {}
 }
 
 /** Installable onEdit handler (bound to the Ledger spreadsheet by
@@ -4531,7 +4533,7 @@ function installLedgerRefreshButton() {
   });
   ScriptApp.newTrigger('onLedgerEdit_').forSpreadsheet(ss).onEdit().create();
   writeRatesSummary_(ss);
-  const msg = 'Refresh box ready on the Rates tab (cell D12). Tick it to update the Summary; it also refreshes hourly.';
+  const msg = 'Refresh box ready on the Rates tab (cell D12). Tick it to update the Summary totals.';
   console.log(msg);
   return msg;
 }
@@ -5679,7 +5681,6 @@ function updateManagementQueuesCore_() {
     step(updateGuruwalkCheckinQueue_);
     step(rebuildUnassignedLedger_);
     step(syncLedgerHistory_);        // booking-driven roster of every tour -> Ledger History tab
-    step(writeRatesSummary_);        // roll up guide tabs -> Rates > Summary (owed to/by/balance)
     markHealthEvent_('HB_QUEUES');
     step(updateControlHealth_);
   } finally {
