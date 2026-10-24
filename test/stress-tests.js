@@ -445,6 +445,37 @@ const _bbk3 = {}; _bbk3[shiftKey_(_dk,9*60,'English')] = bk(20);
 check('overlap cap: a lone unassigned 20-guest tour is full on its own',
   !!overloadedShiftKeys_([_s9], _bbk3)[shiftKeyFull_(_s9)], null);
 
+// --- Rates > Summary roll-up: sum guide tabs' K/L, skip non-guide tabs --------
+(function () {
+  const led = new __mock.MockSS('ledger');
+  const grow = (k, l) => { const r = new Array(LEDGER_HEADERS.length).fill(''); r[10] = k; r[11] = l; return r; };
+  const guide = (name, rows) => {
+    const sh = led.insertSheet(name);
+    sh.getRange(1, 1, 1, LEDGER_HEADERS.length).setValues([LEDGER_HEADERS]);
+    if (rows.length) sh.getRange(2, 1, rows.length, LEDGER_HEADERS.length).setValues(rows);
+  };
+  // Rates tab with the manager's Summary labels in column A.
+  const rates = led.insertSheet('Rates');
+  rates.getRange(1, 1, 1, 2).setValues([['Setting', 'Value']]);
+  rates.getRange(13, 1, 3, 1).setValues([['Owed to guides'], ['Owed by guides'], ['Balance']]);
+  // Two real guide tabs.
+  guide('Nicol', [grow(10, 0), grow(30, 6)]);     // owe 40, owed 6
+  guide('Amalia', [grow(75, 0)]);                 // owe 75
+  // Non-guide tabs that must be IGNORED.
+  guide('Unassigned', [grow(999, 999)]);
+  guide('no-shows', [grow(500, 500)]);
+  led.insertSheet('History').getRange(1, 1, 1, LEDGER_HISTORY_HEADERS.length).setValues([LEDGER_HISTORY_HEADERS]);
+
+  const r = writeRatesSummary_(led);
+  check('rates summary: owed to guides sums only guide tabs (K)', r.owedTo === 115, r);
+  check('rates summary: owed by guides sums only guide tabs (L)', r.owedBy === 6, r);
+  check('rates summary: balance = owedTo - owedBy (we-owe positive)', r.balance === 109, r);
+  check('rates summary: Unassigned / no-shows / History are excluded', r.owedTo === 115 && r.owedBy === 6, r);
+  check('rates summary: values are written next to their labels (found by column A)',
+    rates.getRange(13, 2).getValue() === 115 && rates.getRange(14, 2).getValue() === 6 && rates.getRange(15, 2).getValue() === 109,
+    [rates.getRange(13, 2).getValue(), rates.getRange(14, 2).getValue(), rates.getRange(15, 2).getValue()]);
+})();
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -4424,6 +4424,69 @@ function setupLedgerHistoryTab() {
   return msg;
 }
 
+// Tabs on the Ledger that are NOT a guide's per-booking ledger (so the Rates
+// summary never sums them): the Rates sheet itself, the unassigned-tour roster,
+// the History roster, and the no-shows / check-ins helper tabs.
+function isGuideLedgerTab_(sh) {
+  const name = sh.getName();
+  if (name === 'Rates' || name === 'Unassigned' || name === 'History') return false;
+  if (/no-shows|check-ins/i.test(name)) return false;
+  if (sh.getLastColumn() < LEDGER_HEADERS.length) return false;
+  // Confirm it really is a guide ledger: the money columns must be where we expect.
+  const head = sh.getRange(1, 1, 1, LEDGER_HEADERS.length).getValues()[0].map(String);
+  return head[10] === 'We owe guide (€)' && head[11] === 'Guide owes us (€)';
+}
+
+/**
+ * Roll up every guide tab's "We owe guide (€)" (col K) and "Guide owes us (€)"
+ * (col L) into the Rates tab's Summary block, so the manager has a live indicator
+ * without touching any guide tab. Values are WRITTEN (not a formula) because
+ * Sheets can't sum a column across all tabs on its own, and the guide roster
+ * changes. Rows are found by their label in column A (falls back to 13/14/15),
+ * so re-labelling or inserting a row won't put the numbers in the wrong place.
+ * `ss` is injectable for tests. Returns {owedTo, owedBy, balance}.
+ */
+function writeRatesSummary_(ss) {
+  ss = ss || ledgerSS_();
+  let owedTo = 0, owedBy = 0;
+  ss.getSheets().forEach(function (sh) {
+    if (!isGuideLedgerTab_(sh)) return;
+    const last = sh.getLastRow();
+    if (last < 2) return;
+    const vals = sh.getRange(2, 11, last - 1, 2).getValues();   // K:L, data rows only
+    vals.forEach(function (r) {
+      const k = Number(r[0]), l = Number(r[1]);
+      if (!isNaN(k)) owedTo += k;
+      if (!isNaN(l)) owedBy += l;
+    });
+  });
+  const balance = owedTo - owedBy;
+
+  const rates = ss.getSheetByName('Rates');
+  if (rates) {
+    const n = rates.getLastRow();
+    const colA = n >= 1 ? rates.getRange(1, 1, n, 1).getValues().map(function (r) { return String(r[0] || '').trim().toLowerCase(); }) : [];
+    const rowOf = function (label, fallback) {
+      const i = colA.indexOf(label);
+      return i >= 0 ? i + 1 : fallback;
+    };
+    rates.getRange(rowOf('owed to guides', 13), 2).setValue(owedTo);
+    rates.getRange(rowOf('owed by guides', 14), 2).setValue(owedBy);
+    rates.getRange(rowOf('balance', 15), 2).setValue(balance);
+  }
+  return { owedTo: owedTo, owedBy: owedBy, balance: balance };
+}
+
+/** Run from the Apps Script editor to refresh the Rates > Summary totals now.
+ *  (They also refresh automatically every hour with the management queues.) */
+function refreshRatesSummary() {
+  const r = writeRatesSummary_();
+  const msg = 'Rates summary updated — owed to guides €' + r.owedTo +
+              ', owed by guides €' + r.owedBy + ', balance €' + r.balance + '.';
+  console.log(msg);
+  return msg;
+}
+
 function writeGuideLedger_(name, dateKey, time, language, rows) {
   const ss = ledgerSS_();
   const sh = guideTab_(ss, name);
@@ -5567,6 +5630,7 @@ function updateManagementQueuesCore_() {
     step(updateGuruwalkCheckinQueue_);
     step(rebuildUnassignedLedger_);
     step(syncLedgerHistory_);        // booking-driven roster of every tour -> Ledger History tab
+    step(writeRatesSummary_);        // roll up guide tabs -> Rates > Summary (owed to/by/balance)
     markHealthEvent_('HB_QUEUES');
     step(updateControlHealth_);
   } finally {
