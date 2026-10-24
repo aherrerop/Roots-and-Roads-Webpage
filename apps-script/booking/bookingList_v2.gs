@@ -22,9 +22,10 @@
    • "How does THIS booking parse?"        -> diagnoseBooking('GYG…')  (field by field)
 
    ── SAFETY NETS (defence in depth; full reference: docs/Booking_System_Reliability.md) ──
-   • Fast pass (runBookingSystem, every 5 min): new confirm/modify/cancel. TIME-
-     BUDGETED (MAX_FAST_RUN_MS) so a run always exits before Apps Script's platform
-     limits — that is what avoids the rare "server error" failure email.
+   • Fast pass (runBookingSystem, 1-min trigger gated by fastPollWindowMin_: 2 min
+     around tour starts, 5 min daytime, 10/30 min overnight): new confirm/modify/
+     cancel. TIME-BUDGETED (MAX_FAST_RUN_MS) so a run always exits before Apps
+     Script's platform limits — that is what avoids the rare "server error" email.
    • Reliability net (getThreadsSafe_): reads the newest few by LABEL membership, so
      a just-arrived confirmation is never missed while Gmail's search index lags.
    • Reconcile (reconcileConfirmationsToBookingList_): the FLOOR — re-inserts any
@@ -63,8 +64,11 @@
  *   Errors                                         -> run-time error log
  *
  * TRIGGERS (set these in Apps Script > Triggers)
- *   runBookingSystem()  -> every 5 min. Fast pass, skips threads already
- *                          tagged Processed.
+ *   runBookingSystem()  -> every 1 min (run installBookingFastTrigger() once to
+ *                          install it). Fast pass, skips threads already tagged
+ *                          Processed. Each fire is gated by fastPollWindowMin_, so
+ *                          the real poll is 2 min near tour starts, 5 min daytime,
+ *                          10/30 min overnight — most fires are a cheap no-op.
  *   runBookingAudit()   -> 2-3x/day. Identical pipeline but ignores the
  *                          Processed marker, so every labelled thread gets
  *                          fully re-read for consistency.
@@ -591,7 +595,7 @@ function ensureSheets_() {
  * transient "Service Spreadsheets timed out while accessing document" is normal
  * under contention (someone editing the sheet, or the Control project reading
  * it at the same moment). Those are logged to the Errors tab and swallowed —
- * the next run, 5 minutes later, simply picks the work up again.
+ * the next poll simply picks the work up again.
  */
 function safeTriggerRun_(label, fn) {
   try {
@@ -644,7 +648,7 @@ function installBookingFastTrigger() {
 function fastPollDue_() {
   try {
     const props = PropertiesService.getScriptProperties();
-    const needMs = fastPollWindowMin_() * 60000 - 30000;   // 30s grace for 5-min trigger jitter
+    const needMs = fastPollWindowMin_() * 60000 - 30000;   // 30s grace for 1-min trigger jitter
     const last = Number(props.getProperty('LAST_FAST_POLL_AT') || 0);
     const now = Date.now();
     if (now - last < needMs) return false;                 // not due yet in this window -> skip
@@ -653,7 +657,7 @@ function fastPollDue_() {
   } catch (e) { return true; }                             // fail-open: never block a real poll
 }
 
-// Frequent trigger (every 5 min): skips already-processed threads. Gated by the
+// Frequent trigger (every 1 min): skips already-processed threads. Gated by the
 // time-of-day cadence above (opts.force bypasses it for manual / reprocess runs).
 function runBookingSystem(opts) {
   if (!(opts && opts.force) && !fastPollDue_()) return;
@@ -815,7 +819,7 @@ function runBookingCore_(skipProcessed) {
     if (RNR_SKIP_PROCESSED_ && RNR_RUN_STATS_ && (RNR_RUN_STATS_.confirmFailures || []).length) {
       triggerAuditSoon_();
     }
-    writeRunStatus_(skipProcessed ? 'fast (5-min)' : 'audit (full re-read)');
+    writeRunStatus_(skipProcessed ? 'fast (gated poll)' : 'audit (full re-read)');
     lock.releaseLock();
   }
 }
@@ -864,8 +868,8 @@ function writeRunStatus_(mode) {
       // booking is never hidden just because the latest run was a quick fast pass.
       ['Backlog at last audit', backlogCount + (Number(backlogCount) && backlogOldest ? '  (oldest ' + backlogOldest + ')' : '') + '  — as of ' + backlogAt],
       ['', ''],
-      ['How to read this', 'This tab refreshes after every run (every 5 min + audits). ' +
-        'If "Last run finished" is more than ~10 minutes old, the trigger is not running: ' +
+      ['How to read this', 'This tab refreshes after every poll (daytime ~5 min, overnight up to 30 min) and audit. ' +
+        'If "Last run finished" is more than ~35 minutes old, the trigger is not running: ' +
         'open Apps Script > Triggers and > Executions. ' +
         'If "Confirmations NOT registered" or "Backlog at last audit" is >0, those emails are ' +
         'UNREAD in the inbox and their bookings are NOT on the sheet — a parser needs fixing; the ' +
