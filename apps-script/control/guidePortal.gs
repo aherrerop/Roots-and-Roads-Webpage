@@ -1245,19 +1245,20 @@ function writeBookingNote_(bookingId, language, note) {
   return { ok: false, error: 'Booking ' + bookingId + ' not found' };
 }
 
-/** The tour id a shift shows under — regular = key, private = key|P<index>. */
+// The id a shift is tracked under when closed: regular = the bare shift key, private
+// = key|P<index>, SF = key|SF. SF gets its own id so it never shares a closed-shift
+// entry with the 3h tour at the same slot; regular keeps the bare key so existing
+// Closed_Shifts entries still match.
 function shiftDomId_(s) {
   const k = shiftKey_(s.dateKey, s.minutes, s.language);
-  // SF is its OWN tour: it must NOT share a closed-shift id with the 3h tour at the
-  // same slot. Regular keeps the bare key (so existing Closed_Shifts entries match).
   if (s.sfExt) return k + '|SF';
   return s.private ? k + '|P' + (s.privIndex || 1) : k;
 }
 
-/** Set of tour ids a manager has closed (hidden from the portal). */
+// The set of tour ids a manager has closed (hidden from the portal). Cached on the
+// config TTL — the Closed_Shifts tab changes only on a close/reopen, which bumps the
+// version, so this read is skipped on the common poll.
 function readClosedShifts_() {
-  // Cached (config TTL) — the Closed_Shifts tab changes only on a close/reopen,
-  // which bumps the cache version, so the read is skipped on the common poll.
   return cachedReadConfig_('closed', PORTAL.CONFIG_TTL, function () {
     const set = {};
     const sh = control_().getSheetByName(PORTAL.CLOSED_TAB);
@@ -1270,20 +1271,18 @@ function readClosedShifts_() {
   });
 }
 
-/**
- * action=closeShift — MANAGER ONLY. Hide a shift from the portal (it
- * disappears), or reopen it. The suppression is durable and source-agnostic:
- * it outlives makeSchedule and also stops a Weekly_Schedule offer rule from
- * re-surfacing the shift.
- *   params: token, id (the tour id), reopen ("1" to un-hide)
- */
+// action=closeShift — MANAGER ONLY. Hide a shift from the portal, or reopen it. The
+// suppression is durable and source-agnostic: it outlives the weekly makeSchedule and
+// also stops a Weekly_Schedule offer rule from re-surfacing the shift.
+//   params: token, id (the tour id), reopen ("1" to un-hide)
 function apiCloseShift_(p) {
   __RRX = {};
+
+  // Managers only; a tour id is required.
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
   const me = findGuideByName_(name);
   if (!me || !me.manager) return { ok: false, error: 'Managers only' };
-
   const id = String(p.id || '').trim();
   if (!id) return { ok: false, error: 'Missing tour id' };
   const reopen = String(p.reopen || '') === '1';
@@ -1291,6 +1290,8 @@ function apiCloseShift_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
+    // Find the Closed_Shifts tab (create it with a header the first time), then find
+    // any existing row for this id.
     const ss = control_();
     let sh = ss.getSheetByName(PORTAL.CLOSED_TAB);
     if (!sh) {
@@ -1304,23 +1305,26 @@ function apiCloseShift_(p) {
       const ids = sh.getRange(2, 1, last - 1, 1).getValues();
       for (let i = 0; i < ids.length; i++) { if (String(ids[i][0] || '').trim() === id) { row = i + 2; break; } }
     }
+
+    // Reopen = just delete the row (if present) and refresh caches.
     if (reopen) {
       if (row !== -1) sh.deleteRow(row);
       bumpCacheVersion_();
-      bumpConfigVersion_();          // the Closed_Shifts read (config-versioned) changed
+      bumpConfigVersion_();          // the Closed_Shifts read is config-versioned
       return { ok: true, id, closed: false };
     }
+
+    // Close = record the id (who/when), unless it's already there.
     if (row === -1) {
       const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
       sh.getRange(sh.getLastRow() + 1, 1, 1, 3).setValues([[id, name, stamp]]);
     }
-    // TRUE DELETE: clear the guide out of the grid cell so they are freed to be
-    // assigned to another tour, and prune any column/row left empty (kills the
-    // leftover empty "9:00" column).
+
+    // Clear the guide out of the grid cell, so they're freed for another tour.
     deleteShiftFromGrid_(id);
-    // Mirror onto the feed: clear this shift's Guide and drop its 0-person
-    // placeholder (writeFeedGuide_/removeFeedShiftRow_ lowercase the language,
-    // matching the dom-id form). Best-effort.
+
+    // Mirror onto the feed: clear this shift's Guide and drop its 0-person placeholder.
+    // (writeFeedGuide_/removeFeedShiftRow_ lowercase the language, matching the id.)
     (function () {
       const p = String(id).split('|');
       const mins = Number(p[1]);
@@ -1342,11 +1346,8 @@ function apiCloseShift_(p) {
   }
 }
 
-/**
- * Clear a shift's cell from its Schedule_<language> grid (which FREES the guide
- * that was on it) and prune any time-column now empty on every date, plus empty
- * date rows. Id = "dateKey|minutes|language[|P<index>]".
- */
+// Clear a shift's cell from its Schedule_<language> grid, which FREES the guide that
+// was on it. Id = "dateKey|minutes|language[|P<index>|SF]".
 function deleteShiftFromGrid_(id) {
   const parts = String(id).split('|');
   const dateKey = parts[0];
@@ -1379,38 +1380,29 @@ function deleteShiftFromGrid_(id) {
   }
   if (colNum > -1 && rowNum > -1) sh.getRange(rowNum, colNum).clearContent();
 
-  // NOTE: the cell clear above is the essential action — it frees the guide in
-  // the grid (source of truth for the weekly makeSchedule and the guide grid-read
-  // path). We deliberately DO NOT prune empty columns/rows or re-style the grid
-  // here: those are cosmetic, cost 10-20s of one-at-a-time column/row deletes +
-  // a full restyle, and ran INSIDE closeShift's lock — so every close hogged the
-  // owner's single execution queue for 20s, threw "Server busy" at the next close,
-  // and throttled every guide's poll (the portal-wide "updating" stall). A leftover
-  // empty column is harmless (the manager view reads the feed; a guide grid-read of
-  // an empty cell yields no shift) and the weekly makeSchedule restyles + prunes the
-  // grid on its next run. Maxim: a manager action must be fast and must not block
-  // everyone else.
+  // The cell clear above is the whole job: it frees the guide in the grid (the source
+  // of truth for the weekly makeSchedule and the guide grid-read path). We deliberately
+  // do NOT prune empty columns/rows or re-style the grid here — that is cosmetic, costs
+  // 10-20s of one-at-a-time deletes + a restyle, and would run inside closeShift's lock,
+  // blocking every other request. A leftover empty column is harmless (the manager view
+  // reads the feed; a guide grid-read of an empty cell yields no shift), and the weekly
+  // makeSchedule prunes + restyles on its next run. A manager action must stay fast.
   return true;
 }
 
-/**
- * #4 — a Weekly_Schedule offer rule shows in the portal IMMEDIATELY, before
- * the weekly makeSchedule run materialises it into a Schedule_<Language> grid.
- * Expands the rules (RULES × DATES) across the visible window into "Not
- * assigned" shifts, skipping any (date, time, language) the grids or live
- * bookings already produced. "Private" rows are availability windows, not
- * offered tours, so they are not surfaced here (a private tour appears only
- * when a private booking exists).
- */
+// Surface a Weekly_Schedule offer rule in the portal immediately, before the weekly
+// makeSchedule materialises it into a Schedule_<Language> grid. It expands the rules
+// (RULES x DATES) across the visible window into "Not assigned" shifts, skipping any
+// (date, time, language) the grids or live bookings already produced. "Private" rows
+// are availability windows, not offered tours, so they are not surfaced here — a
+// private tour appears only once a private booking exists.
 function appendWeeklyScheduleShifts_(schedule, maxDaysAhead) {
   const rules = weeklyRules_();                       // read once per load; shared with applyWeeklyDefaults_
   if (!rules || !rules.length) return;               // no Weekly_Schedule tab -> nothing to add
 
+  // Generate empty recurring slots only as far ahead as this load actually shows
+  // (the caller's window), capped at the full horizon.
   const today = todayKey_();
-  // Generate empty recurring offer slots only as far ahead as the caller shows.
-  // A manager's window is small by default (MANAGER_WINDOW_DAYS) and grows on
-  // "Load more"; generating the full UPCOMING_DAYS every time bloated each load
-  // and timed "Load more" out on phones. Falls back to the full window.
   const days = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(maxDaysAhead) || PORTAL.UPCOMING_DAYS));
   const maxKey = addDaysKey_(today, days);
   // Dedup key includes the variant (regular vs SF) so an SF slot and a 3h slot at
@@ -1441,13 +1433,20 @@ function appendWeeklyScheduleShifts_(schedule, maxDaysAhead) {
   }
 }
 
+// action=assign — MANAGER ONLY. Put a guide on a shift, or clear it. Writing the name
+// into the Schedule_<language> grid cell makes it a management LOCK that the weekly
+// makeSchedule preserves; an empty guide clears the slot back to "Not assigned".
+//   params: token, dateKey, time (24h), language, isPrivate/sfExt, privIndex, guide, slot
 function apiAssign_(p) {
   __RRX = {};
+
+  // Managers only.
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
   const me = findGuideByName_(name);
   if (!me || !me.manager) return { ok: false, error: 'Managers only' };
 
+  // Read the shift coordinates and the guide ('' = unassign; slot 2 = second guide).
   const dateKey = String(p.dateKey || '').trim();
   const language = String(p.language || '').trim();
   const time = normTime24_(String(p.time || ''));
@@ -1456,9 +1455,9 @@ function apiAssign_(p) {
   const privIndex = Number(p.privIndex) || 1;
   const guide = String(p.guide || '').trim();   // '' -> unassign
   const slot = Number(p.slot) || 1;             // 2 = the full-tour second guide (portal overlay)
-
   if (!dateKey || !language || !time) return { ok: false, error: 'Missing shift info' };
 
+  // If a guide was named, check they exist, are active, and speak the language.
   if (guide) {
     const g = findGuideByName_(guide);
     if (!g) return { ok: false, error: 'Unknown guide: ' + guide };
@@ -1466,20 +1465,17 @@ function apiAssign_(p) {
     if (g.languages[language] !== true) {
       return { ok: false, error: guide + ' does not speak ' + language };
     }
-
-    // Overlapping tours are ALLOWED for EVERY guide: management deliberately puts
-    // one guide on two nearby tours so that guide gets both parties' contacts and
-    // can change their start times. So there is no MIN_SEPARATION block here — the
-    // manager decides who runs what. (The batch auto-scheduler in assignShifts.gs
-    // still spaces guides out; this manual assign is the intentional override.)
+    // No overlap/separation check here on purpose: a manager may deliberately put one
+    // guide on two nearby tours (so they hold both parties' contacts). The batch
+    // auto-scheduler still spaces guides out; this manual assign is the override.
   }
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
-    // SLOT 2 = the full-tour SECOND guide. Stored as a PORTAL-ONLY overlay (Script
+    // Slot 2 = the full-tour SECOND guide. Stored as a portal-only overlay (a Script
     // Property, like a cleared slot), so it never touches the grid cell, the feed
-    // Guide column, or the weekly scheduler — guide 1's path is completely unchanged.
+    // Guide column, or the weekly scheduler.
     if (slot === 2) {
       if (isPriv) return { ok: false, error: 'Private tours have a single guide' };
       const key2 = shiftKey_(dateKey, timeToMinutes_(time), language) + '|' + variantKey_(isSf, isPriv, privIndex);
@@ -1523,14 +1519,11 @@ function apiAssign_(p) {
 }
 
 
-/**
- * action=move — MANAGER ONLY. Moves a booking to another language's tour
- * (e.g. a German or French guest who agrees to join the English tour).
- * The row physically moves between BookingSheet language tabs; a
- * "moved from X" note is appended so the change is traceable. The booking
- * system treats the tab as authoritative once a row exists, so emails will
- * NOT move it back.
- */
+// action=move — MANAGER ONLY. Move a booking to another language's tour (e.g. a French
+// guest who agrees to join the English tour), and/or to a different time or date. The
+// row physically moves between BookingSheet language tabs with a "moved from X" note so
+// it's traceable; the booking system treats the tab as authoritative once a row exists,
+// so incoming emails won't move it back.
 function apiMoveBooking_(p) {
   __RRX = {};
   const name = requireToken_(p.token);
@@ -1601,6 +1594,9 @@ function apiMoveBooking_(p) {
   }
 }
 
+// Move a booking's row from one language's Tours tab to another's. It checks BOTH tabs
+// exist before deleting, so a bad target can't lose the row; appends a "moved from X"
+// note; and never duplicates if the row somehow already exists in the target.
 function moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage) {
   if (fromLanguage === toLanguage) return { ok: true, moved: false };
   const ss = bookingSS_();
@@ -1645,16 +1641,11 @@ function moveBookingRowBetweenTabs_(bookingId, fromLanguage, toLanguage) {
   return { ok: true, moved: true, to: toLanguage };
 }
 
-/**
- * Manager: move a booking to a DIFFERENT TIME on the same day (same language
- * tab). We only rewrite the booking's Time cell; the feed rebuild then regroups
- * the booking under the new time, which CREATES that tour automatically if none
- * existed (the feed is booking-driven). A brand-new time shows up unassigned —
- * assigning it builds its schedule column the usual way (writeAssignmentToGrid_).
- * "Manager has the power to change everything"; a wrong write here would misplace
- * a paying guest, so it is manager-only, locked, and cache-bumped like the
- * language move.
- */
+// action=moveTime — MANAGER ONLY. Move a booking to a different TIME on the same day
+// (same language tab). It only rewrites the booking's Time cell; the feed rebuild then
+// regroups the booking under the new time, creating that tour automatically if none
+// existed (the feed is booking-driven). A brand-new time shows up unassigned. Locked
+// and cache-bumped, because a wrong write here would misplace a paying guest.
 function apiMoveBookingTime_(p) {
   __RRX = {};
   const name = requireToken_(p.token);
@@ -1675,13 +1666,12 @@ function apiMoveBookingTime_(p) {
   try {
     const out = moveBookingTimeInTab_(bookingId, language, t24);
     if (out && out.ok && out.moved) {
-      // Update the Portal Feed row NOW (col B), and bump the FEED version — the
-      // key the poll's feed read is cached under. bumpCacheVersion_ alone left
-      // the feed read serving the pre-move copy, so the change didn't show until
-      // the 5-minute rebuild. Bump both: feed for the reservation read, global
-      // for the schedule/config caches.
+      // Update the Portal Feed row now (col B) and bump BOTH versions: the feed
+      // version (the key the poll's reservation read is cached under) and the global
+      // version (the schedule/config caches). Bumping both makes the change show on
+      // the next poll instead of waiting for the 5-minute feed rebuild.
       writeFeedTime_(bookingId, out.to);
-      clearFeedGuide_(bookingId);   // new time = new tour, unassigned (manager decides)
+      clearFeedGuide_(bookingId);   // new time = new tour, so it starts unassigned
       bumpFeedCacheVersion_();
       bumpCacheVersion_();
     }
@@ -1691,6 +1681,8 @@ function apiMoveBookingTime_(p) {
   }
 }
 
+// Rewrite one booking's Time cell in its language tab to the new 24h time. Returns
+// { ok, moved, to }; moved is false when the booking is already at that time.
 function moveBookingTimeInTab_(bookingId, language, t24) {
   const ss = bookingSS_();
   const sh = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
