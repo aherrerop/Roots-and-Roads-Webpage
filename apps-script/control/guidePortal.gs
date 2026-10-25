@@ -2303,13 +2303,10 @@ function parseGuideRow_(row, cols) {
   };
 }
 
-/**
- * Parse EVERY guide row ONCE per load and memoise it. findGuideByName_ used to
- * re-parse all guide rows on every call, and applyWeeklyDefaults_ calls it per
- * unassigned shift -> O(shifts x rules x guideRows) object-building on a cold
- * load, the bulk of the `assemble` CPU. Parsing once turns every later lookup
- * into a cheap map hit. Cleared with __RRX each request (see doGet).
- */
+// Parse every guide row ONCE per load and memoise it, so later lookups are cheap map
+// hits. findGuideByName_ is called per unassigned shift (by applyWeeklyDefaults_), so
+// re-parsing on every call would be O(shifts x guideRows) of object-building on a cold
+// load. Cleared with __RRX each request (see doGet).
 function guidesParsed_() {
   if (__RRX.guidesParsed) return __RRX.guidesParsed;
   const { header, rows } = readGuidesRaw_();
@@ -2414,11 +2411,10 @@ function parseScheduleTabName_(name) {
  */
 function readSchedule_(opts) {
   const includePast = !!(opts && opts.includePast);
-  // Memoise per-run (__RRX): the hourly queue build reads the schedule grids up to
-  // 3× (no-show, unassigned-with-past, GuruWalk); reading every Schedule_ grid is
-  // one of the slowest calls, so one read per (includePast) variant serves them all
-  // — a big slice off the run that was hitting the 6-min kill. Safe: nothing writes
-  // the schedule grids between these reads within a run.
+  // Memoise per-run (__RRX): the hourly queue build reads the schedule grids a few
+  // times (no-show, unassigned, GuruWalk), and reading every Schedule_ grid is one of
+  // the slowest calls, so one read per (includePast) variant serves them all. Safe
+  // because nothing writes the grids between those reads within a run.
   const memoKey = includePast ? 'schedPast' : 'sched';
   if (__RRX.qRun && __RRX[memoKey]) return __RRX[memoKey];
   const ss = control_();
@@ -2543,13 +2539,11 @@ function readSchedule_(opts) {
   return deduped;
 }
 
-/**
- * The grid window {startKey, endKey} from a title's yyyy-MM-dd dates, plus the
- * legacy {year, month} of the first one. gridLabelToKey_ uses the window to pick
- * the right YEAR for a year-less row label — the single source of a nasty class
- * of bugs where a "Jul 31" row in an "August" grid silently became next year, so
- * a portal assignment never matched its own shift and never "stuck".
- */
+// Read the grid window { startKey, endKey } from a title's yyyy-MM-dd dates, plus the
+// { year, month } of the first one. gridLabelToKey_ uses this window to pick the right
+// YEAR for a year-less row label like "Jul 31": without it, a "Jul 31" row in an
+// August-spanning grid could resolve to the wrong year, and a portal assignment would
+// then never match its own shift.
 function gridAnchor_(title) {
   const all = String(title).match(/20\d{2}-\d{2}-\d{2}/g) || [];
   if (all.length) {
