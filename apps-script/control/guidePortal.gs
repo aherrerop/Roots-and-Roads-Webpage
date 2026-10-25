@@ -3141,13 +3141,11 @@ function removeFeedShiftRow_(dateKey, time, language, isPrivate, isSf) {
   } catch (e) { return false; }
 }
 
-/**
- * RECONCILE the Portal Feed's Guide column (O) from the schedule — the authority.
- * For every feed row, resolve its shift's guide (grid assignment, else the weekly
- * default) and write it. Catches assignments made in the grid directly, by
- * makeSchedule, or a new booking that arrived before its guide was mirrored.
- * Idempotent; one read + one write. Runs with the hourly queues + after assigns.
- */
+// Reconcile the Portal Feed's Guide column (O) from the schedule, which is the authority.
+// For every feed row, resolve its shift's guide (a grid assignment, else the weekly
+// default) and write it. This catches assignments made directly in the grid, by
+// makeSchedule, or a new booking that arrived before its guide was mirrored. Idempotent,
+// one read + one write; runs with the hourly queues.
 function syncFeedGuides_() {
   const sh = bookingSS_().getSheetByName('Portal Feed');
   if (!sh || sh.getLastRow() < 2) return;
@@ -3184,18 +3182,13 @@ function syncFeedGuides_() {
   if (changed) sh.getRange(2, 15, n, 1).setValues(col);
 }
 
-/**
- * RECONCILE the Portal Feed check-ins against the ledger (the money record). We
- * write BOTH at save time, so this is a backstop for the rare case where one
- * write missed:
- *   - a check-in in the LEDGER but not the feed  -> push it onto the feed (safe,
- *     disjoint columns);
- *   - a check-in in the FEED but not the ledger  -> FLAG it (the guide may be
- *     unpaid) so a manager can fix it;
- *   - counts that disagree                       -> FLAG.
- * "Checked-in in EITHER = checked in" already holds for the portal via the union
- * read; this keeps the two stores honest. Runs hourly with the queues.
- */
+// Reconcile the Portal Feed check-ins against the ledger (the money record). Both are
+// written at save time, so this is a backstop for the rare case where one write missed:
+//   - in the LEDGER but not the feed -> push it onto the feed (safe, disjoint columns)
+//   - in the FEED but not the ledger -> FLAG it (the guide may be unpaid)
+//   - counts that disagree           -> FLAG
+// The portal already treats "checked in on EITHER" as checked in (the union read); this
+// keeps the two stores honest. Runs hourly with the queues.
 function reconcilePortalFeed_() {
   try {
     const sh = bookingSS_().getSheetByName('Portal Feed');
@@ -3266,20 +3259,10 @@ function readBookingsIndex_() {
 }
 
 
-/**
- * Surface bookings that have no matching schedule shift yet as live "extra"
- * shifts, so a reservation shows in the portal IMMEDIATELY — before the weekly
- * makeSchedule run materialises it into a Schedule_<Language> grid. Read-only
- * and language-agnostic; mirrors the scheduler's expandOrphanShifts_ so a tour
- * in any language (incl. Italian/French, which may have no grid yet) appears
- * the moment its booking lands. Never duplicates a shift the grid already has.
- */
-/**
- * What a guide may see in the shared tour list: every ASSIGNED tour (so they
- * know who is working), plus the UNASSIGNED ones they could actually take —
- * their own language, and no clash with their own shifts (same separation rule
- * the assigner uses). Managers see everything unfiltered.
- */
+// What a guide may see in the shared tour list: every ASSIGNED tour (so they know who's
+// working), plus the UNASSIGNED ones they could actually take — their own language, and
+// no clash with their own shifts (the same separation rule the assigner uses). A manager
+// sees everything unfiltered.
 function visibleShiftsForGuide_(shifts, myShifts, guide, isManager) {
   if (isManager) return shifts;
   const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
@@ -3300,19 +3283,16 @@ function visibleShiftsForGuide_(shifts, myShifts, guide, isManager) {
 }
 
 
-/**
- * WEEKLY RECURRING ASSIGNMENT. A Weekly_Schedule rule can name a default guide
- * (col G) who runs that day+time+language every week. Overlay that guide onto any
- * matching shift that has NO assignment yet, so the manager sets the pattern once
- * (e.g. Francesca = Italian 17:00 all week; Albert = English 10:00, Carlos =
- * English 17:00 Mon–Fri) and it carries over automatically. A manual assignment
- * for a specific date is a real grid lock — that shift already has an assigned
- * guide, so it is skipped here and the override wins for that day only.
- */
-/** Weekly_Schedule rules, read ONCE per load (both appenders + defaults share it)
- *  and cached across loads — it changes only via a direct sheet edit, so <=TTL
- *  staleness is fine, and this is most of the `assemble` phase's cost. (Dates in
- *  activeFrom/Until survive the cache as ISO strings; toDateKey_ handles those.) */
+// --- Weekly recurring assignment --------------------------------------------
+// A Weekly_Schedule rule can name a default guide (col G) who runs that
+// day+time+language every week. The overlay (applyWeeklyDefaults_) puts that guide onto
+// any matching shift with NO assignment yet, so a manager sets the pattern once and it
+// carries over. A manual assignment for a specific date is a real grid lock, so it's
+// skipped here and that override wins for the one day.
+
+// Read the Weekly_Schedule rules ONCE per load (shared by both appenders + the defaults)
+// and cache them across loads — the tab changes only via a direct sheet edit, so <=TTL
+// staleness is fine, and this read is most of the `assemble` phase's cost.
 function weeklyRules_() {
   if (__RRX.weekly) return __RRX.weekly;
   const rules = cachedRead_('weekly', PORTAL.CONFIG_TTL, function () {
@@ -3321,14 +3301,11 @@ function weeklyRules_() {
   return (__RRX.weekly = rules);
 }
 
-/**
- * The DEFAULT guide the weekly pattern puts on a given date/time/language, or ''
- * if none applies. SINGLE SOURCE OF TRUTH shared by the portal overlay
- * (applyWeeklyDefaults_) AND the attribution path (guideForShift_ -> the GuruWalk
- * / no-show / unassigned queues), so the two never disagree: a shift's guide is
- * the grid cell, else this weekly default. Respects the rule's active window and
- * requires the guide to be active and to actually speak the language.
- */
+// The DEFAULT guide the weekly pattern puts on a given date/time/language, or '' if none
+// applies. Single source of truth, shared by the portal overlay (applyWeeklyDefaults_)
+// and the attribution path (the GuruWalk / no-show / unassigned queues), so the two never
+// disagree: a shift's guide is its grid cell, else this weekly default. Respects the
+// rule's active window and requires the guide to be active and to speak the language.
 function weeklyDefaultGuide_(dateKey, time, language, isSf, isPrivate) {
   const rules = weeklyRules_();
   if (!rules.length || !dateKey) return '';
@@ -3510,6 +3487,7 @@ function applyNoShowOverlay_(schedule) {
   });
 }
 
+// Overlay each shift's weekly-default guide onto any slot that has no real assignment yet.
 function applyWeeklyDefaults_(schedule) {
   // A default must YIELD to a real assignment: if the default guide is already
   // really assigned within the separation window (e.g. a manager moved them to
@@ -3547,6 +3525,11 @@ function applyWeeklyDefaults_(schedule) {
 }
 
 
+// Surface bookings that have no matching schedule shift yet as live "extra" shifts, so a
+// reservation shows in the portal immediately — before the weekly makeSchedule turns it
+// into a Schedule_<Language> grid. Language-agnostic, so a tour in any language (even one
+// with no grid yet) appears the moment its booking lands; never duplicates a shift the
+// grid already has. (Used only on the no-feed fallback path.)
 function appendOrphanBookingShifts_(schedule, bookingsByKey) {
   const today = todayKey_();
   const maxKey = addDaysKey_(today, PORTAL.UPCOMING_DAYS);
