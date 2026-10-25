@@ -262,16 +262,21 @@ var __RRX = {};
 // the frequent auto-refresh cheap.
 const PORTAL_MUTATIONS = { assign: 1, save: 1, move: 1, setNote: 1, closeShift: 1, uncheckin: 1, noshow: 1 };
 
-// Same dispatch as doGet, so sensitive actions (login) can be sent as a POST —
-// the password rides in the request body instead of the URL query string.
+// POST routes to the same place as GET, so a sensitive action (login) can send the
+// password in the request body instead of in the URL's query string.
 function doPost(e) { return doGet(e); }
 
+// The single entry point for every portal request: read ?action=, run the matching
+// handler, time the request, and return a JSONP reply the browser can read.
 function doGet(e) {
-  __RRX = {};                       // fresh per-request memo (prod globals reset anyway; explicit for safety + tests)
+  // Start each request clean: reset the per-request memo and read the parameters.
+  __RRX = {};                       // prod resets globals between requests anyway; explicit here for tests
   const p = (e && e.parameter) ? e.parameter : {};
   const callback = p.callback || '';
   const t0 = Date.now();
 
+  // Route the action to its handler. Anything that throws becomes a clean error
+  // reply, so a bug in one action can never take the whole web app down.
   let out;
   try {
     switch (p.action) {
@@ -297,29 +302,29 @@ function doGet(e) {
     out = { ok: false, error: String(err && err.message ? err.message : err) };
   }
 
+  // Measure how long the whole request took; the branches below record it.
   const ms = Date.now() - t0;
+
+  // A data-changing action gets a Portal Log line: what it touched, whether it
+  // worked, and (for save) a per-phase breakdown of where the write spent its time.
   if (PORTAL_MUTATIONS[p.action]) {
     const detail = (out && out.error) ? out.error :
       ['date=' + (p.dateKey || ''), 'time=' + (p.time || ''), 'lang=' + (p.language || ''),
        'guide=' + (p.guide || ''), 'id=' + (p.bookingId || p.id || '')].filter(x => !/=$/.test(x)).join(' ');
-    // A mutation that returns a per-phase breakdown (save) logs it too — so the
-    // Portal Log shows where a WRITE spends its time, not just the total.
     const wtim = (out && out.timings) ?
       ' | ' + Object.keys(out.timings).map(function (k) { return k + '=' + out.timings[k] + 'ms'; }).join(' ') : '';
     portalLog_(p.action, ms, !!(out && out.ok), detail + wtim);
+
+  // A tours READ feeds the contention signal and carries back a poll hint; it is
+  // only logged when slow, so the routine fast polls don't flood the log.
   } else if (p.action === 'tours') {
-    // ADAPTIVE BACKPRESSURE: fold every successful load into the contention signal
-    // and hand the client back how often it should poll (pollHint) + the level. A
-    // forming queue slows the passive refresh automatically; it speeds back up when
-    // load falls. A user action is never throttled (the client only applies the
-    // hint to its background poll).
+    // Fold a good load into the smoothed signal and tell the client how often to poll.
     if (out && out.ok) {
       const sig = recordLoadSignal_(ms);
       out.pollHint = sig.pollSec;
       out.loadLevel = sig.level;
     }
-    // A SLOW load is still logged with its per-phase breakdown so we can see where
-    // the time went (the frequent fast polls are not logged, to keep the log clean).
+    // Log a slow load with its per-phase breakdown so we can see where the time went.
     if (ms > PORTAL.SLOW_MS) {
       const tim = (out && out.timings) ?
         ' | ' + Object.keys(out.timings).map(function (k) { return k + '=' + out.timings[k] + 'ms'; }).join(' ') : '';
@@ -327,18 +332,15 @@ function doGet(e) {
     }
   }
 
+  // Wrap the result in the JSONP callback the browser named, and send it back.
   return jsonp_(callback, out);
 }
 
-/**
- * action=clientlog — the PHONE reports what a load actually did on its end:
- * completed (ok), timed out, errored, or was abandoned by an early reload
- * (abort). The server can't see a client that reloaded before the response
- * arrived, so without this the Portal Log can't tell a genuinely slow load from
- * one the user cut short. That distinction is exactly what the owner asked to
- * see. Best-effort, token-light (returns no data), and cheap: the client only
- * beacons the INITIAL load + failures + aborts — never routine 20s polls.
- */
+// action=clientlog — the phone reports what a load actually did on its end: it
+// completed (ok), timed out, errored, or was abandoned by an early reload (abort).
+// The server can't see a client that reloaded before the reply arrived, so this is
+// how the Portal Log tells a genuinely slow load from one the user cut short. It
+// returns no data and is cheap; the client only beacons the first load + failures.
 function apiClientLog_(p) {
   const ev = String(p.ev || '?').slice(0, 16);          // ok | timeout | error | abort
   const ms = Math.max(0, Number(p.ms) || 0);
@@ -348,12 +350,11 @@ function apiClientLog_(p) {
   return { ok: true };
 }
 
-/**
- * Append a timing/result line to the "Portal Log" tab (auto-created, capped).
- * Best-effort: a logging failure must never break the actual request.
- */
+// Append one timing/result line to the "Portal Log" tab. Best-effort: a logging
+// failure must never break the real request, so the whole body is in a try.
 function portalLog_(action, ms, ok, detail) {
   try {
+    // Find the log tab, creating it with a header row the first time.
     const ss = control_();
     let sh = ss.getSheetByName('Portal Log');
     if (!sh) {
@@ -361,28 +362,29 @@ function portalLog_(action, ms, ok, detail) {
       sh.getRange(1, 1, 1, 5).setValues([['When', 'Action', 'ms', 'Result', 'Detail']]).setFontWeight('bold');
       sh.setFrozenRows(1);
     }
+
+    // Append the line (detail is capped so one row can't blow up).
     sh.appendRow([
       Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'),
       action, ms, ok ? 'OK' : 'ERROR', String(detail || '').slice(0, 300)
     ]);
+
+    // Trim the tab so it never grows without bound: keep the newest ~500 lines.
     const last = sh.getLastRow();
-    if (last > 700) sh.deleteRows(2, last - 500);   // keep the newest ~500 lines
+    if (last > 700) sh.deleteRows(2, last - 500);
   } catch (e) { /* never let logging break a request */ }
 }
 
-/**
- * SHORT-LIVED READ CACHE (the fix for 8-127s portal loads).
- *
- * The heavy cost of a tours load is re-opening the BookingSheet + reading every
- * schedule grid on EVERY 8-second poll, for every guide watching. Those reads
- * are identical for everyone for many seconds, so we cache their JSON in the
- * script cache under a version key and reuse it. Any assignment / move / note
- * change bumps the version, so a real change is never hidden behind the cache.
- *
- * Fail-open by design: if the cache is unavailable or the value is too big, the
- * read simply runs live — never an error, never stale beyond the TTL.
- * Check-ins are deliberately NOT cached (they read live every request).
- */
+// --- Short-lived read cache -------------------------------------------------
+// A tours load's heavy cost is re-opening the BookingSheet and reading every
+// schedule grid, which is identical for every guide for many seconds. So we cache
+// that JSON under a VERSION key and reuse it; any assign/move/note change bumps the
+// version, so a real change is never hidden behind the cache. Fail-open: if the
+// cache is unavailable or the value too big, the read just runs live. Check-ins are
+// never cached — they read live every request.
+//
+// cacheVersion_ reads the current version; bumpCacheVersion_ advances it to
+// invalidate everything cached under the old one.
 function cacheVersion_() {
   try { return PropertiesService.getScriptProperties().getProperty('PORTAL_CACHE_VER') || '0'; }
   catch (e) { return '0'; }
@@ -408,14 +410,11 @@ function bumpFeedCacheVersion_() {
     p.setProperty('PORTAL_FEED_VER', String((Number(p.getProperty('PORTAL_FEED_VER')) || 0) + 1));
   } catch (e) { /* best-effort */ }
 }
-// A THIRD version, for CONFIG reads (the Guides tab, the Closed_Shifts tab) that
-// an assign / move / check-in NEVER changes. Those were keyed on the global
-// version, so every assignment during a manager's morning burst needlessly threw
-// away the guides + closed reads and forced every watching guide into a full cold
-// load. Keying them here means an assign burst only re-reads the feed; the config
-// reads stay warm and are refreshed only by a close/reopen, a password change, or
-// their TTL (a direct sheet edit tolerates <=CONFIG_TTL). This is the main lever
-// against the pileup that made the portal fail to load under load.
+// A THIRD version, for CONFIG reads (the Guides tab, the Closed_Shifts tab) that an
+// assign / move / check-in never changes. Keying those on their own version means an
+// assign burst only re-reads the feed; the config reads stay warm and refresh only on
+// a close/reopen, a password change, or their TTL (a direct sheet edit shows within
+// CONFIG_TTL). Keeping these reads warm is the main lever against load-time pileups.
 function configVersion_() {
   try { return PropertiesService.getScriptProperties().getProperty('PORTAL_CONFIG_VER') || '0'; }
   catch (e) { return '0'; }
@@ -426,7 +425,11 @@ function bumpConfigVersion_() {
     p.setProperty('PORTAL_CONFIG_VER', String((Number(p.getProperty('PORTAL_CONFIG_VER')) || 0) + 1));
   } catch (e) { /* best-effort */ }
 }
+// Run fn() but serve a cached copy of its result when one exists. `name` identifies
+// the read; the key also carries the global cache version, so a bump makes old
+// entries unreachable. Fail-open throughout: any cache problem just runs fn() live.
 function cachedRead_(name, ttlSeconds, fn) {
+  // Try the cache first; a hit returns the stored JSON without touching the sheet.
   let cache = null, key = '';
   try {
     cache = CacheService.getScriptCache();
@@ -434,23 +437,24 @@ function cachedRead_(name, ttlSeconds, fn) {
     const hit = cache.get(key);
     if (hit) return JSON.parse(hit);
   } catch (e) { cache = null; }
+
+  // Miss: do the real read.
   const val = fn();
+
+  // Store it for next time, unless it's too big for the cache (100KB cap).
   try {
     if (cache) {
       const s = JSON.stringify(val);
-      if (s.length < 95000) cache.put(key, s, ttlSeconds || PORTAL.CACHE_TTL);   // 100KB cap
+      if (s.length < 95000) cache.put(key, s, ttlSeconds || PORTAL.CACHE_TTL);
     }
   } catch (e) { /* value not cacheable this time; live read already returned */ }
   return val;
 }
 
-/**
- * Same as cachedRead_ but keyed on the CONFIG version, so an assign/move/check-in
- * (which bumps only the global + feed versions) does NOT invalidate it. Used for
- * the Guides + Closed_Shifts reads. A close/reopen and a password change bump the
- * config version explicitly; anything else tolerates <=CONFIG_TTL. Fail-open,
- * identical to cachedRead_.
- */
+// Same idea as cachedRead_, but keyed on the CONFIG version instead of the global
+// one — so an assign/move/check-in (which bumps only global + feed) leaves it warm.
+// Used for the Guides + Closed_Shifts reads, which change only on a close/reopen, a
+// password change, or a direct sheet edit (shown within CONFIG_TTL).
 function cachedReadConfig_(name, ttlSeconds, fn) {
   let cache = null, key = '';
   try {
