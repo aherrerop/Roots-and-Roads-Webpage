@@ -2556,13 +2556,10 @@ function gridAnchor_(title) {
   return { year: now.getFullYear(), month: now.getMonth(), startKey: todayK, endKey: todayK };
 }
 
-/**
- * "Thu Jul 16" + anchor -> "2026-07-16". Year-boundary safe AND resilient to a
- * stale or degenerate grid title: of the candidate years around the anchor, it
- * picks the one whose date falls INSIDE the grid window, else the one closest to
- * it. That way a "Jul 31" row resolves to the same 2026-07-31 the portal shift
- * uses, no matter what month the title happens to name.
- */
+// Turn a grid row label like "Thu Jul 16" into "2026-07-16", year-boundary safe. Of the
+// candidate years around the anchor, pick the one whose date falls INSIDE the grid
+// window (else the closest), so "Jul 31" resolves to the same date the portal shift
+// uses, no matter what month the title happens to name.
 function gridLabelToKey_(label, anchor) {
   const m = String(label).match(/([A-Za-z]{3,})\s+(\d{1,2})\s*$/);
   if (!m) return '';
@@ -2596,27 +2593,21 @@ function gridLabelToKey_(label, anchor) {
 
 function bookingSS_() { return __RRX.bookingSS || (__RRX.bookingSS = SpreadsheetApp.openById(PORTAL.BOOKING_SHEET_ID)); }
 
-/**
- * Read the BookingSheet "Portal Feed" tab (ONE read) into the same
- * "dateKey|minutes|Language" -> [bookings] index readBookingsIndex_ builds by
- * scanning six language tabs. The booking script rebuilds this feed every run.
- * Returns null if the feed is missing or empty, so apiTours_ transparently falls
- * back to the per-language-tab read while the feed is still warming up.
- * Columns: Date, Time, Language, Name, Phone, Adults, Children, Source, Income,
- *          Booking ID, Notes, Manager note, Checked-in, Check-in time.
- */
+// Read the BookingSheet "Portal Feed" tab in ONE read, into the same
+// "dateKey|minutes|Language" -> [bookings] index that readBookingsIndex_ builds by
+// scanning six language tabs. The booking script rebuilds this feed every run. Returns
+// null when the feed is missing/empty, so apiTours_ falls back to the per-tab read
+// while it is still warming up.
 function readPortalFeed_() {
   let sh;
   try { sh = bookingSS_().getSheetByName('Portal Feed'); } catch (e) { return null; }
   return parseFeedSheet_(sh);
 }
 
-/**
- * The Past2Days snapshot (BookingSheet 'Past2Days' tab) — the Portal Feed rows for
- * tours that already ran, kept 2 days WITH their check-in (M/N) and guide (O). Same
- * row shape as the live feed, so it parses identically. Powers the manager History
- * view. Null if the tab is absent/empty.
- */
+// Read the Past2Days snapshot (BookingSheet 'Past2Days' tab): the Portal Feed rows for
+// tours that already ran, kept 2 days WITH their check-in (M/N) and guide (O). Same row
+// shape as the live feed, so it parses identically; this powers the manager History
+// view. Null if the tab is absent/empty.
 function readPast2DaysFeed_() {
   let sh;
   try { sh = bookingSS_().getSheetByName('Past2Days'); } catch (e) { return null; }
@@ -2658,14 +2649,12 @@ function parseFeedSheet_(sh) {
   return index;
 }
 
-/**
- * Write a check-in onto the Portal Feed row for a booking — columns M (Checked-in)
- * and N (Check-in time), which are the PORTAL's alone. The 5-minute rebuild only
- * ever writes the reservation columns (A–L) and preserves M/N by Booking ID, so
- * the two writers touch DISJOINT columns and can never clobber each other.
- * Updates an existing row only; a booking not yet in the feed is covered by the
- * ledger + the union read, and the next rebuild gives it a row. Best-effort.
- */
+// Write a check-in onto the Portal Feed row for a booking — columns M (Checked-in) and
+// N (Check-in time), which belong to the portal alone. The 5-minute rebuild writes only
+// the reservation columns (A-L) and preserves M/N by Booking ID, so the two writers
+// touch DISJOINT columns and can't clobber each other. Updates an existing row only; a
+// booking not yet in the feed is covered by the ledger + union read until the next
+// rebuild gives it a row. Best-effort.
 function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
   try {
     const id = String(bookingId || '').trim();
@@ -2692,13 +2681,10 @@ function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
   } catch (e) { return false; }
 }
 
-/**
- * Mirror MANY check-ins onto the Portal Feed in ONE read + ONE write (the batch
- * form of writeFeedCheckin_). A tour with 8 checked-in guests used to cost 8 full
- * feed reads + 16 single-cell writes on every save; this does one read of J..N and
- * one write of M:N. Same rules: never downgrade a count, keep the FIRST recorded
- * time. `updates` = [{ bookingId, checkedIn }]; `at` = HH:mm for new check-ins.
- */
+// Mirror MANY check-ins onto the Portal Feed in ONE read + ONE write (the batch form of
+// writeFeedCheckin_): one read of J..N and one write of M:N for the whole tour. Same
+// rules — never downgrade a count, keep the FIRST recorded time. `updates` =
+// [{ bookingId, checkedIn }]; `at` = HH:mm for new check-ins.
 function writeFeedCheckins_(updates, at) {
   try {
     const want = {};
@@ -2747,13 +2733,10 @@ function writeFeedUncheckin_(bookingId) {
   return done;
 }
 
-/**
- * Reflect a booking's NEW TIME on its Portal Feed row (col B) right away, so a
- * manager's move appears on the very next poll instead of waiting for the
- * 5-minute feed rebuild. The rebuild rewrites A–L from the Tours tab — which the
- * move also updated — so it re-lands on the same value; no drift. Best-effort;
- * updates every feed row carrying this Booking ID.
- */
+// Reflect a booking's NEW TIME on its Portal Feed row (col B) right away, so a manager's
+// move shows on the next poll instead of waiting for the 5-minute feed rebuild. The
+// rebuild rewrites A-L from the Tours tab — which the move also updated — so it re-lands
+// on the same value; no drift. Best-effort, updating every feed row with this id.
 function writeFeedTime_(bookingId, time12h) {
   try {
     const id = String(bookingId || '').trim();
@@ -2814,15 +2797,12 @@ function writeFeedLanguage_(bookingId, language) {
   } catch (e) { return false; }
 }
 
-/**
- * Clear the Guide (col O) on a booking's Portal Feed row(s). Called on a MOVE so
- * the booking never drags its old tour's guide into the new time/language: the
- * tour's guide is read from its bookings' Guide column (buildScheduleFromFeed_),
- * so a moved booking that kept its old guide would wrongly show that guide on the
- * new tour (e.g. an English guide appearing on a moved-to Spanish slot). Cleared,
- * a moved booking lands in an UNASSIGNED tour — the manager decides — unless the
- * TARGET tour already has its own guide from its other bookings. Best-effort.
- */
+// Clear the Guide (col O) on a booking's Portal Feed row(s). Called on a MOVE so the
+// booking doesn't drag its old tour's guide into the new slot: a tour's guide is read
+// from its bookings' Guide column (buildScheduleFromFeed_), so a moved booking that kept
+// its old guide would wrongly show that guide on the new tour. Cleared, the moved booking
+// lands in an UNASSIGNED tour unless the target tour already has its own guide from its
+// other bookings. Best-effort.
 function clearFeedGuide_(bookingId) {
   try {
     const id = String(bookingId || '').trim();
@@ -2838,8 +2818,8 @@ function clearFeedGuide_(bookingId) {
   } catch (e) { return false; }
 }
 
-/** Delete a booking's check-in row(s) from EVERY guide ledger tab. Returns the
- *  number of rows removed. The money record for that check-in is gone. */
+// Delete a booking's check-in row(s) from EVERY guide ledger tab (so the money record
+// for that check-in is gone). Returns how many rows were removed.
 function removeLedgerCheckin_(bookingId) {
   const id = String(bookingId || '').trim();
   if (!id) return 0;
@@ -2860,14 +2840,11 @@ function removeLedgerCheckin_(bookingId) {
   return removed;
 }
 
-/**
- * action=uncheckin — MANAGER ONLY. Undo a check-in cleanly: remove its ledger
- * row(s) (the money record) AND clear the feed's M/N, under one lock, then bump
- * the feed cache so the portal reflects it on the very next load. This is the
- * reliable "delete a check-in" — doing it by hand fought the 60s feed cache and
- * the hourly ledger->feed reconciler, so a deleted check-in kept reappearing.
- *   params: token, bookingId
- */
+// action=uncheckin — MANAGER ONLY. Undo a check-in cleanly: remove its ledger row(s)
+// (the money record) AND clear the feed's M/N, under one lock, then bump the feed cache
+// so the portal reflects it on the next load. This is the reliable way to delete a
+// check-in — a by-hand clear would be re-added by the hourly ledger->feed reconciler.
+//   params: token, bookingId
 function apiUncheckin_(p) {
   __RRX = {};
   const name = requireToken_(p.token);
@@ -2892,14 +2869,12 @@ function apiUncheckin_(p) {
   return { ok: true, bookingId: bookingId, removed: removed };
 }
 
-/**
- * action=noshow — mark (or clear) a FULL NO-SHOW: nobody in the group turned up,
- * so the guide who ran it is owed a flat €10 (PORTAL.NO_SHOW_PAY). A manager, or
- * the guide the tour is assigned to, can flag it. Writes a 'No-show' ledger line
- * (the pay record, idempotent by a synthetic booking id) and records it in the
- * PORTAL_NOSHOW overlay so the card shows the state. clear=1 removes both.
- *   params: token, dateKey, time, language, isPrivate, privIndex, sfExt, guide, clear
- */
+// action=noshow — mark (or clear) a FULL NO-SHOW: nobody in the group turned up, so the
+// guide who ran it is owed a flat sum (PORTAL.NO_SHOW_PAY). A manager, or the guide the
+// tour is assigned to, can flag it. It writes a 'No-show' ledger line (the pay record,
+// idempotent by a synthetic booking id) and records it in the PORTAL_NOSHOW overlay so
+// the card shows the state. clear=1 removes both.
+//   params: token, dateKey, time, language, isPrivate, privIndex, sfExt, guide, clear
 function apiNoShow_(p) {
   __RRX = {};
   const name = requireToken_(p.token);
@@ -2951,16 +2926,13 @@ function apiNoShow_(p) {
   return { ok: true, cleared: clear, guide: guide };
 }
 
-/**
- * action=history — MANAGER ONLY. The tours of the last PORTAL.HISTORY_DAYS days
- * (today-N .. yesterday), so a manager can mark Guruwalk/Freetour no-shows and undo
- * a check-in AFTER the tour ran. Roster + check-in (M/N) + assigned guide (O) come
- * from the Past2Days snapshot (the live feed has already dropped these days); the
- * Completed Log fills any booking the snapshot missed (maxim: never miss a booking)
- * and the ledger is unioned in as the money backstop. Cards are the SAME shape as
- * the manager's live tours, so the existing no-show + undo-check-in controls work
- * unchanged. Read-only endpoint; the actual no-show/undo are the normal mutations.
- */
+// action=history -> the tours of the last PORTAL.HISTORY_DAYS days (today-N .. yesterday),
+// so a manager can mark Guruwalk/Freetour no-shows and undo a check-in AFTER the tour ran
+// (a guide sees only their own past tours). Roster + check-in (M/N) + assigned guide (O)
+// come from the Past2Days snapshot (the live feed has already dropped these days); the
+// Completed Log fills any booking the snapshot missed, and the ledger is unioned in as the
+// money backstop. Cards are the SAME shape as the live tours, so the no-show + undo
+// controls work unchanged. Read-only; the actual no-show/undo are the normal mutations.
 function apiHistory_(p) {
   __RRX = {};
   const name = requireToken_(p.token);
@@ -3079,13 +3051,11 @@ function apiHistory_(p) {
            now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };
 }
 
-/**
- * Write the assigned GUIDE onto the Portal Feed rows of a shift (column O). The
- * portal reads assignments from the feed, so every assign/unassign mirrors here.
- * Matches every row of the shift — its bookings AND its shift placeholder — of
- * the SAME private/regular kind (a private and a regular tour can share a slot
- * but have different guides). `guide` '' clears it. One read + one write.
- */
+// Write the assigned GUIDE onto a shift's Portal Feed rows (column O). The portal reads
+// assignments from the feed, so every assign/unassign mirrors here. It matches every row
+// of the shift — its bookings AND its placeholder — of the same private/regular/SF kind
+// (a private and a regular tour can share a slot but have different guides). An empty
+// `guide` clears it. One read + one write; returns whether the shift has any feed rows.
 function writeFeedGuide_(dateKey, time, language, isPrivate, guide, isSf) {
   try {
     const sh = bookingSS_().getSheetByName('Portal Feed');
