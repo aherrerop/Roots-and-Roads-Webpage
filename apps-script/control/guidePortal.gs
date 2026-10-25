@@ -2001,8 +2001,8 @@ function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guid
   // Self-heal the title to the true min/max of the rows, so the anchor is always
   // accurate for the next read/write (kills the degenerate "(X to X)" title).
   refreshGridTitle_(sh, language, anchor);
-  // Re-apply the scheduler's professional look so a portal-inserted row/column
-  // never leaves the grid half-styled (blank rows like the old screenshot).
+  // Re-apply the scheduler's look so a portal-inserted row/column never leaves the
+  // grid half-styled.
   styleScheduleGrid_(sh);
   return { ok: true, assigned: guide || '' };
 }
@@ -2059,7 +2059,9 @@ function refreshGridTitle_(sh, language, anchor) {
 }
 
 
-/** action=save -> { ok } . data = JSON: { tourId, dateKey, time, language, bookings:[{bookingId,source,name,phone,guests,checkedIn}], walkins:[{source,count}] } */
+// action=save -> { ok } : record a tour's check-ins. `data` is JSON with the tour
+// (dateKey/time/language) and its bookings; each booking carries checkedIn and which
+// guide (guideIndex 1 or 2) checked that party in.
 function apiSave_(p) {
   __RRX = {};
   const name = requireToken_(p.token);
@@ -2111,19 +2113,18 @@ function apiSave_(p) {
     savedCount++;
   });
 
-  // Walk-ins were removed: OTA tours are prepaid, and a free-tour walk-in would
-  // only mean the guide owes us commission we never generated — no guide reports
-  // that. The feature was noise, so the portal no longer sends walk-ins.
+  // No walk-ins: OTA tours are prepaid, and a free-tour walk-in would only mean the
+  // guide owes us commission we never generated (which no guide reports), so the
+  // portal doesn't send any and we record none here.
 
-  // Per-phase write stopwatch, returned so the Portal Log shows where a save
-  // spends its time (lock wait vs ledger write vs feed write vs flush) — the
-  // write half of the "explain the timings" ask.
+  // A per-phase write stopwatch (lock wait / ledger / feed / flush), returned as
+  // `timings` so the Portal Log shows where a save spent its milliseconds.
   const ST = {};
   const _s = (k, fn) => { const t = Date.now(); const r = fn(); ST[k] = Date.now() - t; return r; };
 
-  // LockService: two guides saving at once (or a double-tap) must not
-  // interleave ledger writes. writeGuideLedger_ upserts per booking id, so a
-  // repeated/stale save is a clean merge, never a duplicate or a wipe.
+  // Take a lock so two guides saving at once (or a double-tap) can't interleave ledger
+  // writes. writeGuideLedger_ upserts per booking id, so a repeated/stale save is a
+  // clean merge — never a duplicate or a wipe.
   const lock = LockService.getScriptLock();
   const lt = Date.now();
   if (!lock.tryLock(15000)) return { ok: false, error: 'Server busy, try again in a moment' };
@@ -2142,8 +2143,8 @@ function apiSave_(p) {
     // this lock: if a guest shows as checked-in in EITHER, they are checked in.
     const at = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm');
     _s('feed', function () {
-      // ONE read + ONE write for the whole tour's check-ins (was one full feed
-      // read + two cell writes per guest — the biggest cost of a multi-guest save).
+      // One read + one write for the whole tour's check-ins (cheaper than a feed read
+      // plus two cell writes per guest on a multi-guest save).
       writeFeedCheckins_((d.bookings || [])
         .filter(b => b.checked && b.bookingId)
         .map(b => ({ bookingId: b.bookingId, checkedIn: Math.max(0, Number(b.checkedIn || 0)) })), at);
@@ -2158,29 +2159,24 @@ function apiSave_(p) {
     // guests, unassigned tours included — so it is built by the hourly
     // syncLedgerHistory_ sweep, not here from the check-ins.)
     _s('flush', function () { SpreadsheetApp.flush(); return 0; });   // commit before returning, so a reload can't read stale
-    // NOTE: the GuruWalk queue used to be rebuilt HERE, on every save. That read
-    // the whole ledger + Completed Log and made check-ins take 7-22s to return.
-    // It is idempotent and rebuilt by the hourly updateManagementQueues trigger,
-    // so the guide's tap now returns immediately and the queue catches up within
-    // the hour (well inside the 48h GuruWalk reporting window).
+    // The GuruWalk no-show queue is NOT rebuilt here: that would read the whole ledger
+    // + Completed Log and make a check-in take many seconds. It is idempotent and
+    // rebuilt by the hourly updateManagementQueues trigger, so the tap returns at once
+    // and the queue catches up within the hour (inside GuruWalk's 48h reporting window).
   } finally {
     lock.releaseLock();
   }
-  // A check-in changed ONLY the feed, so refresh just the feed cache. Without
-  // this, a future/other tour's check-in was visible only via the 60s-cached
-  // feed (the manager's ledger read skips future/other guides), so it took up to
-  // a minute to appear even though the banner said "Up to date". Now the very
-  // next load reads it — and the schedule/guides/weekly caches stay warm, so the
-  // load right after a check-in is not needlessly slow.
+  // A check-in changed only the feed, so refresh just the feed cache: the next load
+  // reads the new check-in immediately, while the schedule/guides/weekly caches stay
+  // warm so the load right after a check-in isn't needlessly slow.
   bumpFeedCacheVersion_();
   return { ok: true, saved: savedCount, guide: targetGuide, timings: ST };
 }
 
 
-/**
- * action=health -> deployment sanity from a phone browser. No secrets, no
- * personal data, no spreadsheet contents.
- */
+// action=health -> a quick deployment sanity check from a phone browser: is the server
+// up, are Control / BookingSheet / Ledger reachable, is the timezone right, what's the
+// contention level. Returns no secrets, no personal data, and no sheet contents.
 function apiHealth_() {
   const out = {
     ok: true,
@@ -2224,11 +2220,11 @@ function apiHealth_() {
 
 function control_() { return SpreadsheetApp.getActiveSpreadsheet(); }   // already-open handle, no round-trip — not worth memoising
 
+// Read the Guides tab, once per load (the __RRX memo, since findGuideByName_ hits it
+// repeatedly) and cached across loads. The tab changes rarely — only a direct sheet
+// edit, which shows within CONFIG_TTL — so the cross-load cache is safe.
 function readGuidesRaw_() {
-  if (__RRX.guidesRaw) return __RRX.guidesRaw;            // one Guides read per load (findGuideByName_ hits it repeatedly)
-  // Also cached ACROSS loads: the Guides tab changes rarely (and only via a
-  // direct sheet edit, which tolerates <=TTL), so re-reading it on every cold
-  // load was pure cost in the me / mgrGuides / weekly-default phases.
+  if (__RRX.guidesRaw) return __RRX.guidesRaw;
   const raw = cachedReadConfig_('guides', PORTAL.CONFIG_TTL, function () {
     const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
     if (!sh) throw new Error('Guides tab not found');
