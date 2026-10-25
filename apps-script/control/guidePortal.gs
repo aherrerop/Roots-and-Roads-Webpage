@@ -3570,7 +3570,7 @@ function appendOrphanBookingShifts_(schedule, bookingsByKey) {
   });
 }
 
-/** Date-then-time-then-language order used everywhere the shift list is built. */
+// Sort shifts in date-then-time-then-language order, used everywhere the list is built.
 function sortSchedule_(s) {
   s.sort((a, b) =>
     (a.dateKey < b.dateKey ? -1 : a.dateKey > b.dateKey ? 1 : 0) ||
@@ -3578,14 +3578,12 @@ function sortSchedule_(s) {
     String(a.language).localeCompare(String(b.language)));
 }
 
-/**
- * Build the portal's shift list FROM THE FEED — no schedule-grid read (the big
- * `sched` cost). Each feed row carries its shift's assigned guide (feedGuide) and
- * whether it's a real booking or a 0-person 'shift' placeholder. One shift per
- * date|time|language + private/regular; its guide is the feedGuide its rows
- * carry. Windowed to the same upcoming range the portal shows. Assignments made
- * via the grid (makeSchedule / manual) reach here through syncFeedGuides_.
- */
+// Build the portal's shift list FROM THE FEED, with no schedule-grid read. Each feed row
+// carries its shift's assigned guide (feedGuide) and whether it's a real booking or a
+// 0-person 'shift' placeholder. Produces one shift per date|time|language + variant
+// (regular/private/SF), its guide taken from the feedGuide its rows carry, windowed to
+// the range the portal shows. Grid assignments (makeSchedule / manual) reach the feed
+// through syncFeedGuides_.
 function buildScheduleFromFeed_(feedIndex, maxDaysAhead) {
   const today = todayKey_();
   // Window the build to the load's window (default 3 days) so a guide's tours and
@@ -3623,11 +3621,9 @@ function buildScheduleFromFeed_(feedIndex, maxDaysAhead) {
   return Object.keys(byKey).map(k => byKey[k]);
 }
 
-/**
- * The full assembly pipeline (the expensive part of a load), in ONE place so the
- * live portal fallback and the pre-built "near-future Portal feed" tab can never
- * drift. Pure over already-read data (feed + Weekly_Schedule + overlays); NO Gmail.
- */
+// The full assembly pipeline, in ONE place so the live portal fallback and the pre-built
+// "near-future Portal feed" tab can't drift. Pure over already-read data (feed +
+// Weekly_Schedule + overlays); reads no Gmail.
 function assembleSchedule_(feed, horizonDays) {
   const s = buildScheduleFromFeed_(feed, horizonDays);
   appendWeeklyScheduleShifts_(s, horizonDays);
@@ -3639,17 +3635,14 @@ function assembleSchedule_(feed, horizonDays) {
   return s;
 }
 
-/* ============== NEAR-FUTURE PORTAL FEED (pre-built shift structure) ==============
- * The portal's heavy per-load cost is ASSEMBLING the shift list (build from feed +
- * expand recurring offers + overlays + sort). Under Apps Script CPU throttling that
- * 1.4s spikes to 13s and times loads out. So we pre-build the full-horizon shift
- * STRUCTURE into a tab IN THE BOOKINGSHEET and the portal just READS it (fast),
- * slicing to the load's window — regular loads and "Load more" alike. Built ONLY
- * from sheet data (the Portal Feed + Weekly_Schedule + overlays) — it NEVER reads
- * Gmail, so it adds no email-poll cost. A ~5-min trigger (installed by
- * installNearFutureFeedTrigger) keeps it current with new bookings; a load right
- * after a manager change falls back to a live (windowed) build until it catches up.
- */
+// --- Near-future Portal feed (pre-built shift structure) --------------------
+// The portal's heavy per-load cost is ASSEMBLING the shift list (build from feed + expand
+// recurring offers + overlays + sort), which CPU throttling can stretch to many seconds.
+// So we pre-build the full-horizon shift STRUCTURE into a tab in the BookingSheet and the
+// portal just READS it, slicing to the load's window. Built only from sheet data (Portal
+// Feed + Weekly_Schedule + overlays) — it never reads Gmail, so it adds no poll cost. A
+// ~5-min trigger keeps it current; a load right after a manager change falls back to a
+// live windowed build until the next rebuild catches up.
 var NFPF_TAB = 'near-future Portal feed';
 
 function rebuildNearFuturePortalFeed_() {
@@ -3684,8 +3677,8 @@ function rebuildNearFuturePortalFeed_() {
   return { ok: true, n: schedule.length, ver: ver };
 }
 
-/** Read the pre-built tab -> { schedule, ver } (the ver it was built at), or null
- *  when absent/empty/unreadable. Fail-open: any problem returns null -> live build. */
+// Read the pre-built tab -> { schedule, ver } (the version it was built at), or null when
+// absent/empty/unreadable. Fail-open: any problem returns null, and the caller builds live.
 function readNearFuturePortalFeed_() {
   try {
     const sh = bookingSS_().getSheetByName(NFPF_TAB);
@@ -3700,7 +3693,7 @@ function readNearFuturePortalFeed_() {
   } catch (e) { return null; }
 }
 
-/** Install the ~5-min rebuild trigger (run once from the editor). Safe to re-run. */
+// Install the ~5-min rebuild trigger (run once from the editor). Safe to re-run.
 function installNearFutureFeedTrigger() {
   ScriptApp.getProjectTriggers().forEach(t => {
     if (t.getHandlerFunction() === 'rebuildNearFuturePortalFeed_') { try { ScriptApp.deleteTrigger(t); } catch (e) {} }
@@ -3710,14 +3703,11 @@ function installNearFutureFeedTrigger() {
   return 'near-future Portal feed trigger installed (every 5 min) + built once.';
 }
 
-/**
- * Like buildScheduleFromFeed_ but for the PAST window the manager History view
- * shows: dateKey in [loKey, hiKeyExclusive) (i.e. the last HISTORY_DAYS days, up to
- * but not including today). Unlike the live build it does NOT drop shifts whose time
- * has passed — every history tour is, by definition, over. Guide comes from the
- * snapshot's feedGuide; combined-index rows with no guide (Completed Log backfill)
- * leave the shift unassigned.
- */
+// Like buildScheduleFromFeed_, but for the PAST window the manager History view shows:
+// dateKey in [loKey, hiKeyExclusive) — the last HISTORY_DAYS days, up to but not including
+// today. Unlike the live build it does NOT drop shifts whose time has passed (every
+// history tour is, by definition, over). The guide comes from the snapshot's feedGuide; a
+// Completed-Log backfill row with no guide leaves the shift unassigned.
 function buildHistoryFromFeed_(feedIndex, loKey, hiKeyExclusive) {
   const byKey = {};
   Object.keys(feedIndex || {}).forEach(sk => {
@@ -3765,11 +3755,8 @@ const LEDGER_SOURCE_COL = 6;       // 0-based index of 'Source'
 const LEDGER_UPDATED_COL = 15;     // 0-based index of 'Updated' (no longer the last column)
 const LEDGER_NOTE_COL = 16;        // 0-based index of 'Note' — the per-booking management note
 
-/**
- * SAFE MIGRATION: insert the Children column into any guide tab still on the
- * old 15-column layout. Run once via setupLedger (idempotent — tabs already
- * migrated are skipped).
- */
+// One-time migration: insert the Children column into any guide tab still on the old
+// 15-column layout. Run via setupLedger; idempotent — already-migrated tabs are skipped.
 function migrateLedgerChildrenColumn_() {
   const ss = ledgerSS_();
   ss.getSheets().forEach(sh => {
@@ -3902,12 +3889,10 @@ function listLedgerBackups() {
   return out;
 }
 
-/**
- * ROLL BACK the live ledger to a chosen backup — NON-DESTRUCTIVE. Makes a fresh
- * working copy of the backup and repoints the system (LEDGER_ID) at it; the
- * previously-live (possibly corrupted) ledger is LEFT UNTOUCHED in Drive so you
- * can still inspect it. Get the id from listLedgerBackups(). Editor-only, manual.
- */
+// Roll the live ledger back to a chosen backup — NON-DESTRUCTIVE. Makes a fresh working
+// copy of the backup and repoints LEDGER_ID at it; the previously-live (possibly
+// corrupted) ledger is left untouched in Drive so you can still inspect it. Get the id
+// from listLedgerBackups(). Editor-only, manual.
 function restoreLedgerFromBackup(backupId) {
   if (!backupId) throw new Error('Pass a backup file id from listLedgerBackups().');
   const backup = DriveApp.getFileById(backupId);
@@ -3940,6 +3925,9 @@ function installLedgerBackupTriggers() {
 }
 
 
+// Read the money rates from the Ledger's Rates tab, starting from the PORTAL defaults so a
+// missing row still resolves. Returns { paid, free, privatePay, sfPay, freeCommissions,
+// paidSources }. GYG and the SF sources are forced paid whenever their base platform is.
 function readRates_() {
   const ss = ledgerSS_();
   const sh = ss.getSheetByName('Rates');
@@ -4043,6 +4031,8 @@ function freeCommissionFor_(source, rates) {
   return Number((hit != null ? map[hit] : map['']) || 0);
 }
 
+// Get (or create, with its header row) a guide's ledger tab. The name is capped at 90
+// chars to stay within the sheet-name limit.
 function guideTab_(ss, name) {
   const safe = name.substring(0, 90);
   let sh = ss.getSheetByName(safe);
@@ -4087,19 +4077,13 @@ function hhmmFromStamp_(v) {
   return m ? m[1] : '';
 }
 
-/**
- * Read the ledger tabs of ONLY the named guides, returning BOTH:
- *   reservations: shiftKey -> [booking...]         (durable detail for done tours)
- *   checkins:     shiftKey|bookingId -> { n, at }   (newest 'Updated' wins)
- *
- * A check-in lives in the tab of the guide the tour is ASSIGNED to, and only a
- * tour today-or-earlier can have one — so apiTours_ passes just those few guide
- * names instead of sweeping all twelve tabs on every 8-second poll. Reading two
- * or three small tabs instead of twelve is the difference between a snappy
- * refresh and the 10-60s loads the portal was suffering. If two of the tour's
- * guides both ticked people in, both tabs are passed, so a co-guide's check-in
- * is still seen.
- */
+// Read the ledger tabs of ONLY the named guides, returning both:
+//   reservations: shiftKey -> [booking...]         (durable detail for done tours)
+//   checkins:     shiftKey|bookingId -> { n, at }   (newest 'Updated' wins)
+// A check-in lives in the tab of the guide the tour is ASSIGNED to, and only a tour
+// today-or-earlier can have one — so apiTours_ passes just those few guide names instead
+// of sweeping every tab on each poll. If two of the tour's guides both ticked people in,
+// both tabs are passed, so a co-guide's check-in is still seen.
 function readLedgerForGuides_(names) {
   const out = { reservations: {}, checkins: {} };
   const list = (names || []).filter(Boolean);
