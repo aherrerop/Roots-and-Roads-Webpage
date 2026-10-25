@@ -744,9 +744,10 @@ function apiTimings_(p) {
   return { ok: true, count: all.length, slowMs: PORTAL.SLOW_MS, contention: readContention_(), stats: stats, recent: recent };
 }
 
+// Serialize the response for the browser. With a callback name it's JSONP (a
+// <script> tag the page can load cross-origin); without one, it's plain JSON.
 function jsonp_(callback, obj) {
   const json = JSON.stringify(obj);
-  // If a callback name is supplied, wrap for JSONP; else return raw JSON.
   const body = callback ? `${callback}(${json});` : json;
   return ContentService
     .createTextOutput(body)
@@ -758,55 +759,60 @@ function jsonp_(callback, obj) {
  * 3. ACTIONS
  ******************************************************/
 
-/** action=login  -> { ok, token, guide, languages } */
-/* Guide passwords are stored as PLAINTEXT in the Control sheet on purpose:
- * management logs in as a guide by copy-pasting that guide's password. (Salted
- * hashing was tried and reverted — it broke that workflow; see git history.) */
+// Check a submitted password against the one stored for a guide. Passwords live in
+// the Control sheet as PLAINTEXT on purpose: a manager logs in AS a guide by
+// copy-pasting that guide's password, which only works if it stays readable. (These
+// are staff portal credentials in an access-controlled sheet, not guest data.)
 function verifyPassword_(stored, submitted) {
   const s = String(stored == null ? '' : stored);
-  return s !== '' && s === String(submitted == null ? '' : submitted);
+  return s !== '' && s === String(submitted == null ? '' : submitted);   // non-empty and an exact match
 }
-/** Management: set/reset a guide's password. Stored as PLAINTEXT so a manager can
- *  read/copy it from the Control sheet to log in as that guide.
- *  Run from the editor:  setGuidePassword('guide@email.com', 'new-password') */
+
+// Management tool to set or reset a guide's password from the editor:
+//   setGuidePassword('guide@email.com', 'new-password')
+// Written as plaintext (see verifyPassword_) so a manager can read it back.
 function setGuidePassword(email, newPassword) {
+  // Validate the inputs before touching the sheet.
   const e = String(email || '').trim().toLowerCase();
   const pw = String(newPassword || '');
   if (!e || pw.length < 6) throw new Error('Give an email and a password of at least 6 characters.');
+
+  // Open the Guides tab and work out which columns hold email + password.
   const sh = control_().getSheetByName(PORTAL.GUIDES_TAB);
   if (!sh) throw new Error('Guides tab not found');
   const values = sh.getDataRange().getValues();
   const cols = guideColumns_(values[0].map(function (h) { return String(h).trim(); }));
+
+  // Find the matching guide row, write the new password as text, and refresh caches.
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][cols.emailCol] || '').trim().toLowerCase() === e) {
-      sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(pw);
+      sh.getRange(i + 1, cols.passwordCol + 1).setNumberFormat('@').setValue(pw);   // '@' forces text
       bumpCacheVersion_();
-      bumpConfigVersion_();          // the Guides read (config-versioned) changed
+      bumpConfigVersion_();          // the Guides read is config-versioned, so bump that too
       return 'Password set for ' + e + ' (readable in the Guides tab).';
     }
   }
   throw new Error('No guide with email ' + e);
 }
+
+// action=login -> { ok, token, guide } : check the credentials, hand back a token.
 function apiLogin_(p) {
   __RRX = {};
+
+  // Require both fields.
   const email = String(p.email || '').trim().toLowerCase();
   const password = String(p.password || '');
-
   if (!email || !password) return { ok: false, error: 'Missing email or password' };
 
+  // Look the guide up by email.
   const guide = findGuideByEmail_(email);
   if (!guide) return { ok: false, error: 'No guide with that email' };
 
-  // Verify against a plaintext password (or a salted hash, for any account still
-  // stored hashed from before). We deliberately DO NOT hash plaintext passwords:
-  // management logs in as a guide by copy-pasting that guide's password from the
-  // Control sheet, which requires the password to stay readable there. (These are
-  // the company's own staff portal credentials in an access-controlled sheet, not
-  // guest data.) verifyPassword_ still accepts an "h1:" hash so a not-yet-restored
-  // account keeps working until its plaintext is put back.
+  // Check the password (plaintext match), then that the account is still active.
   if (!verifyPassword_(guide.password, password)) return { ok: false, error: 'Wrong password' };
   if (!guide.active) return { ok: false, error: 'This guide account is inactive' };
 
+  // Success: issue a signed token and return the guide's name + languages.
   return {
     ok: true,
     token: makeToken_(guide.name),
@@ -815,53 +821,37 @@ function apiLogin_(p) {
 }
 
 
-/** action=tours -> { ok, guide, rates, tours:[...], schedule:[...] } */
+// action=tours -> { ok, guide, tours:[...], schedule:[...] } : the whole portal view
+// for one logged-in user. A manager sees everyone; a guide sees only their own tours.
 function apiTours_(p) {
   __RRX = {};                       // request boundary: fresh per-load memo (see doGet)
-  // Per-phase stopwatch, returned as `timings` so we can see exactly where a
-  // load spends its milliseconds — real numbers, not guesses. EVERY phase is
-  // wrapped (not just the cross-file reads), so a slow load can no longer hide
-  // its cost in untimed work: token, the cached reads, the schedule assembly,
-  // the check-in read, the backfill, the closed-shift filter, and the my/manager
-  // view builds all report their own ms. A cached phase reads ~0ms.
+
+  // A tiny stopwatch. _t('name', fn) runs fn, adds how long it took under `name`, and
+  // returns fn's result; the collected times go back as `timings`, so a slow load
+  // shows exactly which phase cost the milliseconds. A cached phase reads ~0ms.
   const T = {};
   const _t = (k, fn) => { const s = Date.now(); const r = fn(); T[k] = (T[k] || 0) + (Date.now() - s); return r; };
 
+  // Authenticate. No valid token -> ask the user to log in again.
   const name = _t('tok', function () { return requireToken_(p.token); });
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
 
   const today = todayKey_();
 
-  // Who is asking, and how wide a window — computed BEFORE the build so we
-  // generate only the recurring offer slots actually shown. Managers load a small
-  // near window by default (MANAGER_WINDOW_DAYS) and widen it with "Load more";
-  // a regular guide keeps the full horizon (their far-out recurring assignments
-  // must not vanish). This is the offer/schedule windowing that keeps manager
-  // loads light and stops "Load more" timing out on phones.
+  // Work out who is asking and how many days to load. Both roles load a small near
+  // window by default and widen it with "Load more"; UPCOMING_DAYS is only the
+  // ceiling. Computed BEFORE the build, so we expand only the days actually shown.
   const me = _t('me', function () { return findGuideByName_(name); });
   const isManager = !!(me && me.manager);
-  // BOTH roles load a small near window by default and widen it with "Load more".
-  // (Guides previously loaded the full UPCOMING_DAYS horizon — 45 days of their
-  // own tours with full booking detail — which was the biggest avoidable cost of
-  // a guide load. They now load the same near window; a far-out assignment is one
-  // "Load more" away, never lost.)
   const windowDays = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(p.days) || PORTAL.MANAGER_WINDOW_DAYS));
   const offerHorizonDays = windowDays;
 
-  // These cross-file reads are identical for every guide for many seconds, so
-  // they are cached (invalidated on any assign/move/note change). This is the
-  // core fix for the 8-127s loads: the frequent poll stops re-opening the
-  // BookingSheet and re-reading every schedule grid each time.
-  // (Money rates are NOT read here: the portal shows no money — pay is computed
-  // only at check-in save time and in the hourly queues, from the Ledger's Rates
-  // tab — so reading rates on every poll was pure waste.)
-  // Reservations + check-ins + ASSIGNMENTS come from the single "Portal Feed" tab
-  // (one read). If the feed is absent (first rollout, or a broken feed) we fall
-  // back to scanning the language tabs + reading the schedule grid — and in THAT
-  // fallback only, check-ins come from the ledger (the feed can't carry them).
+  // Read the bookings. Reservations, check-ins and the assigned guide all come from
+  // the single "Portal Feed" tab in ONE cached read. Keying it on feedCacheVersion_
+  // lets a check-in refresh just this read next load, leaving the schedule/guides/
+  // weekly caches warm. If the feed tab is missing (first rollout or a broken feed),
+  // fall back to scanning the language tabs instead.
   const feedRead = _t('book', function () {
-    // 'bk:<feedVer>' so a check-in (which bumps only feedVer) refreshes THIS read
-    // on the next load without touching the schedule/guides/weekly caches.
     return cachedRead_('bk:' + feedCacheVersion_(), PORTAL.CACHE_TTL, function () {
       const f = readPortalFeed_();
       return f ? { byKey: f, hasFeed: true } : { byKey: readBookingsIndex_(), hasFeed: false };
@@ -870,114 +860,88 @@ function apiTours_(p) {
   const bookingsByKey = feedRead.byKey;
   const hasFeed = feedRead.hasFeed;
 
-  // The shift list. WITH A FEED (normal): the feed is the source — assignments
-  // come from its Guide column, so the portal no longer reads the schedule grids
-  // on the poll (the big `sched` cost is gone). Empty recurring slots + the
-  // default-guide fallback still come from the cached Weekly_Schedule (cheap).
-  // WITHOUT a feed (fallback): read the grid the old way.
+  // Build the shift list (which tours exist + who is assigned to each).
   let schedule;
   if (hasFeed) {
-    // CACHE the assembled shift list. buildScheduleFromFeed_ + the recurring-offer
-    // expansion + weekly-default overlay + sort is PURE CPU over already-read data,
-    // and it re-ran on EVERY poll — 1.4s normally but spiking to 13s+ under Apps
-    // Script CPU throttling, which is what produced the multi-minute client
-    // timeouts. It caches the shift STRUCTURE only (which tours exist + who is
-    // assigned); the bookings and the check-in union are attached per-request
-    // below from the FRESH feed read. A check-in changes only M/N counts — NOT the
-    // structure — so we deliberately do NOT key this on feedCacheVersion_: a guide
-    // tapping through check-ins must not rebuild the whole schedule on every tap.
-    // An assign/move/close bumps the GLOBAL version (appended by cachedRead_) and
-    // so still invalidates it immediately — it can never serve a stale assignment.
-    // A new booking at a non-recurring slot appears within the TTL. If the value
-    // ever exceeds the cache cap, cachedRead_ falls back to a live build.
+    // Normal path: assignments come from the feed's Guide column, so a poll never
+    // reads the schedule grids. The assembled STRUCTURE is cached because it is pure
+    // CPU over already-read data that would otherwise re-run on every poll. It is NOT
+    // keyed on feedCacheVersion_ — a check-in changes only M/N counts, not structure,
+    // so tapping check-ins must not rebuild it. An assign/move/close bumps the global
+    // version (via cachedRead_), which invalidates it at once, so it can never serve a
+    // stale assignment. The fresh bookings + check-ins are attached per request below.
     schedule = _t('assemble', function () {
       return cachedRead_('asm:' + offerHorizonDays, PORTAL.CACHE_TTL, function () {
-        // FAST PATH: read the pre-built "near-future Portal feed" tab when it is
-        // CURRENT (built at the same global version = no assign/move/overlay change
-        // since). It holds the full horizon; slice to this load's window. This is
-        // what makes a regular load AND "Load more" fast — no cold assembly, so the
-        // 13s throttle spike never lands on a guide's load. Bookings/check-ins/counts
-        // are still attached per-request below from the FRESH feed, so a new booking
-        // at an existing slot shows without a rebuild.
+        // Fast path: use the pre-built "near-future Portal feed" tab when it is current
+        // (same global version = no assign/move/overlay since it was built). It holds the
+        // full horizon, so slice it to this load's window. This is what makes a normal
+        // load and "Load more" fast — no cold assembly.
         const pre = _t('nfpf', function () { return readNearFuturePortalFeed_(); });
         if (pre && pre.ver === String(cacheVersion_()) && pre.schedule.length) {
           const maxKey = addDaysKey_(today, offerHorizonDays);
           return pre.schedule.filter(s =>
             s.dateKey >= today && s.dateKey <= maxKey && !shiftIsOver_(s.dateKey, s.minutes));
         }
-        // FALLBACK (tab absent / unreadable / stale right after a change): the live
-        // windowed build — identical to the pre-tab behaviour, so this can never
-        // regress. Sub-phase timings show WHICH part costs, only on this cold path.
+        // Fallback (tab absent / unreadable / stale right after a change): build the
+        // window live. Each overlay is timed on its own so a cold load shows its cost.
         const s = _t('asm.build', function () { return buildScheduleFromFeed_(bookingsByKey, offerHorizonDays); });
-        _t('asm.weekly', function () { appendWeeklyScheduleShifts_(s, offerHorizonDays); return 0; });
-        _t('asm.cleared', function () { applyClearedOverlay_(s); return 0; });   // manager clears survive the feed path
-        _t('asm.def', function () { applyWeeklyDefaults_(s); return 0; });
-        _t('asm.2nd', function () { applySecondGuideOverlay_(s); return 0; });   // full-tour second guide (portal overlay)
-        _t('asm.nos', function () { applyNoShowOverlay_(s); return 0; });        // full no-show (portal overlay)
+        _t('asm.weekly', function () { appendWeeklyScheduleShifts_(s, offerHorizonDays); return 0; });  // empty recurring slots
+        _t('asm.cleared', function () { applyClearedOverlay_(s); return 0; });   // a manager "clear" survives the feed path
+        _t('asm.def', function () { applyWeeklyDefaults_(s); return 0; });       // recurring default guide
+        _t('asm.2nd', function () { applySecondGuideOverlay_(s); return 0; });   // full-tour second guide
+        _t('asm.nos', function () { applyNoShowOverlay_(s); return 0; });        // full no-show
         _t('asm.sort', function () { sortSchedule_(s); return 0; });
         return s;
       });
     });
   } else {
+    // No-feed fallback: read the schedule grid directly, then apply the same overlays.
     schedule = _t('sched', function () { return cachedRead_('sched', PORTAL.CACHE_TTL, readSchedule_); });
     _t('assemble', function () {
       appendOrphanBookingShifts_(schedule, bookingsByKey);
       appendWeeklyScheduleShifts_(schedule, offerHorizonDays);
       applyClearedOverlay_(schedule);
       applyWeeklyDefaults_(schedule);
-      applySecondGuideOverlay_(schedule);   // full-tour second guide (portal overlay)
-      applyNoShowOverlay_(schedule);        // full no-show (portal overlay)
+      applySecondGuideOverlay_(schedule);   // full-tour second guide
+      applyNoShowOverlay_(schedule);        // full no-show
       sortSchedule_(schedule);
       return 0;
     });
   }
 
-  // (me / isManager computed above, before the windowed build.)
-
-  // CHECK-INS: the FEED (M/N, read above) is the fast source, but the LEDGER is
-  // the durable money record. We UNION them (a guest checked in on EITHER is
-  // checked in) so a check-in the feed transiently missed — a same-day booking
-  // checked in before its feed row existed, or the 5-min rebuild racing the
-  // write — is NEVER hidden. Maxim: cannot miss a check-in. The read is targeted
-  // (my own tab; a manager, TODAY's assigned guides — a small set, since the
-  // schedule is windowed to today-forward). It also feeds the backfill below.
+  // CHECK-INS. The feed (M/N, read above) is the fast source; the LEDGER is the
+  // durable money record. We UNION them — checked in on EITHER counts — so a check-in
+  // the feed transiently missed (a same-day booking checked in before its feed row
+  // existed, or the 5-min rebuild racing the write) is never hidden. The read is
+  // targeted: my own tab, plus — for a manager — today's assigned guides.
   const guidesForLedger = function () {
     const g = {}; g[name] = true;
     if (isManager) schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(x => { if (x) g[x] = true; }); });
     return Object.keys(g);
   };
   const ledger = _t('ledger', function () {
-    // GUIDES go FEED-ONLY: a guide only ever sees their own tours, every one of
-    // which has a feed row, so the feed already carries all their check-ins — the
-    // ledger union would add nothing but costs a ~1s ledger-file open on every
-    // cold load (exactly when a guide reloads before / during a tour). Skip it for
-    // guides; the MANAGER cross-guide view keeps the ledger backstop.
+    // Guides go feed-only: a guide sees only their own tours, each with a feed row, so
+    // the feed already carries every check-in. Skipping the ~1s ledger open keeps a
+    // guide's reload fast. A manager keeps the ledger as a cross-guide backstop.
     if (!isManager) return { checkins: {}, reservations: {} };
     try {
       const guides = guidesForLedger();
-      // The ledger is only a BACKSTOP: the feed is the primary check-in source
-      // (above), and every DISPLAYED booking has a feed row, so its check-in is
-      // always in the feed. So we deliberately do NOT key this on feedCacheVersion_
-      // — a check-in must not re-open the ledger file (~1s) + re-read every guide's
-      // full-history tab on the very next poll, which is exactly when a guide is
-      // tapping through check-ins and needs the portal fast. It stays keyed on the
-      // guide set + the global version (an assign/move, appended by cachedRead_),
-      // and refreshes on the TTL — the only thing the backstop must catch (a
-      // check-in in the ledger but with no feed row yet) is bounded by that TTL and
-      // also healed by the 5-min feed rebuild.
+      // Backstop only, so it is NOT keyed on feedCacheVersion_ (a check-in must not
+      // force a ledger re-open on the next poll). Keyed on the guide set + the global
+      // version, refreshed on the TTL — enough to catch the one case it exists for:
+      // a ledger check-in with no feed row yet.
       return cachedRead_('led:' + guides.slice().sort().join(','),
                          PORTAL.CACHE_TTL, function () { return readLedgerForGuides_(guides); });
     } catch (e) {
-      // A transient ledger read error must NOT crash the poll — degrade to
-      // feed-only for this cycle (the feed still carries the check-ins).
+      // A transient ledger error must not crash the poll — degrade to feed-only.
       return { checkins: {}, reservations: {} };
     }
   });
-  let priorCheckins = ledger.checkins;              // key|bookingId -> {n, at}
-  const g2ck = checkinGuide2Set_();                 // bookingId -> dateKey for guests checked in under guide 2
+  let priorCheckins = ledger.checkins;              // "key|bookingId" -> { n, at }
+  const g2ck = checkinGuide2Set_();                 // bookingId -> dateKey for guests checked in under a 2nd guide
 
-  // A completed tour's rows age out of the feed at 23:00, so a tour that already
-  // ran and lost its feed rows falls back to the Completed Log for its guests.
+  // A finished tour's feed rows age out at 23:00, so a tour that already ran but lost
+  // its feed rows pulls its guest list from the Completed Log (and the ledger).
   const needBackfill = schedule.some(s => s.dateKey <= today &&
     !((bookingsByKey[shiftKey_(s.dateKey, s.minutes, s.language)] || []).length));
   if (needBackfill) {
@@ -1143,15 +1107,10 @@ function apiTours_(p) {
     });
     return 0;
   });
-  // The manager "All tours" list loads the near-term window first (today .. +N
-  // days); "Load more" re-requests with a bigger `days`. This keeps the common
-  // refresh light — a manager assigning this week does not pay to build next
-  // month's tours every 20 seconds. (windowDays computed above with the build.)
+  // The manager "All tours" list is windowed too: build up to windowDays ahead, and
+  // set hasMore while the window hasn't reached the full horizon, so the client can
+  // offer "Load more" (a wider request regenerates the further-out slots + bookings).
   const managerHorizon = addDaysKey_(today, windowDays);
-  // Both roles load only `windowDays` now, so "there is more" simply means the
-  // window has not yet reached the full horizon — offer "Load more" until it does
-  // (a wider request regenerates further-out slots + bookings). Set for EVERYONE
-  // (a guide's My-tours also stops at the window and gets a "Load more").
   const hasMore = windowDays < PORTAL.UPCOMING_DAYS;
   if (isManager) _t('mgrTours', function () {
     // Check-ins come from the targeted ledger read above, so a check-in shows no
@@ -1222,33 +1181,27 @@ function apiTours_(p) {
 }
 
 
-/**
- * action=assign — MANAGER ONLY. Writes a guide into a Schedule_<Language>
- * grid cell from the portal. The name is written in BOLD, i.e. it becomes a
- * management LOCK that makeSchedule preserves. Empty guide = clear to
- * "Not assigned".
- *   params: token, dateKey (yyyy-MM-dd), time (24h "17:00"), language,
- *           isPrivate ("1"/""), privIndex, guide
- */
-/**
- * action=setNote — MANAGER ONLY. Save (or clear) the note on a single
- * BOOKING. The note lives in column J of the booking's row in the BookingSheet
- * language tab (the sync only writes A:I, so column J is the portal's alone),
- * and rides into the ledger's Note column when the guest is checked in.
- *   params: token, bookingId, language (optional hint), note
- */
+// action=setNote — MANAGER ONLY. Save or clear the note on a single BOOKING. The note
+// lives in column J of the booking's row in the BookingSheet language tab (the booking
+// sync writes only A:I, so column J belongs to the portal) and rides into the ledger's
+// Note column when the guest is checked in.
+//   params: token, bookingId, language (optional hint), note
 function apiSetNote_(p) {
   __RRX = {};
+
+  // Managers only.
   const name = requireToken_(p.token);
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
   const me = findGuideByName_(name);
   if (!me || !me.manager) return { ok: false, error: 'Managers only' };
 
+  // Read and clean the inputs.
   const bookingId = String(p.bookingId || '').trim();
   if (!bookingId) return { ok: false, error: 'Missing booking id' };
   const note = String(p.note || '').trim();
   const language = String(p.language || '').trim();
 
+  // Write under a lock, then bump the cache so the note shows on the next load.
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ok: false, error: 'Server busy, try again' };
   try {
@@ -1260,7 +1213,7 @@ function apiSetNote_(p) {
   }
 }
 
-/** Column J of the booking's active row -> the per-booking note. */
+// Write `note` into column J of the booking's active row (its per-booking note).
 function writeBookingNote_(bookingId, language, note) {
   const ss = bookingSS_();
   const idNorm = bookingId.toUpperCase().replace(/\s+/g, '');
