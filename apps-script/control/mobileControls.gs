@@ -38,10 +38,8 @@ const MC = {
   COL_STATUS: 3      // C
 };
 
-/**
- * Action rows, in display order. `fn` runs in THIS project; `remote` calls
- * the BookingSheet web app (where runBookingSystem/runBookingAudit live).
- */
+// The action rows, in display order. `fn` runs in THIS project; `remote` calls the
+// BookingSheet web app (where runBookingSystem/runBookingAudit live).
 function mcActions_() {
   return [
     { label: 'Run booking update', remote: 'runBookingSystem' },
@@ -54,11 +52,8 @@ function mcActions_() {
   ];
 }
 
-/**
- * Full refresh that stays inside execution limits: booking update runs
- * REMOTELY (its own execution in the BookingSheet project), and the local
- * part is sync + schedule + queues.
- */
+// Full refresh that stays inside execution limits: the booking update runs REMOTELY (its
+// own execution in the BookingSheet project), and the local part is sync + schedule + queues.
 function mcFullRefresh_() {
   mcCallRemote_('runBookingSystem');   // fire-and-report; separate quota
   syncAvailabilityTabs();              // ensure + rebuild the 3h AND SF week tabs
@@ -66,16 +61,15 @@ function mcFullRefresh_() {
   updateManagementQueues();
 }
 
-/** One-time setup: tab, block, checkboxes, trigger. Safe to re-run. */
+// One-time setup (run from the editor): create the tab, write the controls block, add the
+// checkboxes, and install the on-edit trigger. Safe to re-run.
 function setupMobileControls() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName(MC.TAB);
   if (!sh) sh = ss.insertSheet(MC.TAB);
 
-  // CLEAN SLATE so re-running never leaves duplicate or stale blocks: wipe the
-  // old N:P functions location AND the whole A:C region (functions + health)
-  // before rewriting. Fixes tabs left with two functions blocks (old N:P + new
-  // A1) or two SYSTEM HEALTH blocks by earlier layouts.
+  // Clean slate so a re-run never leaves a duplicate/stale block: wipe both the old N:P
+  // location and the whole A:C region (functions + health) before rewriting.
   const lastRow = Math.max(sh.getLastRow(), 40);
   sh.getRange(1, 14, lastRow, 6).clearContent().clearDataValidations();   // old N..S area
   sh.getRange(1, 1, lastRow, 3).clearContent().clearDataValidations();    // A:C (functions + health)
@@ -104,7 +98,8 @@ function setupMobileControls() {
   ss.toast('Mobile Controls ready at ' + MC.TAB + '!' + MC.RANGE);
 }
 
-/** Installable On-edit handler. Only reacts to the Run checkboxes. */
+// Installable on-edit handler. Only reacts to the Run checkboxes (and the Automatic
+// scheduling toggle); any other edit is ignored.
 function handleMobileControlsEdit(e) {
   try {
     if (!e || !e.range) return;
@@ -164,7 +159,7 @@ function handleMobileControlsEdit(e) {
   }
 }
 
-/** Call runBookingSystem / runBookingAudit in the BookingSheet project. */
+// Call runBookingSystem / runBookingAudit in the BookingSheet project (via its web app).
 function mcCallRemote_(fnName) {
   const props = PropertiesService.getScriptProperties();
   const url = props.getProperty('BOOKING_WEBAPP_URL');
@@ -182,7 +177,7 @@ function mcCallRemote_(fnName) {
   return 'remote ok';
 }
 
-/** Diagnostic: verifies trigger, block, and remote configuration. */
+// Diagnostic: verify the trigger, the controls block, and the remote configuration.
 function validateMobileControls() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const problems = [];
@@ -211,11 +206,9 @@ function validateMobileControls() {
 }
 
 
-/**
- * RECOVERY: clears a stuck "Running…" status (e.g. after an execution
- * timeout) and unticks any stuck checkbox. Safe any time — it only resets
- * the display cells; it never launches or kills a run.
- */
+// Recovery tool: clear a stuck "Running…" status (e.g. after an execution timeout) and
+// untick any stuck checkbox. Safe any time — it only resets the display cells; it never
+// launches or kills a run.
 function clearStaleControls() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName(MC.TAB);

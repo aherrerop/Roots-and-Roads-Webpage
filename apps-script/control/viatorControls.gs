@@ -26,8 +26,8 @@ const VC = {
   FIRST_DATA_ROW: 2
 };
 
-/** Seed rows. Edit hours/enabled later directly in the sheet; add product rows
- *  by copying the format. Product code MUST match Viator (e.g. 5631527P3). */
+// The default product rows. Edit hours/enabled later directly in the sheet; add products by
+// copying the format. The product code MUST match Viator (e.g. 5631527P3).
 function vcSeedRows_() {
   return [
     ['Barcelona Walking Tour: Sagrada Familia, Gaudi and Gothic Quarter', '5631527P3', 10, true],
@@ -35,7 +35,8 @@ function vcSeedRows_() {
   ];
 }
 
-/** One-time setup: header + seed rows + checkboxes. Safe to re-run. */
+// One-time setup (run from the editor): write the header, seed rows and checkboxes for the
+// Viator block. Safe to re-run — it only touches columns E..H and reseeds the defaults.
 function setupViatorControls() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName(VC.TAB);
@@ -43,20 +44,19 @@ function setupViatorControls() {
 
   const rows = vcSeedRows_();
 
-  // Clean slate for THIS block only (E..H), preserving any manually-tuned
-  // hours would be nice, but a re-run is explicit setup — reseed defaults.
+  // Clear just this block (E..H) before reseeding; a re-run is explicit setup.
   const clearRows = Math.max(sh.getLastRow(), VC.FIRST_DATA_ROW + rows.length + 5);
   sh.getRange(VC.HEADER_ROW, VC.FIRST_COL, clearRows, VC.WIDTH)
     .clearContent().clearDataValidations();
 
+  // Header row (E..H).
   sh.getRange(VC.HEADER_ROW, VC.FIRST_COL, 1, VC.WIDTH)
     .setValues([['Viator product', 'Product code', 'Close hrs before (empty)', 'Enabled']])
     .setFontWeight('bold').setBackground('#0e7c66').setFontColor('#ffffff');
 
+  // Data rows, then make Enabled (H) checkboxes and Hours (G) plain integers.
   sh.getRange(VC.FIRST_DATA_ROW, VC.FIRST_COL, rows.length, VC.WIDTH).setValues(rows);
-  // Enabled checkboxes (column H).
   sh.getRange(VC.FIRST_DATA_ROW, VC.FIRST_COL + 3, rows.length, 1).insertCheckboxes();
-  // Hours as plain integers (column G).
   sh.getRange(VC.FIRST_DATA_ROW, VC.FIRST_COL + 2, rows.length, 1).setNumberFormat('0');
 
   sh.setColumnWidth(VC.FIRST_COL, 320);       // E name
