@@ -77,55 +77,31 @@
  *   doPost(e)
  *
  * ---------------------------------------------------------------
- * WHAT CHANGED FROM v1 (see chat for full rationale)
+ * LABEL LIFECYCLE — how a thread flows through Gmail
  *
- *   1) LABEL LIFECYCLE, now consistent across all three email types:
- *      - "Publishing Pages/Processed" is now added to confirmation,
- *        modification AND cancellation threads once each has been read and
- *        acted on (v1 only added it to confirmations). This is what lets the
- *        fast (5-min) run skip a thread's body on every later pass; the
- *        twice-daily audit ignores the marker and re-reads everything. This
- *        is also the main fix for the "Service invoked too many times for
- *        one day: gmail" errors — v1's cancellation pass and its supporting
- *        cache force-read every Cancellations-labelled thread's body on
- *        EVERY 5-minute run forever, and Viator's old "Amended" pipeline and
- *        the GYG modification handler did the same for Modifications. Those
- *        are now Processed-gated like everything else on fast runs.
- *      - When a booking is cancelled, the matching Confirmations AND
- *        Modifications threads for that booking id have their
- *        Confirm/Modify label REMOVED and the Cancel label ADDED (v1 only
- *        ever relabelled the Confirm thread). All three are archived.
- *      - When a booking reaches Done, EVERY other label this system uses
- *        (Confirm/Modify/Cancel/Processed) is stripped from the thread and
- *        only the Done label is left. This keeps the live
- *        Confirmations/Modifications labels showing ONLY upcoming tours, so
- *        a manager scanning Gmail can spot anything that looks "lost" (i.e.
- *        present in Gmail but missing from the sheet) at a glance.
- *      - Cancelled bookings are terminal: once labelled Cancel they are
- *        archived and left alone forever (never touched again, never moved
- *        to Done).
+ *   - A confirmation, modification OR cancellation thread gets the
+ *     "Publishing Pages/Processed" label once it has been read and acted on. The
+ *     fast (gated) run then skips its body on later passes; the daily audit ignores
+ *     the marker and re-reads everything. This Processed-gating is what keeps the
+ *     Gmail read quota under control.
+ *   - When a booking is cancelled, the matching Confirmations AND Modifications
+ *     threads for that booking id have their Confirm/Modify label REMOVED and the
+ *     Cancel label ADDED; all are archived.
+ *   - When a booking reaches Done, every other label this system uses
+ *     (Confirm/Modify/Cancel/Processed) is stripped and only Done is left — so the
+ *     live Confirmations/Modifications labels show ONLY upcoming tours, and anything
+ *     present in Gmail but missing from the sheet stands out at a glance.
+ *   - A cancelled booking is terminal: once labelled Cancel it is archived and left
+ *     alone forever (never re-touched, never moved to Done).
  *
- *   2) VIATOR "AMENDED" LABEL REMOVED. Your Gmail filter now sends every
- *      Viator "Amended Booking:" email straight to
- *      Publishing Pages/Viator/Modifications. Those emails are
- *      delta-style ("1 traveler added" / "1 traveler removed"), not a full
- *      new booking state, so the Viator branch of the modification pipeline
- *      still sums deltas per booking id across a thread's full message
- *      history (same math as v1's dedicated Amended handler) — it just now
- *      reads from the Modifications label and is Processed-gated like every
- *      other modification thread.
+ *   Viator "Amended Booking:" mail files into Viator/Modifications. Those emails are
+ *   delta-style ("1 traveler added / removed"), so the Viator modification branch sums
+ *   the deltas per booking id across a thread's full message history.
  *
- *   3) GUIDE PORTAL: the portal reads the BookingSheet directly through its
- *      own web app, so rows written here are visible to guides as soon as
- *      the portal refreshes — no webhook needed.
- *
- *   4) Read/unread and inbox state are still NEVER used as a processing
- *      signal anywhere (unchanged from v1) — only labels are.
- *
- *   5) Fast-run thread caps are now smaller than audit-run caps
- *      (MAX_THREADS_FAST / MAX_THREADS_AUDIT) so a 5-minute pass reads less
- *      per label, and the twice-daily audit is allowed to clear a bigger
- *      backlog.
+ *   Read/unread and inbox state are NEVER used as a processing signal — only labels.
+ *   Fast-run thread caps (MAX_THREADS_FAST) are smaller than audit caps
+ *   (MAX_THREADS_AUDIT), so a fast pass reads less per label and the daily audit can
+ *   clear a bigger backlog.
  * ---------------------------------------------------------------
  ******************************************************/
 
@@ -213,11 +189,8 @@ const RNR = {
     'Last seen'
   ],
 
-  /**
-   * Gmail label names. These MUST match the labels your Gmail filters apply.
-   * NOTE: Viator/Ammended is gone in v2 — "Amended Booking:" mail now files
-   * straight into Viator/Modifications per your updated filter.
-   */
+  // Gmail label names. These MUST match the labels your Gmail filters apply. (Viator
+  // "Amended Booking:" mail files straight into Viator/Modifications.)
   LABELS: {
     VIATOR_CONFIRM: 'Publishing Pages/Viator/Confirmations',
     VIATOR_CANCEL: 'Publishing Pages/Viator/Cancellations',
@@ -281,11 +254,8 @@ const RNR = {
   // the forwarding envelope / forwarded header (see freetourSourceFor_).
   FREETOUR_SECOND_EMAIL: 'delbarritour@gmail.com',
 
-  /**
-   * Guest accounting model per source.
-   *   'paid' -> counted in "Number of Paid Guests" in Done Tours.
-   *   'free' -> counted in "Number of Free Guests" in Done Tours.
-   */
+  // Guest accounting model per source: 'paid' -> "Number of Paid Guests" in Done Tours,
+  // 'free' -> "Number of Free Guests".
   MODEL: {
     Viator: 'paid',
     Airbnb: 'paid',
@@ -320,10 +290,9 @@ const RNR = {
   // then is it moved to Done. Management keeps full visibility all day.
   DONE_VISIBLE_UNTIL_HOUR: 23,
 
-  // Fast (5-min) runs only ever see Processed-labelled threads on repeat
-  // passes, so they can afford a smaller cap. The audit run needs a bigger
-  // cap to clear whatever backlog piled up. Raise MAX_THREADS_AUDIT further
-  // if your Errors tab still shows quota errors after a few days on v2.
+  // Fast runs only ever see Processed-labelled threads on repeat passes, so they can
+  // afford a smaller cap; the audit run needs a bigger one to clear whatever backlog piled
+  // up. Raise MAX_THREADS_AUDIT further if the Errors tab still shows quota errors.
   MAX_THREADS_FAST: 20,
   MAX_THREADS_AUDIT: 60,
 
@@ -343,13 +312,11 @@ const RNR = {
   RECENT_RELIABLE_FAST: 3,
 
   MAX_RUN_MS: 180000,        // audit + manual recovery budget (full pipeline)
-  // The FREQUENT 5-min run gets a TIGHTER budget so it always exits with margin,
-  // well before Apps Script's platform limits. On 2026-09-14 a fast run went the
-  // full 180s and a Google service call near the edge threw an UNCATCHABLE
-  // "server error occurred" (which escaped even safeTriggerRun_ and emailed the
-  // owner a failure summary). Exiting sooner shrinks that near-limit window. Safe:
-  // the fast run only processes NEW threads, and anything it defers is picked up
-  // by the next 5-min run and guaranteed by the twice-daily reconcile.
+  // The frequent run gets a TIGHTER budget so it always exits with margin, well before
+  // Apps Script's platform limits — a run that reaches the hard edge can trip an uncatchable
+  // "server error occurred" that escapes even safeTriggerRun_ and emails the owner. Exiting
+  // sooner shrinks that near-limit window. Safe: the fast run only processes NEW threads, and
+  // anything it defers is picked up next run and guaranteed by reconcile.
   MAX_FAST_RUN_MS: 120000,
 
   // When the fast run can't register a confirmation it escalates to the audit,
@@ -413,10 +380,8 @@ const RNR = {
 };
 
 
-/**
- * Spanish month names -> 0-based month index. Used to parse GYG modification
- * dates like "16 de julio de 2026 a las 11:00" (confirmations use English dates).
- */
+// Spanish month names -> 0-based month index. Used to parse GYG modification dates like
+// "16 de julio de 2026 a las 11:00" (confirmations use English dates).
 const RNR_SPANISH_MONTHS_ = {
   enero: 0, febrero: 1, marzo: 2, abril: 3, mayo: 4, junio: 5,
   julio: 6, agosto: 7, septiembre: 8, setiembre: 8, octubre: 9,
