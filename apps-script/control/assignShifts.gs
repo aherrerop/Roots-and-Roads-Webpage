@@ -1380,8 +1380,10 @@ function makeOneLanguageScheduleTab_(controlSS, language, shifts, isSf) {
 }
 
 
-/* ---------- readers ---------- */
+/* ---------- Readers ---------- */
 
+// Read the Guides tab into guide objects (name, active, seniority, languages, vacations, tour
+// types). Columns are resolved BY HEADER NAME, so adding/reordering a column needs no change.
 function readGuides_(ss) {
   const sheet = ss.getSheetByName("Guides");
   if (!sheet) throw new Error("Guides tab not found.");
@@ -1420,13 +1422,14 @@ function readGuides_(ss) {
   return guides;
 }
 
+// Just the names of the active guides.
 function readActiveGuideNames_(ss) {
   return readGuides_(ss).filter(g => g.active).map(g => g.name);
 }
 
-/** Resolve Weekly_Schedule columns BY HEADER NAME (falls back to the legacy fixed
- *  positions, accounting for whether the "Tour Type" column has been inserted).
- *  So a manager can add/reorder columns without silently corrupting the reader. */
+// Resolve the Weekly_Schedule columns BY HEADER NAME (falling back to the legacy fixed
+// positions, accounting for whether the "Tour Type" column was inserted), so a manager can
+// add/reorder columns without silently corrupting the reader.
 function weeklyScheduleCols_(header) {
   const find = (re, fb) => {
     for (let i = 0; i < header.length; i++) {
@@ -1449,6 +1452,8 @@ function weeklyScheduleCols_(header) {
   };
 }
 
+// Read the Weekly_Schedule tab into offer/availability rules (day, time, language, tour type,
+// guides needed, active window, recurring guide, and the hide/private flags).
 function readWeeklySchedule_(ss) {
   const sheet = ss.getSheetByName("Weekly_Schedule");
   if (!sheet) throw new Error("Weekly_Schedule tab not found.");
@@ -1522,6 +1527,8 @@ function readAvailability_(guideSS, weekName) {
   return all;
 }
 
+// Read the unique (date, day, time) slots a week's availability tab covers (its columns),
+// regardless of who ticked them.
 function readGuideCalendar_(guideSS, weekName) {
   const slots = [];
   const seen = new Set();
@@ -1547,16 +1554,9 @@ function readGuideCalendar_(guideSS, weekName) {
   return slots;
 }
 
-/**
- * Build the tour shifts for a week.
- *
- * IMPORTANT DESIGN RULE: tours come from Weekly_Schedule RULES × DATES, never
- * from the availability sheet's column layout. The old version only created a
- * tour when the Week tab happened to have a matching time column — so when the
- * offer changed (e.g. English 11:00 added) before the tabs were re-synced, the
- * tour silently disappeared from the schedule. Now a tour ALWAYS exists; if
- * nobody ticked availability for it, it simply comes out "Not assigned".
- */
+// Build the tour shifts for a week. DESIGN RULE: tours come from Weekly_Schedule RULES ×
+// DATES, never from the availability sheet's column layout — so a tour ALWAYS exists for each
+// rule, and if nobody ticked availability for it, it simply comes out "Not assigned".
 function buildShifts_(availability, weeklySchedule, guideCalendar) {
   const availabilityMap = {};
   availability.forEach(a => {
@@ -1595,6 +1595,7 @@ function buildShifts_(availability, weeklySchedule, guideCalendar) {
 }
 
 
+// Count how many ACTIVE guides speak each language.
 function countLanguageSpeakers_(guides) {
   const counts = {};
   LANGUAGES.forEach(language => counts[language] = 0);
@@ -1605,16 +1606,14 @@ function countLanguageSpeakers_(guides) {
   return counts;
 }
 
+// Work out the full Monday–Sunday dates a week tab covers, so a rebuild always spans all 7
+// days (Sunday appears as soon as a Sunday slot exists).
 function readWeekDates_(sheet) {
   const displayValues = sheet.getDataRange().getDisplayValues();
   const title = String(displayValues[0][0] || "");
   const year = extractYear_(title);
   const dayRow = displayValues[2] || [];
-  // Find the earliest dated column, then rebuild the FULL Monday–Sunday week from
-  // it. Deriving the week only from the columns already present meant Sunday —
-  // which never had a column — could never be added back on a rebuild (the tab
-  // stayed Mon–Sat forever). Anchoring to the Monday makes every rebuild span all
-  // 7 days, so Sunday appears as soon as a Sunday slot exists.
+  // Find the earliest dated column, then anchor to its Monday and span the whole week.
   let earliest = null;
   for (let c = 1; c < dayRow.length; c++) {
     const label = dayRow[c];
@@ -1644,6 +1643,8 @@ function readWeekDates_(sheet) {
   return dates;
 }
 
+// Read which (guide, date, time) ticks already exist on a week tab, so a rebuild can carry
+// them over instead of wiping what guides already entered.
 function readExistingAvailability_(sheet) {
   const values = sheet.getDataRange().getValues();
   const displayValues = sheet.getDataRange().getDisplayValues();
@@ -1668,6 +1669,8 @@ function readExistingAvailability_(sheet) {
   return existing;
 }
 
+// Rebuild one availability week tab: a column per (date, time) offered that week, a row per
+// guide, carrying over every existing tick.
 function rebuildAvailabilityWeekSheet_(sheet, weekDates, scheduleRules, guideNames, existingAvailability) {
   const slots = [];
   weekDates.forEach(dateInfo => {
