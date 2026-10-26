@@ -5782,6 +5782,7 @@ function guruwalkDeadline_(dateKey, timeLabel) {
  * live. The Mobile Controls block lives at N2:P12 on the same tab.
  ******************************************************/
 
+// Stamp a Script Property with "now" (e.g. HB_QUEUES), for the health dashboard heartbeats.
 function markHealthEvent_(key) {
   try {
     PropertiesService.getScriptProperties().setProperty(
@@ -5789,6 +5790,9 @@ function markHealthEvent_(key) {
   } catch (e) { /* ignore */ }
 }
 
+// Rewrite the manager SYSTEM HEALTH block on the Control tab: heartbeats (booking run,
+// schedule, queues, self-test), live counters (unassigned tours, pending queues, recent
+// errors), and the automatic-scheduling toggle. Best-effort — never throws.
 function updateControlHealth_() {
   try {
     const control = control_();
