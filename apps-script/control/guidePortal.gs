@@ -5006,20 +5006,17 @@ function availBySlot_() {
   return (__RRX.availBySlot = built);
 }
 
-/**
- * For the assign dropdown: every active guide who speaks this shift's language,
- * each tagged with an availability STATUS relative to this shift — so the manager
- * gets a colour dot but can still assign ANYONE (no filtering).
- *   'unavailable' -> ⚪ did NOT mark availability for this slot (grey)
- *   'free'    -> 🟢 available and free: no other tour within the separation window
- *   'overlap' -> 🟡 has another tour within the separation window (a nearby clash)
- *   'busy'    -> 🔴 has another tour at the SAME time (a hard double-book)
- *   'vacation'-> 🌴 on their blocked/vacation dates
- * Precedence: vacation, then not-available (grey), then the clash dots among the
- * guides who DID mark available. The busy map costs no extra reads; the availability
- * index is a cached, manager-only read (availBySlot_). A guide's own assignment ON
- * THIS shift never counts against them, and the manager can still pick anyone.
- */
+// For the assign dropdown: every active guide who speaks this shift's language, each tagged
+// with an availability STATUS relative to this shift — so the manager gets a colour dot but
+// can still assign ANYONE (no filtering).
+//   'unavailable' -> did NOT tick availability for this slot (grey)
+//   'free'        -> ticked available, no other tour within the separation window
+//   'overlap'     -> another tour within the separation window (a nearby clash)
+//   'busy'        -> another tour at the SAME time (a hard double-book)
+//   'vacation'    -> on their blocked/vacation dates
+// Precedence: vacation, then grey, then the clash dots among the guides who ticked
+// available. The busy map costs no extra reads; the availability index is a cached,
+// manager-only read. A guide's own assignment on THIS shift never counts against them.
 function guideStatusesForShift_(shift, guidesByLanguage, busyMap) {
   const sepMs = ASSIGN_CFG.MIN_SEPARATION_HOURS * 3600000;
   const st = shiftStartMs_(shift.dateKey, shift.minutes);
@@ -5095,33 +5092,20 @@ function dayNameFromKey_(dateKey) {
 
 function updateUnassignedLedger() { rebuildUnassignedLedger_(); }
 
-/**
- * "Unassigned" = TOURS THAT ALREADY RAN WITH NOBODY ASSIGNED.
- *
- * This is a post-mortem alert — guests had a booking for a tour that has now
- * passed and no guide was ever put on it. It is NOT a list of upcoming
- * bookings awaiting assignment (that is simply the normal pipeline, visible
- * in the portal's All tours, and it was pure noise here).
- *
- * Source of truth: the BookingSheet's "Completed Log" (bookings whose tour is
- * over), cross-checked against the schedule grids READ INCLUDING PAST DATES.
- * Lookback is bounded by UNASSIGNED_LOOKBACK_DAYS; older entries age out on
- * the next rebuild, and the grids themselves only retain a couple of weeks.
- *
- * Rebuilt from scratch on every run (it is a derived view), so it can never
- * accumulate duplicates.
- */
+// "Unassigned" = TOURS THAT ALREADY RAN WITH NOBODY ASSIGNED — a post-mortem alert that
+// guests had a booking for a now-past tour that no guide was ever put on. It is NOT a list
+// of upcoming bookings awaiting assignment (that's the normal pipeline, in the portal's All
+// tours). Source of truth: the BookingSheet's "Completed Log" (bookings whose tour is over),
+// cross-checked against the schedule grids read INCLUDING past dates. Lookback is bounded by
+// UNASSIGNED_LOOKBACK_DAYS; it is rebuilt from scratch each run, so it can't accumulate
+// duplicates.
 const UNASSIGNED_LOOKBACK_DAYS = 14;
 
-/**
- * Which dates each Schedule_<Language> grid actually contains as ROWS.
- * Returns { language: {dateKey: true} }.
- *
- * Needed because the grids only span the generated window (~2 weeks). For a
- * date OUTSIDE that window there is no evidence either way, so a tour on such
- * a date must NOT be reported as "ran with no guide" — absence of a grid row
- * is not absence of a guide.
- */
+// Which dates each Schedule_<Language> grid actually contains as ROWS; returns
+// { language: { dateKey: true } }. Needed because the grids only span the generated window
+// (~2 weeks): for a date outside it there's no evidence either way, so a tour on such a
+// date must NOT be reported as "ran with no guide" — absence of a grid row isn't absence of
+// a guide.
 function readScheduleDateCoverage_() {
   const cover = {};
   control_().getSheets().forEach(sh => {
@@ -5294,11 +5278,9 @@ function setupLedger() {
   Logger.log('Ledger ready: ' + ss.getUrl());
 }
 
-/**
- * Create one ledger tab per guide listed in Control_v1 -> Guides (if missing),
- * so management sees every guide immediately, not only after their first check-in.
- * Run setupLedger (or add a guide + re-run) to sync.
- */
+// Create one ledger tab per guide listed in Control_v1 -> Guides (if missing), so
+// management sees every guide immediately, not only after their first check-in. Run
+// setupLedger (or add a guide + re-run) to sync.
 function ensureGuideTabs_(ss) {
   ss = ss || ledgerSS_();
   const { header, rows } = readGuidesRaw_();
@@ -5390,21 +5372,12 @@ function lastQueueRow_(sh) {
   return Math.max(last, QUEUE_HEADER_ROW);
 }
 
-/**
- * RUN ONCE if the queue tabs were created before 2026-07-17: removes the
- * stray full-column checkboxes (they inflated getLastRow() to 1000 and made
- * appends land at row 1001). Safe to re-run.
- */
-/**
- * RUN ONCE if a guide ledger tab's columns look misaligned (headers not
- * matching the data, e.g. "R&R makes" missing). For every guide tab:
- *   - if the data is still on the OLD 15-column layout (no Children column),
- *     insert the Children column after Guests so data shifts into place;
- *   - then rewrite row 1 to the canonical 16-column header.
- * All writes/reads are positional, so this only fixes the visible header and
- * the one-time Children insertion — money values are never recomputed. Safe
- * to re-run.
- */
+// Repair tool: fix a guide ledger tab whose columns look misaligned (headers not matching
+// the data, e.g. "R&R makes" missing). For every guide tab: if the data is still on the old
+// 15-column layout (no Children column), insert Children after Guests so the data shifts
+// into place; then rewrite row 1 to the canonical 16-column header. All reads/writes are
+// positional, so this only fixes the header + the one-time Children insertion — money values
+// are never recomputed. Safe to re-run.
 function repairLedgers() {
   const ss = ledgerSS_();
   ss.getSheets().forEach(sh => {
@@ -5439,6 +5412,9 @@ function repairLedgers() {
   Logger.log('Ledgers repaired.');
 }
 
+// Repair tool: clear any stray full-column checkboxes/content below a queue tab's real
+// entries (a full-column checkbox inflates getLastRow() and makes appends land far down).
+// Safe to re-run.
 function repairQueueTabs() {
   const ss = ledgerSS_();
   ensureQueueTabs_(ss);
@@ -5456,16 +5432,12 @@ function repairQueueTabs() {
   Logger.log('Queue tabs repaired.');
 }
 
-/**
- * Queue tabs use a 3-part layout, mirroring the Control sheet's phone
- * controls:
- *   row 1  [ Clear button label | checkbox | status ]
- *   row 2  headers
- *   row 3+ entries
- * Ticking the row-1 checkbox clears every entry (used once the information
- * has been entered on GuruWalk / Viator / GetYourGuide). Safe to re-run:
- * an existing tab is upgraded to this layout without losing entries.
- */
+// Ensure each queue tab has the 3-part layout (mirroring the Control sheet's phone controls):
+//   row 1  [ Clear button label | checkbox | status ]
+//   row 2  headers
+//   row 3+ entries
+// Ticking the row-1 checkbox clears every entry (once the info has been entered on the
+// platform). Safe to re-run: an existing tab is upgraded without losing entries.
 function ensureQueueTabs_(ss) {
   ss = ss || ledgerSS_();
   const mk = (name, headers, label) => {
@@ -5495,11 +5467,9 @@ function ensureQueueTabs_(ss) {
 }
 
 
-/**
- * RUN ONCE: installs the on-edit trigger on the LEDGER spreadsheet so the
- * row-1 "CLEAR" checkboxes work. (Triggers are per-spreadsheet, and the
- * ledger is a different file from the Control sheet.)
- */
+// Run once: install the on-edit trigger on the LEDGER spreadsheet so the row-1 "CLEAR"
+// checkboxes work. (Triggers are per-spreadsheet, and the ledger is a different file from
+// the Control sheet.)
 function setupLedgerControls() {
   const ss = ledgerSS_();
   ensureQueueTabs_(ss);
