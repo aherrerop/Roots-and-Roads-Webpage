@@ -4679,16 +4679,14 @@ function shiftKey_(dateKey, minutes, language) {
   return dateKey + '|' + minutes + '|' + String(language || '').trim().toLowerCase();
 }
 
-/**
- * TOUR VARIANT — a slot (date|time|language) can hold up to three DISTINCT tours,
- * each its own card / grid column / guide assignment:
- *   'R'    the regular full 3-hour tour
- *   'P<n>' a private group (existing)
- *   'SF'   the Sagrada Família EXTERIOR add-on (source GYG-SF / Viator-SF) — a
- *          different, shorter tour that must NOT merge with the 3h tour.
- * SF is never private, so it is a third mutually-exclusive variant. This one
- * helper is the single source of truth used by every key/column below.
- */
+// TOUR VARIANT — a slot (date|time|language) can hold up to three DISTINCT tours, each its
+// own card / grid column / guide:
+//   'R'    the regular 3-hour tour
+//   'P<n>' a private group
+//   'SF'   the Sagrada Família EXTERIOR add-on (GYG-SF / Viator-SF) — a shorter, separate
+//          tour that must NOT merge with the 3h one.
+// SF is never private, so it's a third mutually-exclusive variant. This one helper is the
+// single source of truth for every key/column that needs the variant.
 function variantKey_(sfExt, isPrivate, privIndex) {
   return sfExt ? 'SF' : (isPrivate ? 'P' + (privIndex || 1) : 'R');
 }
@@ -4764,10 +4762,9 @@ function toDateKey_(v) {
   return '';
 }
 
-/** Normalise "11:00 AM" / "5:00 PM" / "17:00" / "11:00" to 24h "H:MM".
- *  ALSO handles real Date objects: Sheets silently converts a time-looking
- *  string in a non-text cell into a Date, which is what made the ledger's
- *  dedupe-by-shift fail and append duplicate check-in rows. */
+// Normalise "11:00 AM" / "5:00 PM" / "17:00" / "11:00" to 24h "H:MM". Also handles a real
+// Date object: Sheets silently turns a time-looking string in a non-text cell into a Date,
+// and every reader goes through here so that never breaks a key.
 function normTime24_(v) {
   if (v instanceof Date && !isNaN(v)) {
     return v.getHours() + ':' + String(v.getMinutes()).padStart(2, '0');
@@ -4856,14 +4853,11 @@ function shiftKeyFull_(s) {
          '|' + variantKey_(s.sfExt, s.private, s.privIndex);
 }
 
-/** guideNameLower -> [{ms, k}] of every assignment in the schedule. */
-/**
- * The real (non-placeholder) bookings that belong to a shift. A slot (date|time|
- * language) can hold BOTH a private and a regular tour; a private shift takes the
- * "Private"-noted bookings, a regular shift the rest. 0-person 'shift' placeholder
- * rows are never bookings. This is the single definition used everywhere the
- * schedule is rendered or a closed slot is tested — so the split can't drift.
- */
+// The real (non-placeholder) bookings that belong to a shift. A slot (date|time|language)
+// can hold a private AND a regular (and an SF) tour; a private shift takes the
+// "Private"-noted bookings, an SF shift the SF-source ones, a regular shift the rest.
+// 0-person 'shift' placeholder rows are never bookings. This single definition is used
+// everywhere the schedule is rendered or a closed slot is tested, so the split can't drift.
 function bookingsForShift_(bookingsByKey, shift) {
   const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
   return (bookingsByKey[key] || [])
@@ -4926,6 +4920,8 @@ function expandPrivateCards_(schedule, bookingsByKey) {
   return out;
 }
 
+// Build guideNameLower -> [{ ms, k }] of every assignment in the schedule, so eligibility
+// and the weekly-default yield rule can quickly ask "is this guide busy near this time?".
 function buildBusyMap_(schedule) {
   const busy = {};
   (schedule || []).forEach(s => {
@@ -4940,13 +4936,10 @@ function buildBusyMap_(schedule) {
   return busy;
 }
 
-/**
- * Guides offered for this shift's assign dropdown: EVERY active guide who speaks
- * the language. A guide already on a nearby tour is still offered on purpose —
- * management deliberately assigns overlapping tours to one guide so they get the
- * guests' contacts and can retime them. (The old MIN_SEPARATION filter blocked
- * that; the batch auto-scheduler in assignShifts.gs still spaces guides out.)
- */
+// Guides offered for this shift's assign dropdown: every active guide who speaks the
+// language and runs this tour type. A guide already on a nearby tour is still offered on
+// purpose — a manager may deliberately put one guide on overlapping tours so they hold
+// both parties' contacts. (The batch auto-scheduler still spaces guides out.)
 function eligibleGuidesForShift_(shift, guidesByLanguage) {
   return (guidesByLanguage[shift.language] || []).filter(n => guideDoesTourType_(n, shift.sfExt));
 }
