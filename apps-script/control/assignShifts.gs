@@ -1109,16 +1109,14 @@ function emailWeeklySchedule() {
   });
 }
 
-/** Weeks to keep visible ahead of the current one (see ASSIGN_CFG). */
+// Weeks to keep visible ahead of the current one (see ASSIGN_CFG).
 const WEEKS_AHEAD = ASSIGN_CFG.AVAILABILITY_WEEKS_AHEAD;
 
-/**
- * How many weeks of availability tabs to project ahead of `mondayThis` (a
- * Monday, midnight-stripped): the rolling AVAILABILITY_WEEKS_AHEAD minimum, or
- * further when the fixed seasonal end date AVAILABILITY_UNTIL reaches past it —
- * so we can open availability through, say, Dec 31 without a giant rolling
- * window the rest of the year. Pure (no sheet access) so it is unit-testable.
- */
+// How many weeks of availability tabs to project ahead of `mondayThis` (a Monday, midnight-
+// stripped): the rolling AVAILABILITY_WEEKS_AHEAD minimum, or further when the fixed seasonal
+// end date AVAILABILITY_UNTIL reaches past it — so availability can open through a season's
+// end without a giant rolling window the rest of the year. Pure (no sheet access), so unit-
+// testable.
 function availabilityWeeksAhead_(mondayThis) {
   let weeksAhead = WEEKS_AHEAD;
   const untilRaw = ASSIGN_CFG.AVAILABILITY_UNTIL;
@@ -1132,11 +1130,8 @@ function availabilityWeeksAhead_(mondayThis) {
   return weeksAhead;
 }
 
-/**
- * Auto-manage the availability Week tabs: delete any week fully in the past,
- * and create the current week + WEEKS_AHEAD upcoming weeks if missing.
- * Safe to run repeatedly.
- */
+// Auto-manage the availability Week tabs: delete any week fully in the past and create the
+// current week + the upcoming ones if missing. Safe to run repeatedly.
 function ensureWeekTabs_() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
   ensureWeekTabsInFile_(controlSS, false);                                 // 3h file
@@ -1144,8 +1139,8 @@ function ensureWeekTabs_() {
   if (availabilityRulesFor_(controlSS, true).length) ensureWeekTabsInFile_(controlSS, true);   // SF file (only when SF runs)
 }
 
-/** Delete past "Week <N>" tabs and create the current + upcoming ones in one
- *  tour type's availability file. */
+// Delete past "Week <N>" tabs and create the current + upcoming ones in one tour type's
+// availability file.
 function ensureWeekTabsInFile_(controlSS, isSf) {
   const guideSS = availabilityFile_(isSf);
   if (!guideSS) return;
@@ -1200,7 +1195,7 @@ function ensureWeekTabsInFile_(controlSS, isSf) {
   });
 }
 
-/** ISO-8601 week number (matches "Week 27", "Week 28", ...). */
+// ISO-8601 week number (matches "Week 27", "Week 28", …).
 function getISOWeek_(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = (d.getUTCDay() + 6) % 7;
@@ -1210,8 +1205,10 @@ function getISOWeek_(date) {
 }
 
 
-/* ---------- write schedule tabs ---------- */
+/* ---------- Write the schedule tabs ---------- */
 
+// Write the flat "Schedule" tab: one row per assigned shift (the master list the grids are
+// built from).
 function writeDetailedSchedule_(controlSS, assignedShifts) {
   const output = [[
     "Week", "Date", "Day", "Time", "Language", "Guides needed",
@@ -1233,10 +1230,10 @@ function writeDetailedSchedule_(controlSS, assignedShifts) {
   formatScheduleSheet_(sheet, output.length, output[0].length);
 }
 
+// Rewrite the per-language Schedule_<Language> grids (3h and SF) from the assigned shifts.
 function makeLanguageScheduleTabs_(controlSS, assignedShifts) {
-  // Regenerate EVERY Schedule_<Language> tab, including ones with no shifts
-  // in the window. A tab that is not rewritten would keep showing stale
-  // assignments (this is exactly how "Albert on German" ghosts survived).
+  // Regenerate EVERY Schedule_<Language> tab, including ones with no shifts in the window:
+  // a tab that isn't rewritten would keep showing stale assignments.
   const withShifts = [...new Set(assignedShifts.map(s => s.language))];
   const existingTabs = controlSS.getSheets()
     .map(sh => parseScheduleTabName_(sh.getName()))     // Schedule_<lang> AND Schedule_SF_<lang>
@@ -1259,6 +1256,8 @@ function makeLanguageScheduleTabs_(controlSS, assignedShifts) {
   });
 }
 
+// Build (or rebuild) one Schedule_<Language> grid tab: title, time-column headers, a row per
+// date, each cell holding the assigned guide(s) with manager locks in bold.
 function makeOneLanguageScheduleTab_(controlSS, language, shifts, isSf) {
   const tabName = scheduleTabName_(language, isSf);
   const label = isSf ? (language + ' SF') : language;   // "English SF" for the SF grid
