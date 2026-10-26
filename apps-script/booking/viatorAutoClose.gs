@@ -37,13 +37,10 @@ const VIATOR_CONTROL_FIRST_ROW = 2;   // row 1 is the header
 const VIATOR_CONTROL_COL = 5;         // column E
 const VIATOR_CONTROL_WIDTH = 4;       // E..H
 
-/**
- * Gmail search + extraction config for the supplier-portal login code.
- * Confirmed against a real message (2026-08): the 2FA code email comes from
- * account@t1.viator.com, subject "Your two-factor authentication code request",
- * body: "Here's your unique code: 572431" (also prints "Supplier ID: 5631527",
- * so the regex MUST anchor on "unique code:" — never a bare digit run).
- */
+// Gmail search + extraction config for the supplier-portal login code. The 2FA email comes
+// from account@t1.viator.com, subject "Your two-factor authentication code request", body
+// "Here's your unique code: 572431" — and also prints "Supplier ID: 5631527", so the regex
+// MUST anchor on "unique code:", never a bare digit run.
 const VIATOR_CODE_QUERY =
   'from:account@t1.viator.com subject:"two-factor authentication code" newer_than:1d';
 
@@ -60,10 +57,7 @@ const VIATOR_CODE_MAX_AGE_MIN = 15;
 const VIATOR_ALERT_PROP = 'VIATOR_ALERT_EMAIL';
 
 
-/**
- * Read the per-product close-hours from the Control tab.
- * @return {{products:Array, map:Object, maxHours:number}}
- */
+// Read the per-product close-hours from the Control tab -> { products, map, maxHours }.
 function viatorReadProductCloseHours_() {
   const control = SpreadsheetApp.openById(WEBSITE_CONTROL_SPREADSHEET_ID);
   const sh = control.getSheetByName(VIATOR_CONTROL_TAB);
@@ -94,22 +88,11 @@ function viatorReadProductCloseHours_() {
 }
 
 
-/**
- * Build the close-check payload.
- *
- * The bot enumerates the actual departures from Viator's availability page (so
- * BOTH group P3 and private P5 are covered, with no dependency on the website
- * schedule and no risk of private tours leaking onto the public site). This
- * endpoint therefore returns the raw all-platform guest counts as `guestMap`
- * (keyed "date|H:mm|Language") for the days the bot will scan, plus the
- * per-product windows. The bot marks a Viator card "Sold out" when its
- * guestMap count is 0 and it's inside that product's window.
- *
- * `departures` (schedule-derived, group tours) is also returned, purely for
- * human-readable logging/debugging — the bot's decision uses guestMap.
- *
- * @param {(number|string)} windowHoursOverride
- */
+// Build the close-check payload the bot consumes. It returns the raw all-platform guest
+// counts as `guestMap` (keyed "date|H:mm|Language") for the days the bot will scan, plus the
+// per-product close windows: the bot marks a Viator card "Sold out" when its guestMap count
+// is 0 and it is inside that product's window. `departures` (schedule-derived group tours) is
+// also returned, purely for human-readable logging — the bot's decision uses guestMap.
 function viatorClosecheckPayload_(windowHoursOverride) {
   const control = viatorReadProductCloseHours_();
   const hours = Number(windowHoursOverride) > 0 ? Number(windowHoursOverride) : control.maxHours;
@@ -182,11 +165,8 @@ function viatorClosecheckPayload_(windowHoursOverride) {
 }
 
 
-/**
- * Absolute instant for a slot's wall-clock start. The project timezone is
- * Europe/Madrid (appsscript.json), so a local Date constructor yields the
- * correct Madrid instant, DST included.
- */
+// The absolute instant of a slot's wall-clock start. The project timezone is Europe/Madrid,
+// so a local Date constructor yields the correct Madrid instant, DST included.
 function viatorSlotStart_(year, monthIndex, day, timeHHmm) {
   const t = websiteNormalizeTime_(timeHHmm);
   const m = t.match(/^(\d{1,2}):(\d{2})$/);
@@ -195,13 +175,9 @@ function viatorSlotStart_(year, monthIndex, day, timeHHmm) {
 }
 
 
-/**
- * Latest Viator login verification code from Gmail (most recent matching thread,
- * newest message). Returns null-ish payload when none is fresh enough.
- *
- * @return {{code:(string|null), ageMinutes:(number|null), subject:(string|null),
- *           from:(string|null), found:boolean}}
- */
+// The latest Viator login verification code from Gmail (most recent matching thread, newest
+// message). Returns a null-ish payload when none is fresh enough (older than
+// VIATOR_CODE_MAX_AGE_MIN), so the bot never types an expired code.
 function viatorLatestLoginCode_() {
   const threads = GmailApp.search(VIATOR_CODE_QUERY, 0, 5);
   let best = null;
@@ -234,14 +210,10 @@ function viatorLatestLoginCode_() {
 }
 
 
-/**
- * Email management the list of tours the bot could NOT close itself (CAPTCHA, or
- * a code was needed but unreadable), so they can be closed by hand. The list is
- * passed as the `tours` parameter (newline- or "; "-separated). Recipient comes
- * from the VIATOR_ALERT_EMAIL script property, else the booking account.
- *
- * @return {boolean} whether an email was sent
- */
+// Email management the tours the bot could NOT close itself (CAPTCHA, or a code was needed but
+// unreadable) so they can be closed by hand. The list rides in the `tours` parameter; the
+// recipient is the VIATOR_ALERT_EMAIL script property, else the booking account. Returns
+// whether an email was sent.
 function viatorSendAlert_(e) {
   const tours = String(e?.parameter?.tours || '').trim();
   const reason = String(e?.parameter?.reason || 'The Viator auto-close bot was blocked.');
@@ -265,10 +237,8 @@ function viatorSendAlert_(e) {
 }
 
 
-/**
- * Shared auth + JSON responder for the Viator branches of doGet().
- * Called from websiteAdminRun_-style routing in websiteAvailabilityUpdate.gs.
- */
+// Shared auth + JSON responder for the Viator branches of doGet() (close-check, login code,
+// manual-alert). Called from the doGet routing in websiteAvailabilityUpdate.gs.
 function viatorRespond_(e) {
   const key = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY');
   const given = String(e?.parameter?.key || '');

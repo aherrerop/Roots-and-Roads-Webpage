@@ -1,6 +1,8 @@
 /******************************************************
  * WEBSITE AVAILABILITY
- * Put this file in the BookingSheet Apps Script project.
+ * Lives in the BookingSheet Apps Script project. Serves the website's month
+ * availability grid as JSON(P) (doGet ?ym=YYYY-MM), and hosts the project's single
+ * doGet() — which also routes the admin remote-run and Viator auto-close endpoints.
  ******************************************************/
 
 const WEBSITE_CONTROL_SPREADSHEET_ID = '1A8RrqIoWw-HpxCLDRGVJLcflja8tSGEOgaXd-2sSkLs';
@@ -25,6 +27,8 @@ const WEBSITE_CONTROL_WEEKLY_TAB = 'Weekly_Schedule';
 const WEBSITE_CONTROL_EXTRA_TAB = 'Website_Schedule';
 
 
+// The project's single web-app entry point. Routes the admin + Viator endpoints first, then
+// serves the month availability grid for ?ym=YYYY-MM as JSON (or JSONP with ?callback=).
 function doGet(e) {
   const callback = String(e?.parameter?.callback || '').trim();
   const ym = String(e?.parameter?.ym || '').trim();
@@ -73,6 +77,9 @@ function doGet(e) {
 }
 
 
+// Build { "yyyy-MM-dd": [ { language, time, spotsLeft, available, status } ] } for a month:
+// every scheduled slot on each day, with spots left (capacity - booked) and whether it is
+// still open (not past the empty-tour booking cutoff and not full).
 function websiteBuildMonthAvailability_(ym) {
   const scheduleSlots = websiteReadCombinedSchedule_();
   const bookedMap = websiteReadBookedGuestsMap_();
@@ -120,6 +127,8 @@ function websiteBuildMonthAvailability_(ym) {
 }
 
 
+// The combined set of website tour slots: the Weekly_Schedule rules plus any Website_Schedule
+// extra rows, as { day, time, displayTime, language, activeFrom, activeUntil }.
 function websiteReadCombinedSchedule_() {
   const control = SpreadsheetApp.openById(WEBSITE_CONTROL_SPREADSHEET_ID);
   const slots = new Map();
@@ -131,8 +140,8 @@ function websiteReadCombinedSchedule_() {
 }
 
 
-/** Resolve Weekly_Schedule columns by header name (robust to inserted columns
- *  such as "Tour Type"); falls back to the legacy fixed positions. */
+// Resolve the Weekly_Schedule columns by header name (robust to an inserted column like "Tour
+// Type"), falling back to the legacy fixed positions.
 function websiteWeeklyCols_(header) {
   const find = (re, fb) => {
     for (let i = 0; i < header.length; i++) {
@@ -150,6 +159,8 @@ function websiteWeeklyCols_(header) {
   };
 }
 
+// Add the public Weekly_Schedule tour slots into `slots`, skipping SF (a GYG add-on), private
+// rows, and anything flagged "Hide from website".
 function websiteReadWeeklyScheduleIntoMap_(control, slots) {
   const sh = control.getSheetByName(WEBSITE_CONTROL_WEEKLY_TAB);
   if (!sh || sh.getLastRow() < 2) return;
@@ -187,6 +198,8 @@ function websiteReadWeeklyScheduleIntoMap_(control, slots) {
 }
 
 
+// Add the extra Website_Schedule rows (Day/Time/Language) into `slots`, for website-only tours
+// that aren't in Weekly_Schedule.
 function websiteReadWebsiteScheduleIntoMap_(control, slots) {
   const sh = control.getSheetByName(WEBSITE_CONTROL_EXTRA_TAB);
   if (!sh || sh.getLastRow() < 2) return;
@@ -216,6 +229,8 @@ function websiteReadWebsiteScheduleIntoMap_(control, slots) {
 }
 
 
+// Count booked guests per slot across every language Tours tab -> Map("date|H:mm|Language" ->
+// total guests). Used both here and by the Viator close-check.
 function websiteReadBookedGuestsMap_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const map = new Map();
@@ -246,6 +261,8 @@ function websiteReadBookedGuestsMap_() {
 }
 
 
+// Whether a slot is closed to website bookings: a past/started tour is always closed; a tour
+// with guests sells to its start; an EMPTY tour closes WEBSITE_LEAD_HOURS before it starts.
 function websiteClosedByCutoff_(dateObj, timeStr, booked) {
   // Build the tour's actual start moment (its day + its time).
   const start = websiteDateOnly_(dateObj);
@@ -265,6 +282,7 @@ function websiteClosedByCutoff_(dateObj, timeStr, booked) {
 }
 
 
+// Key for a schedule slot: "Day|H:mm|Language" (normalised).
 function websiteScheduleKey_(day, time, language) {
   return [
     websiteClean_(day),
@@ -274,6 +292,7 @@ function websiteScheduleKey_(day, time, language) {
 }
 
 
+// Key for a dated slot: "yyyy-MM-dd|H:mm|Language" (normalised).
 function websiteAvailabilityKey_(iso, time, language) {
   return [
     iso,
@@ -283,11 +302,14 @@ function websiteAvailabilityKey_(iso, time, language) {
 }
 
 
+// Collapse runs of whitespace and trim.
 function websiteClean_(v) {
   return String(v || '').replace(/\s+/g, ' ').trim();
 }
 
 
+// Map a language label in any supported spelling (incl. local-language forms) to the canonical
+// English name; anything unrecognised falls back to English.
 function websiteNormalizeLanguage_(v) {
   const s = websiteClean_(v).toLowerCase();
 
@@ -300,6 +322,7 @@ function websiteNormalizeLanguage_(v) {
 }
 
 
+// Normalise a time value ("5:00 PM", "17:00", a Date) to 24h "H:mm".
 function websiteNormalizeTime_(value) {
   if (value instanceof Date && !isNaN(value)) {
     return Utilities.formatDate(value, WEBSITE_TZ, 'H:mm');
@@ -327,6 +350,7 @@ function websiteNormalizeTime_(value) {
 }
 
 
+// Format a time as 12h "h:mm AM/PM" for display.
 function websiteDisplayTime_(time) {
   const t = websiteNormalizeTime_(time);
   const m = t.match(/^(\d{1,2}):(\d{2})$/);
@@ -343,6 +367,7 @@ function websiteDisplayTime_(time) {
 }
 
 
+// Minutes-past-midnight for a time (99999 if unparseable, so it sorts last).
 function websiteTimeToMinutes_(time) {
   const t = websiteNormalizeTime_(time);
   const m = t.match(/^(\d{1,2}):(\d{2})$/);
@@ -352,6 +377,7 @@ function websiteTimeToMinutes_(time) {
 }
 
 
+// Parse a date value (Date or string) to a noon Date, or null if unparseable.
 function websiteNormalizeDate_(value) {
   if (value instanceof Date && !isNaN(value)) return websiteDateOnly_(value);
 
@@ -365,6 +391,7 @@ function websiteNormalizeDate_(value) {
 }
 
 
+// The same date pinned to noon (so date-only comparisons never trip over a DST/UTC edge).
 function websiteDateOnly_(dateObj) {
   const d = new Date(dateObj);
   d.setHours(12, 0, 0, 0);
@@ -372,11 +399,13 @@ function websiteDateOnly_(dateObj) {
 }
 
 
+// "yyyy-MM-dd" for a date, in the Madrid timezone.
 function websiteDateKey_(dateObj) {
   return Utilities.formatDate(dateObj, WEBSITE_TZ, 'yyyy-MM-dd');
 }
 
 
+// The language a booking Tours tab is for ("German Tours" -> "German").
 function websiteSheetToLanguage_(sheetName) {
   if (sheetName === 'German Tours') return 'German';
   if (sheetName === 'Spanish Tours') return 'Spanish';
@@ -386,12 +415,9 @@ function websiteSheetToLanguage_(sheetName) {
 }
 
 
-/**
- * Remote-run endpoint used by the Control sheet's Mobile Controls block.
- * Only the two whitelisted booking functions can run, and only with the
- * correct ADMIN_KEY (Script Property in THIS project — set it to the same
- * value as the Control project's ADMIN_KEY).
- */
+// Remote-run endpoint used by the Control sheet's Mobile Controls block. Only the two
+// whitelisted booking functions can run, and only with the correct ADMIN_KEY (a Script
+// Property in THIS project — set it to the same value as the Control project's ADMIN_KEY).
 function websiteAdminRun_(e) {
   let out;
   try {
