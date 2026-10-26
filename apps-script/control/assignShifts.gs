@@ -34,24 +34,20 @@
    ============================================================================ */
 
 /******************************************************
- * ROOTS & ROADS — assignShifts.gs  (v2, complete, ready to paste)
+ * ROOTS & ROADS — assignShifts.gs
  * Bind to: Roots_Roads_Control_v1
  *
- * WHAT CHANGED IN v2
- *  • MANAGER LOCKS: a guide name written in BOLD inside a Schedule_<Language>
- *    grid cell is a management lock. makeSchedule preserves it exactly (still
- *    bold), assigns everyone else around it, and never overwrites it. If a
- *    lock conflicts (wrong language, unavailable, overlapping tour), the lock
- *    is KEPT, the cell is tinted red, and the conflict is written to the
- *    Control sheet's "Errors" tab — never silently resolved.
- *  • OVERLAP RULE: two tours by the same guide must start at least
- *    ASSIGN_CFG.MIN_SEPARATION_HOURS (5) apart. This kills the
- *    "one guide on 10:00 + 11:00" and "two simultaneous 17:00s" bugs the
- *    portal was showing.
+ * WHAT THIS DOES — generate the Schedule_<Language> grids from guide availability.
+ *  • MANAGER LOCKS: a guide name written in BOLD inside a Schedule_<Language> grid
+ *    cell is a lock. makeSchedule keeps it exactly (still bold), assigns everyone
+ *    else around it, and never overwrites it. A lock that conflicts (wrong language,
+ *    unavailable, overlapping tour) is KEPT, its cell tinted red, and the conflict
+ *    written to the Control sheet's "Errors" tab — never silently resolved.
+ *  • OVERLAP RULE: in the batch scheduler two tours by the same guide must start at
+ *    least ASSIGN_CFG.MIN_SEPARATION_HOURS (5) apart.
  *  • SCORING is centralised in ASSIGN_CFG and documented there.
- *  • Availability advantage: guides who tick more availability get a measured
- *    edge (tiebreaker), to reward giving us more hours.
- *  • Dead code removed (old assignGuides_).
+ *  • Availability advantage: a guide who ticks more availability gets a measured
+ *    edge (a tiebreaker), to reward giving us more hours.
  ******************************************************/
 
 const GUIDE_FILE_ID = "1ZkF0yDVE5Q7V2XUO5051ojJdTXtsvb8FA2sh15rqf-0";
@@ -127,14 +123,11 @@ const VALUE_PRIVATE_FLAT = ASSIGN_CFG.VALUE_PRIVATE_FLAT;
 const PAID_SOURCES_ASSIGN = ASSIGN_CFG.PAID_SOURCES;
 
 
-/**
- * Master switch for makeSchedule's AVAILABILITY-BASED auto-assignment. Managers
- * flip it from the Control tab (the "Automatic scheduling: ON/OFF" rows) or by
- * running setAutoScheduling(true/false). Default ON. When OFF, makeSchedule still
- * seats manager LOCKS and the Weekly_Schedule recurring guide (col G) — the fixed
- * weekly pattern — but does NOT fill the other seats from availability, and
- * runWeeklyScheduling does NOT email the schedule.
- */
+// Master switch for makeSchedule's AVAILABILITY-BASED auto-assignment. Managers flip it
+// from the Control tab ("Automatic scheduling: ON/OFF") or via setAutoScheduling(true/false);
+// default ON. When OFF, makeSchedule still seats manager LOCKS and the Weekly_Schedule
+// recurring guide (col G) — the fixed weekly pattern — but doesn't fill the other seats from
+// availability, and runWeeklyScheduling doesn't email the schedule.
 function autoScheduleEnabled_() {
   try {
     const v = PropertiesService.getScriptProperties().getProperty('AUTO_SCHEDULE');
@@ -148,16 +141,12 @@ function setAutoScheduling(on) {
 function enableAutoScheduling()  { return setAutoScheduling(true); }
 function disableAutoScheduling() { return setAutoScheduling(false); }
 
-/**
- * Which guides may be auto-seated into a staffable shift's remaining seats.
- *   AUTO ON  -> every guide who ticked availability for the slot (can speak it, not
- *               on vacation, not already locked, no overlap) — the balancer picks.
- *   AUTO OFF -> ONLY the Weekly_Schedule recurring guide (col G) for the slot, if
- *               they can do it; availability is NOT required (it's their standing
- *               weekly slot). So turning auto off keeps the fixed weekly pattern but
- *               stops filling the other seats from availability.
- * The caller has already excluded cleared / vacation-blocked / private shifts.
- */
+// Which guides may be auto-seated into a staffable shift's remaining seats.
+//   AUTO ON  -> every guide who ticked availability for the slot (speaks it, not on
+//               vacation, not already locked, no overlap) — the balancer picks among them.
+//   AUTO OFF -> ONLY the Weekly_Schedule recurring guide (col G) for the slot, if they can
+//               do it; availability is NOT required (it's their standing weekly slot).
+// The caller has already excluded cleared / vacation-blocked / private shifts.
 function pickAutoEligible_(shift, autoOn, guides, byName, assignedByGuide) {
   const locked = shift.lockedGuides || [];
   // Tour-type gate: an SF shift is only for SF-capable guides, a 3h shift only for
@@ -180,6 +169,9 @@ function pickAutoEligible_(shift, autoOn, guides, byName, assignedByGuide) {
 }
 
 
+// Generate the Schedule_<Language> grids. Seats manager locks first (PASS 1), then auto-
+// assigns the remaining seats from availability by the ASSIGN_CFG scoring (PASS 2), keeping
+// every lock and every manager clear. Writes the grids and logs any lock conflict.
 function makeSchedule() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
   const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
@@ -318,9 +310,9 @@ function makeSchedule() {
     // someone else in); the manager restaffs it. Same "no auto-staff" as a clear.
     const vacBlocked = !!(shift.vacationDropped && shift.vacationDropped.length) &&
                        !(shift.lockedGuides && shift.lockedGuides.length);
-    // Never auto-assign a PRIVATE tour from availability (that is what put Birthe on
-    // an English private) — a private takes ONLY its Weekly_Schedule default guide,
-    // applied by the portal. Cleared / vacation / private never auto-staff at all.
+    // Never auto-assign a PRIVATE tour from availability — a private takes ONLY its
+    // Weekly_Schedule default guide, applied by the portal. Cleared / vacation / private
+    // never auto-staff at all.
     const blocked = shift.cleared || vacBlocked || shift.isPrivate;
     const eligible = blocked ? [] : pickAutoEligible_(shift, autoOn, guides, byName, assignedByGuide);
     const need = blocked ? 0 : Math.max(0, (shift.guidesNeeded || 1) - shift.lockedGuides.length);
@@ -334,12 +326,10 @@ function makeSchedule() {
         (availCount[b.name] || 0) - (availCount[a.name] || 0) ||  // 4. more availability wins
         a.order - b.order                                         // 5. deterministic
       );
-      // Re-check overlap: an earlier pick this shift can't collide (same
-      // start), but a guide may have gained a lock meanwhile. SF is a short,
-      // stackable add-on (one guide runs consecutive SF slots), so the 5h
-      // separation is skipped for SF here too — matching pickAutoEligible_.
-      // Without this, an SF guide only got the 6h-apart pair (9 & 15) and 11/13
-      // stayed "Not assigned".
+      // Re-check overlap: an earlier pick this shift can't collide (same start), but a
+      // guide may have gained a lock meanwhile. SF is a short, stackable add-on (one guide
+      // runs consecutive SF slots), so the 5h separation is skipped for SF here too —
+      // matching pickAutoEligible_.
       const pick = pool.shift();
       if (!shift.sfExt && hasConflict_(assignedByGuide[pick.name], shift.dateTimeObj)) continue;
       assigned.push(pick);
@@ -401,22 +391,11 @@ function makeSchedule() {
 }
 
 
-/**
- * RUN ONCE (or whenever the public offer changes): rewrites the
- * English / Spanish / Private rows of Weekly_Schedule to the current offer
- * and PRESERVES every other language's rows (German stays exactly as you
- * maintain it by hand).
- *
- * Current offer (decided 2026-07, GYG + Viator):
- *   Mon/Tue/Thu/Fri: English 11:00 + 17:00 · Spanish 10:30
- *   Wednesday:       English 17:00
- *   Saturday:        English 17:00
- * Weekly_Schedule is the ONLY source of availability columns — whatever
- * Management puts here is exactly what the availability sheet shows (no hardcoded
- * slots). German rows are preserved exactly as you maintain them —
- * including repairing any time cell Sheets had corrupted into 12/30/1899.
- * The Time column is text-formatted so the corruption cannot come back.
- */
+// Run when the public offer changes: rewrite the English / Spanish / Private rows of
+// Weekly_Schedule to the current offer and PRESERVE every other row (German etc. stay
+// exactly as hand-maintained). Weekly_Schedule is the ONLY source of availability columns,
+// so whatever Management puts here is what the availability sheet shows. The Time column is
+// written as text so Sheets can't coerce it into a 12/30/1899 date.
 function updateWeeklyScheduleToCurrentOffer() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('Weekly_Schedule');
