@@ -662,11 +662,10 @@ function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDat
   Object.keys(clearedSlots || {}).forEach(k => addPreserved(k, [], true));
 }
 
-/** Write lock conflicts to the Control sheet's Errors tab (visible flag). */
+// Write HARD lock conflicts to the Control sheet's Errors tab (a visible flag).
 function logScheduleConflicts_(controlSS, conflicts) {
-  // Only HARD conflicts are errors. "not marked available" alone is a normal
-  // management decision (they assign someone after talking to them) — logging
-  // those every run just filled the Errors tab with noise.
+  // Only HARD conflicts are errors. "Not marked available" alone is a normal management
+  // decision (they assign someone after talking to them), so it is not logged.
   const hard = conflicts.filter(c => c.hard !== false);
   if (!hard.length) return;
   let sh = controlSS.getSheetByName(ASSIGN_CFG.ERRORS_TAB);
@@ -685,8 +684,9 @@ function logScheduleConflicts_(controlSS, conflicts) {
 }
 
 
-/* ---------- NEW: scheduling window + private tours ---------- */
+/* ---------- Scheduling window + private tours ---------- */
 
+// The last day of the scheduling window: Sunday of the last scheduled week.
 function endOfScheduleRange_() {
   const today = dateOnly_(new Date());
   const dow = (today.getDay() + 6) % 7;                 // 0=Mon..6=Sun
@@ -697,6 +697,8 @@ function endOfScheduleRange_() {
   return dateOnly_(lastSunday);
 }
 
+// The availability "Week …" tab names that cover the scheduling window (this week +
+// SCHEDULE_WEEKS_AHEAD). Throws if none is found, so the caller runs Sync availability first.
 function weekTabsToSchedule_(guideSS) {
   const today = dateOnly_(new Date());
   const dow = (today.getDay() + 6) % 7;
@@ -727,16 +729,11 @@ function weekTabsToSchedule_(guideSS) {
   return names;
 }
 
-/**
- * Keep the regular shifts, then add ONE private shift PER PRIVATE BOOKING at
- * its real booked time. Each group is its own shift (own grid column): a
- * private tour is effectively a new shift, never merged into a regular slot.
- * availableGuides come from whoever ticked availability at that date+time —
- * or, if the booked time sits between availability columns (10:00 booking vs
- * 10:30 tick), from the nearest slot within PRIVATE_AVAIL_TOLERANCE_MIN.
- * If nobody matches, the shift stays "Not assigned" and management staffs it
- * manually outside the system.
- */
+// Keep the regular shifts, then add ONE private shift PER PRIVATE BOOKING at its real booked
+// time — each its own shift / grid column, never merged into a regular slot. availableGuides
+// come from whoever ticked availability at that date+time, or (if the booked time sits
+// between availability columns) the nearest slot within PRIVATE_AVAIL_TOLERANCE_MIN. If
+// nobody matches, the shift stays "Not assigned" and management staffs it manually.
 function expandPrivateShifts_(shifts, availIndex, startDate, endDate) {
   const groups = readPrivateGroups_();   // [{dateText,time,language,bookingId}]
   const out = shifts.map(s => Object.assign({}, s, { isPrivate: false, privIndex: 0 }));
@@ -768,14 +765,11 @@ function expandPrivateShifts_(shifts, availIndex, startDate, endDate) {
   return out;
 }
 
-/**
- * SAFETY NET: any non-private booking sitting at a date/time/language with NO
- * matching shift (a slot missing from Weekly_Schedule, a legacy time, a
- * manually added row...) still becomes a tour: it shows in the grids and the
- * portal, gets auto-assigned from availability like everything else, and
- * comes out "Not assigned" when nobody fits — so management KNOWS to find a
- * guide instead of the tour silently not existing.
- */
+// Safety net: any non-private booking at a date/time/language with NO matching shift (a slot
+// missing from Weekly_Schedule, a legacy time, a manually added row) still becomes a tour —
+// it shows in the grids and the portal, gets auto-assigned from availability, and comes out
+// "Not assigned" when nobody fits, so management knows to find a guide rather than the tour
+// silently not existing.
 function expandOrphanShifts_(shifts, availIndex, startDate, endDate) {
   // Variant-aware key: an SF shift and a 3h shift at the same slot are distinct,
   // so an SF booking never fills (or gets swallowed by) the 3h column.
@@ -803,9 +797,9 @@ function expandOrphanShifts_(shifts, availIndex, startDate, endDate) {
   return out;
 }
 
-/** Unique (date, time, language, variant) slots of all NON-private active
- *  bookings. An SF (Sagrada exterior) booking is its OWN slot (sfExt:true), so a
- *  3h and an SF booking sharing a date/time/language yield two distinct shifts. */
+// Unique (date, time, language, variant) slots of all NON-private active bookings. An SF
+// booking is its OWN slot (sfExt:true), so a 3h and an SF booking at the same date/time/
+// language yield two distinct shifts.
 function readActiveBookingSlots_() {
   const seen = new Set();
   const out = [];
@@ -832,8 +826,8 @@ function readActiveBookingSlots_() {
   return out;
 }
 
-/** Availability for a private booking: exact time, else nearest slot within
- *  the tolerance window (same day). */
+// Availability for a private booking: the exact time, else the nearest slot within the
+// tolerance window (same day).
 function privateAvailability_(availIndex, dateText, time) {
   const exact = availIndex[dateText + '|' + time];
   if (exact && exact.length) return exact;
@@ -907,7 +901,7 @@ function readPrivateGroups_() {
 }
 
 
-/* ---------- unchanged workflow entry points ---------- */
+/* ---------- Workflow entry points ---------- */
 
 /* ---------- availability: 3h vs SF (SEPARATE files) ----------
  * The 3-hour tour and the Sagrada-exterior (SF) tour each get their OWN
@@ -924,20 +918,20 @@ var SF_GUIDE_FILE_ID = '1XJXz3tR1aDupSbtsmWKqUd-W6Zepv-VJiAZfGw-649o';
 
 function availabilityFileId_(isSf) { return isSf ? SF_GUIDE_FILE_ID : GUIDE_FILE_ID; }
 
-/** Open the availability spreadsheet for a tour type, or null if not configured/reachable. */
+// Open the availability spreadsheet for a tour type, or null if not configured/reachable.
 function availabilityFile_(isSf) {
   const id = availabilityFileId_(isSf);
   if (!id) return null;
   try { return SpreadsheetApp.openById(id); } catch (e) { return null; }
 }
 
-/** A plain "Week <N>" availability tab (never the legacy "SF Week <N>"). */
+// True for a plain "Week <N>" availability tab (never the legacy "SF Week <N>").
 function isAvailWeekTab_(name) {
   const n = String(name || '');
   return n.indexOf('Week ') === 0;   // "Week 42"; the legacy "SF Week 42" starts with "SF", so it is skipped
 }
 
-/** Remove legacy "SF Week <N>" tabs from the 3h file — SF now lives in its own file. */
+// Remove legacy "SF Week <N>" tabs from the 3h file — SF lives in its own file.
 function cleanupStraySfTabs_() {
   try {
     const g = SpreadsheetApp.openById(GUIDE_FILE_ID);
@@ -945,28 +939,21 @@ function cleanupStraySfTabs_() {
   } catch (e) { /* best-effort cleanup */ }
 }
 
-/**
- * Guides listed on an availability sheet.
- *   3h sheet: EVERY active guide, exactly as it was before the SF split — the 3h
- *             sheet is never narrowed by tour type (that wiped the names), so a
- *             guide always appears where they always did.
- *   SF sheet: only SF-capable guides (Guides "Tour" column). If none are tagged
- *             yet, the SF sheet still lists every active guide so it is never
- *             blank — mark SF guides in the Guides tab to narrow it.
- */
+// Which guides are listed on an availability sheet.
+//   3h sheet: EVERY active guide (the 3h sheet is never narrowed by tour type).
+//   SF sheet: only SF-capable guides (Guides "Tour" column). If none are tagged yet, the SF
+//             sheet still lists every active guide so it's never blank — mark SF guides to
+//             narrow it.
 function availabilityGuideNames_(controlSS, isSf) {
   if (!isSf) return readActiveGuideNames_(controlSS);
   const sf = readGuides_(controlSS).filter(g => g.active && g.tourTypes && !!g.tourTypes.sf).map(g => g.name);
   return sf.length ? sf : readActiveGuideNames_(controlSS);
 }
 
-/**
- * Weekly_Schedule rules that belong on this tour type's availability sheet.
- *   3h: non-SF rules that are NOT "Hide from availability" (e.g. 4pm Italian stays off).
- *   SF: SF rules — the "Hide from availability" flag only existed to keep SF OFF the
- *       3h sheet, so it is ignored here now that SF has its own sheet. Private rows
- *       keep their tick columns on both (private is staffed from availability too).
- */
+// The Weekly_Schedule rules that belong on this tour type's availability sheet.
+//   3h: non-SF rules that are NOT "Hide from availability".
+//   SF: SF rules (the "Hide from availability" flag is ignored — SF has its own sheet).
+// Private rows keep their tick columns on both (private is staffed from availability too).
 function availabilityRulesFor_(controlSS, isSf) {
   return readWeeklySchedule_(controlSS).filter(r =>
     (!!r.sfExt === !!isSf) && (isSf || !r.hideFromAvailability));
@@ -978,7 +965,7 @@ function syncAvailabilityFile() {
   if (availabilityRulesFor_(controlSS, true).length) syncAvailabilityInFile_(controlSS, true);   // SF file (only when SF runs)
 }
 
-/** Rebuild every "Week <N>" tab in one tour type's availability file. */
+// Rebuild every "Week <N>" tab in one tour type's availability file.
 function syncAvailabilityInFile_(controlSS, isSf) {
   const guideSS = availabilityFile_(isSf);
   if (!guideSS) return;
@@ -993,13 +980,10 @@ function syncAvailabilityInFile_(controlSS, isSf) {
   });
 }
 
-/**
- * Trigger entry points must NEVER throw: Apps Script emails the owner a
- * "Summary of failures" for any trigger run that ends in an exception, and a
- * transient "Service Spreadsheets timed out" is normal under contention.
- * Errors are logged to the Control Errors tab and swallowed; the next scheduled
- * run picks the work up again.
- */
+// Trigger entry points must NEVER throw: Apps Script emails the owner a "Summary of failures"
+// for any trigger run that ends in an exception, and a transient "Service Spreadsheets timed
+// out" is normal under contention. Errors are logged to the Control Errors tab and swallowed;
+// the next scheduled run picks the work up again.
 function safeTriggerRun_(label, fn) {
   try {
     fn();
@@ -1022,14 +1006,16 @@ function safeTriggerRun_(label, fn) {
   }
 }
 
-/** RUN from the editor: create/extend the availability week tabs (out to the
- *  seasonal end date) and refresh their columns. No email, no scheduling.
- *  A runnable (no trailing "_") wrapper so it shows in the Run menu. */
+// Run from the editor: create/extend the availability week tabs (out to the seasonal end
+// date) and refresh their columns. No email, no scheduling. A runnable wrapper (no trailing
+// "_") so it shows in the Run menu.
 function syncAvailabilityTabs() {
   ensureWeekTabs_();
   syncAvailabilityFile();
 }
 
+// The weekly trigger: refresh the week tabs + availability, build the schedule, and (when
+// auto is ON) email it. Wrapped in safeTriggerRun_ so a transient error never emails the owner.
 function runWeeklyScheduling() {
   safeTriggerRun_('runWeeklyScheduling', function () {
     ensureWeekTabs_();      // delete past weeks, create the upcoming ones
@@ -1041,11 +1027,9 @@ function runWeeklyScheduling() {
   });
 }
 
-/**
- * RUN ONCE (from the editor) to fill Weekly_Schedule with the current offer.
- * Overwrites the tab (wipes German too — normally you run
- * updateWeeklyScheduleToCurrentOffer instead, which preserves it).
- */
+// Run once (from the editor) to fill Weekly_Schedule with the current offer. Overwrites the
+// whole tab (wipes German too) — normally you run updateWeeklyScheduleToCurrentOffer instead,
+// which preserves the other rows.
 function setupWeeklySchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('Weekly_Schedule') || ss.insertSheet('Weekly_Schedule');
