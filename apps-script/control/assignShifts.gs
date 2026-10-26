@@ -480,15 +480,13 @@ function lockKey_(dateText, time, language, isPrivate, privIndex, isSf) {
          (isSf ? "SF" : (isPrivate ? "P" + (Number(privIndex) || 1) : "R"));
 }
 
-/**
- * Parse a Schedule_<Language> column header.
- *   "11:00"           -> { time:"11:00", isPrivate:false, index:1 }
- *   "10:00 · Private" -> { time:"10:00", isPrivate:true,  index:1 }
- *   "17:00 · Private 2" -> { time:"17:00", isPrivate:true, index:2 }
- * Also tolerates display forms like "11:00 AM". Returns null for non-time
- * headers. Shared by the grid writer, the lock reader, and the guide portal
- * (same Apps Script project).
- */
+// Parse a Schedule_<Language> column header into { time, isPrivate, isSf, index }:
+//   "11:00"             -> { time:"11:00", isPrivate:false, index:1 }
+//   "10:00 · Private"   -> { time:"10:00", isPrivate:true,  index:1 }
+//   "17:00 · Private 2" -> { time:"17:00", isPrivate:true,  index:2 }
+//   "10:00 · SF"        -> { time:"10:00", isSf:true }
+// Tolerates display forms like "11:00 AM"; returns null for a non-time header. Shared by the
+// grid writer, the lock reader and the guide portal.
 function parseGridTimeHeader_(text) {
   const s = String(text || '').trim();
   if (!s) return null;
@@ -506,23 +504,20 @@ function parseGridTimeHeader_(text) {
   };
 }
 
-/** Column header text for a shift column. SF = the Sagrada exterior add-on's own column. */
+// The column header text for a shift column. SF = the Sagrada exterior add-on's own column.
 function gridHeaderForColumn_(time, isPrivate, index, isSf) {
   if (isSf) return time + ' · SF';
   if (!isPrivate) return time;
   return time + ' · Private' + (Number(index) > 1 ? ' ' + index : '');
 }
-/** Internal column id used by the grid writer (mirrors the header variants). */
+// The internal column id used by the grid writer (mirrors the header variants).
 function gridColId_(time, isPrivate, index, isSf) {
   return isSf ? time + '|SF' : (isPrivate ? time + '|P' + (Number(index) || 1) : time + '|R');
 }
 
-/**
- * Read every BOLD guide name from every Schedule_<Language> grid.
- * Bold = management lock. Returns { lockKey -> [names] }.
- * A cell can hold a regular line and 🔒-prefixed private lines; a bold run
- * locks the names inside that run only, so a manager can bold one name of two.
- */
+// Read every BOLD guide name from every Schedule_<Language> grid — bold = a management lock.
+// Returns { lockKey -> [names] }. A cell can hold a regular line and 🔒-prefixed private
+// lines; a bold run locks only the names inside that run, so a manager can bold one of two.
 function readLockedAssignments_(controlSS) {
   const locks = {};
   controlSS.getSheets().forEach(sheet => {
@@ -533,9 +528,8 @@ function readLockedAssignments_(controlSS) {
     if (!language || sheet.getLastRow() < 3) return;
 
     const dv = sheet.getDataRange().getDisplayValues();
-    // Same window-aware resolver the portal uses, so a locked "Jul 31" row maps
-    // to the exact same date the portal shift does (no year drift between the
-    // two — that mismatch is what made assignments fail to stick).
+    // The same window-aware resolver the portal uses, so a locked "Jul 31" row maps to the
+    // exact same date the portal shift does (no year drift between the two).
     const anchor = gridAnchor_(String(dv[0][0] || ""));
     const timeRow = dv[1] || [];
     const rich = sheet.getDataRange().getRichTextValues();
@@ -576,14 +570,11 @@ function readLockedAssignments_(controlSS) {
   return locks;
 }
 
-/**
- * Read every MANAGER-CLEARED slot from the Schedule_<Language> grids. A clear is
- * the cell text "Not assigned (cleared)" written by the portal (writeAssignmentToGrid_).
- * makeSchedule uses this to leave those slots empty instead of auto-assigning a
- * guide to them — the manager's clear wins, just like a lock does. Returns a set
- * of lockKey_ strings. (A plain "Not assigned" cell is NOT cleared; it still gets
- * auto-assigned / defaulted as usual.)
- */
+// Read every MANAGER-CLEARED slot from the Schedule_<Language> grids. A clear is the cell
+// text "Not assigned (cleared)" written by the portal; makeSchedule uses this to leave those
+// slots empty instead of auto-assigning — the manager's clear wins, like a lock. Returns a
+// set of lockKey_ strings. (A plain "Not assigned" cell is NOT cleared — it still gets
+// auto-assigned / defaulted.)
 function readClearedSlots_(controlSS) {
   const cleared = {};
   controlSS.getSheets().forEach(sheet => {
@@ -615,16 +606,13 @@ function readClearedSlots_(controlSS) {
   return cleared;
 }
 
-/**
- * Keep MANAGER assignments (and clears) that fall OUTSIDE this run's scheduling
- * window. makeSchedule only builds shifts for today..next-Sunday, and the grid
- * writer CLEARS each Schedule_<Language> tab and rewrites it from those shifts —
- * so an assignment a manager made to a tour weeks out (now possible: availability
- * runs to Dec 31) would be wiped every run. readLockedAssignments_/readClearedSlots_
- * already read EVERY grid row, so re-inject any lock/clear that the freshly-built
- * assignedShifts don't already cover (skipping only PAST dates). They carry their
- * guide + lock marker so the rewrite puts them back exactly, bold and all.
- */
+// Keep MANAGER assignments (and clears) that fall OUTSIDE this run's scheduling window.
+// makeSchedule only builds shifts for today..next-Sunday, and the grid writer clears each
+// Schedule_<Language> tab and rewrites it from those shifts — so an assignment a manager made
+// to a tour weeks out would be wiped every run. readLockedAssignments_/readClearedSlots_
+// already read EVERY grid row, so re-inject any lock/clear the freshly-built assignedShifts
+// don't cover (skipping PAST dates). They carry their guide + lock marker, so the rewrite
+// puts them back exactly, bold and all.
 function preserveManagerGridState_(assignedShifts, locks, clearedSlots, startDate, byName) {
   const have = {};
   assignedShifts.forEach(s => {
