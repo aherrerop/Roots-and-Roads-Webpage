@@ -1074,10 +1074,8 @@ function setupWeeklySchedule() {
   sh.setFrozenRows(1);
 }
 
-/**
- * Emails the generated Schedule_<Language> tables to management as HTML, ready
- * to forward to guides. Called at the end of runWeeklyScheduling (Friday run).
- */
+// Email the generated Schedule_<Language> tables to management as HTML, ready to forward to
+// guides. Called at the end of runWeeklyScheduling.
 function emailWeeklySchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const tabs = ss.getSheets().filter(s => s.getName().indexOf('Schedule_') === 0);
@@ -1500,6 +1498,8 @@ function readWeeklySchedule_(ss) {
   return rules;
 }
 
+// Read the ticked availability on a week tab into { week, guideName, date, time } rows — one
+// per guide × slot they marked.
 function readAvailability_(guideSS, weekName) {
   const all = [];
   const sheet = guideSS.getSheetByName(weekName);
@@ -1780,6 +1780,7 @@ function rebuildAvailabilityWeekSheet_(sheet, weekDates, scheduleRules, guideNam
   for (let c = 2; c <= totalCols; c++) sheet.setColumnWidth(c, 85);
 }
 
+// Style the flat "Schedule" tab (header row, borders, muted "Not assigned" rows).
 function formatScheduleSheet_(sheet, numRows, numCols) {
   sheet.getRange(1, 1, 1, numCols).setFontWeight("bold").setBackground("#2563eb").setFontColor("#ffffff").setHorizontalAlignment("center");
   if (numRows > 1) {
@@ -1798,13 +1799,14 @@ function formatScheduleSheet_(sheet, numRows, numCols) {
 }
 
 
-/* ---------- small helpers ---------- */
+/* ---------- Small helpers ---------- */
 
+// True if candidateDate is within TOUR_DURATION_HOURS of any already-assigned start time.
 function hasConflict_(assignedDates, candidateDate) {
   return assignedDates.some(existing => Math.abs(candidateDate - existing) / (1000 * 60 * 60) < TOUR_DURATION_HOURS);
 }
 
-/** "10:00" from a Date-coerced time cell (epoch 1899), else ''. */
+// "10:00" from a Date-coerced time cell (Sheets stores a bare time as an epoch-1899 Date), else ''.
 function timeFromCellValue_(v) {
   if (v instanceof Date && !isNaN(v)) {
     return v.getHours() + ':' + String(v.getMinutes()).padStart(2, '0');
@@ -1812,6 +1814,7 @@ function timeFromCellValue_(v) {
   return '';
 }
 
+// Normalise a time value ("5:00 PM", "17:00", a Date) to 24h "H:MM".
 function normalizeTime_(value) {
   if (!value) return "";
   const s = String(value).trim();
@@ -1829,6 +1832,7 @@ function normalizeTime_(value) {
   return s;
 }
 
+// A Date at the given day + "H:MM" time.
 function combineDateAndTime_(dateObj, timeText) {
   const d = new Date(dateObj);
   const parts = String(timeText).split(":");
@@ -1836,17 +1840,20 @@ function combineDateAndTime_(dateObj, timeText) {
   return d;
 }
 
+// The same date pinned to noon, so date-only comparisons never trip over a DST/UTC edge.
 function dateOnly_(dateObj) {
   const d = new Date(dateObj);
   d.setHours(12, 0, 0, 0);
   return d;
 }
 
+// The 4-digit year found in a tab title, else the current year.
 function extractYear_(title) {
   const match = String(title).match(/\b(20\d{2})\b/);
   return match ? Number(match[1]) : new Date().getFullYear();
 }
 
+// Parse a day-header label like "Mon Oct 12" (+ the year) into a noon Date.
 function parseDateFromHeader_(label, year) {
   const parts = String(label).trim().split(/\s+/);
   const month = parts[1], day = parts[2];
@@ -1862,13 +1869,10 @@ function formatDate_(dateObj) { return Utilities.formatDate(dateObj, Session.get
 
 /* ---------- diagnostics / acceptance checks ---------- */
 
-/**
- * Validate the CURRENT Schedule_<Language> grids against the Guides tab and
- * the overlap rule. Logs every violation and returns the count. Run from the
- * editor after makeSchedule, or any time a manager edits a grid by hand.
- * Catches exactly the class of bugs the portal used to show (Albert on
- * German, one guide on two simultaneous/overlapping tours).
- */
+// Validate the CURRENT Schedule_<Language> grids against the Guides tab and the overlap rule:
+// a guide who doesn't speak the language, doesn't run the tour type, isn't in the Guides tab,
+// or has two tours within MIN_SEPARATION_HOURS. Logs every violation and returns the count.
+// Run from the editor after makeSchedule, or any time a manager hand-edits a grid.
 function validateScheduleGrids() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
   const guides = readGuides_(controlSS);
@@ -1948,16 +1952,13 @@ function validateScheduleGrids() {
 
 /* ---------- live validation of MANUAL grid edits ---------- */
 
-/**
- * RUN ONCE: installs the on-edit trigger that watches the Schedule_<Language>
- * grids. From then on, when a manager types a guide name into a grid cell:
- *   1. the cell is automatically made BOLD (= a management lock, so the
- *      Friday regeneration will never wipe a hand edit again), and
- *   2. the assignment is validated immediately — wrong language, unknown
- *      name, or an overlapping tour (<5h) puts a ⚠ note on the cell and a
- *      row in the Errors tab. The edit is KEPT (management decides); the
- *      flag just makes the problem impossible to miss.
- */
+// Run once: install the on-edit trigger that watches the Schedule_<Language> grids. From then
+// on, when a manager types a guide name into a grid cell:
+//   1. the cell is made BOLD (= a management lock, so the weekly regeneration never wipes a
+//      hand edit), and
+//   2. the assignment is validated immediately — wrong language, unknown name, or an
+//      overlapping tour (<5h) puts a ⚠ note on the cell and a row in the Errors tab. The edit
+//      is KEPT (management decides); the flag just makes the problem impossible to miss.
 function setupScheduleEditValidation() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const exists = ScriptApp.getProjectTriggers().some(t =>
@@ -1968,6 +1969,8 @@ function setupScheduleEditValidation() {
   Logger.log('Schedule edit validation installed.');
 }
 
+// Installable on-edit handler for the Schedule_<Language> grids: bold a typed name (lock it)
+// and validate the cell, flagging any problem with a ⚠ note + an Errors row.
 function handleScheduleEdit(e) {
   try {
     if (!e || !e.range) return;
@@ -2005,7 +2008,7 @@ function handleScheduleEdit(e) {
   }
 }
 
-/** Problems (strings) with putting `namesText` into this grid cell. */
+// The problems (as strings) with putting `namesText` into this grid cell.
 function validateCellAssignment_(sh, range, language, namesText, isSf) {
   const problems = [];
   const dv = sh.getDataRange().getDisplayValues();
