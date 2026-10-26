@@ -6336,9 +6336,9 @@ function runPortalSelfTest(opts) {
   return selfTestReport_(R);
 }
 
-/** Append one throwaway Testing booking row to a BookingSheet language tab.
- *  isSf -> an SF exterior test booking (source GYG-SF + the feed's SF marker), so
- *  the self-test can exercise the dedicated SF card / grid / 3€ ledger path. */
+// Append one throwaway Testing booking row to a BookingSheet language tab. isSf -> an SF
+// exterior test booking (source GYG-SF + the feed's SF marker), so the self-test can
+// exercise the dedicated SF card / grid / 3€ ledger path.
 function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests, isSf) {
   const source = isSf ? PORTAL.SF_EXT_SOURCES[0] : 'Website';
   const ss = bookingSS_();
@@ -6352,11 +6352,9 @@ function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests, i
     name, '', Number(guests || 0), new Date(dateKey + 'T12:00:00'), timeLabel, source, 0, id, ''
   ]]);
 
-  // The LIVE portal reads the Portal Feed (the language tabs only feed it on the
-  // booking system's next ~5-min rebuild), so also drop a matching feed row and
-  // bump the feed cache — otherwise "the booking surfaces as a shift" fails in
-  // production purely on feed lag (it only passed in unit tests, which have no
-  // feed tab and fall back to reading the language tabs). Best-effort.
+  // The live portal reads the Portal Feed (a language tab only reaches it on the booking
+  // system's next ~5-min rebuild), so also drop a matching feed row and bump the feed cache,
+  // or the "booking surfaces as a shift" step would fail purely on feed lag. Best-effort.
   try {
     const feed = ss.getSheetByName('Portal Feed');
     if (feed) {
@@ -6373,7 +6371,7 @@ function createTestBookingRow_(language, dateKey, timeLabel, name, id, guests, i
   } catch (e) { /* feed optional (unit tests / first run) */ }
 }
 
-/** Remove every Testing artefact: booking rows, ledger rows, and the fake grid column. */
+// Remove every Testing artefact: booking rows, feed rows, ledger rows, and the fake grid column.
 function deleteSelfTestArtifacts_(ST) {
   const removed = { bookings: 0, feed: 0, ledger: 0, gridCols: 0 };
 
@@ -6424,7 +6422,7 @@ function deleteSelfTestArtifacts_(ST) {
   return 'bookings=' + removed.bookings + ' feed=' + removed.feed + ' ledger=' + removed.ledger + ' gridCols=' + removed.gridCols;
 }
 
-/** Write the self-test results to a "Self Test" tab and the log; return a summary. */
+// Write the self-test results to a "Self Test" tab and the log; return a summary.
 function selfTestReport_(R) {
   const fails = R.filter(r => !r.ok);
   const slow = R.filter(r => r.ms > PORTAL.SLOW_MS);
