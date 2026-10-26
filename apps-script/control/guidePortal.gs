@@ -4131,16 +4131,12 @@ function readLedgerForGuides_(names) {
   return out;
 }
 
-/**
- * For the MANAGER HISTORY view: scan EVERY guide's ledger tab for rows on/after
- * loKey and return (a) the check-ins keyed shiftKey|bookingId, and (b) which guide
- * ran each shift (the tab the rows live in). The ledger is the money truth and the
- * only reliable record of who was checked in on a PAST tour — the Past2Days feed
- * snapshot may be empty right after rollout, so history must not depend on it for
- * check-ins. A history open is a rare, manual manager action, so reading all tabs
- * once is fine. Synthetic 'No-show' rows set the guide (they ran it) but are not
- * guest check-ins.
- */
+// For the MANAGER HISTORY view: scan every named guide's ledger tab for rows on/after
+// loKey and return (a) the check-ins keyed shiftKey|bookingId, and (b) which guide ran
+// each shift (the tab the rows live in). The ledger is the money truth and the only
+// reliable record of who was checked in on a PAST tour. A history open is a rare manual
+// action, so reading the tabs is fine. Synthetic 'No-show' rows set the guide (they ran
+// it) but are not guest check-ins.
 function readLedgerHistory_(guides, loKey) {
   const out = { checkins: {}, guideByShift: {} };
   let ss; try { ss = ledgerSS_(); } catch (e) { return out; }
@@ -4171,14 +4167,11 @@ function readLedgerHistory_(guides, loKey) {
   return out;
 }
 
-/**
- * Full reservation detail from the BookingSheet's "Completed Log", keyed by
- * shift. The Completed Log records EVERY completed booking with full detail
- * (name, phone, adults, children, source, booking id) whether or not anyone was
- * checked in — so a done tour keeps showing its guests, and un-checked-in guests
- * still appear (their check-in simply reads as 0 / "to check in"). Deduped by
- * booking id per shift.
- */
+// Full reservation detail from the BookingSheet's "Completed Log", keyed by shift. The
+// Completed Log records EVERY completed booking with full detail (name, phone, adults,
+// children, source, booking id) whether or not anyone checked in — so a done tour keeps
+// showing its guests, and un-checked-in guests still appear (their check-in reads as 0).
+// Deduped by booking id per shift.
 function readCompletedLogReservations_() {
   const out = {};
   let sh; try { sh = bookingSS_().getSheetByName('Completed Log'); } catch (e) { return out; }
@@ -4209,16 +4202,12 @@ function readCompletedLogReservations_() {
   return out;
 }
 
-/** Upsert this shift's rows for a guide (replace prior rows for the same shift).
- *  Dedupe is belt-and-braces: rows matching the shift key OR carrying one of
- *  the incoming Booking IDs on the same date are removed before the rewrite,
- *  so a repeated save can never stack duplicates even if a time cell was
- *  stored in a weird format by an older version. */
+// Column layout of the Ledger "History" tab — a booking-driven roster of every tour.
 const LEDGER_HISTORY_HEADERS = ['Date', 'Day', 'Time', 'Language', 'Type', 'Guide', 'Guests', 'Guest names', 'Sources'];
 
-/** Ensure the Ledger "History" tab exists with the current header (upgrading an old
- *  header in place) and Date/Time kept as text, then return it. Split out so a
- *  trigger / the setup function can create it before any tour runs. */
+// Ensure the Ledger "History" tab exists with the current header (upgrading an old header
+// in place) and Date/Time kept as text, then return it. Split out so a trigger or the
+// setup function can create it before any tour runs.
 function historyTab_(ss) {
   let sh = ss.getSheetByName('History');
   if (!sh) sh = ss.insertSheet('History');
@@ -4234,21 +4223,19 @@ function historyTab_(ss) {
   return sh;
 }
 
-/** The History key for a tour: date|time|language|type, so a regular/SF/private tour
- *  at the same slot stays a distinct row and a re-sweep updates in place. */
+// The History key for a tour: date|time|language|type, so a regular/SF/private tour at the
+// same slot stays a distinct row and a re-sweep updates it in place.
 function historyKey_(dateKey, timeLabel, language, type) {
   return toDateKey_(dateKey) + '|' + normalizeTime_(timeLabel) + '|' + String(language || '').toLowerCase() + '|' + String(type || '');
 }
 
-/**
- * Build one History row per BOOKED tour (today or earlier) from the assembled
- * schedule + feed. ALL booked guests are listed whether or not they checked in — the
- * ledger shows who actually showed (by their presence there); History is the full
- * roster. UNASSIGNED tours are kept too, with their guests' names + sources. Row:
- * [Date, Day, Time, Language, Type(3h/SF/Private), Guide|"Not assigned", Guests
- * (all booked, adults+children), names joined " | ", sources joined " | "].
- * Returns a { historyKey_: row } map. Future tours are skipped (not history yet).
- */
+// Build one History row per BOOKED tour (today or earlier) from the assembled schedule +
+// feed. ALL booked guests are listed whether or not they checked in — the ledger shows who
+// actually showed (by their presence there); History is the full roster. UNASSIGNED tours
+// are kept too, with their guests' names + sources. Row: [Date, Day, Time, Language,
+// Type(3h/SF/Private), Guide|"Not assigned", Guests(all booked, adults+children), names
+// joined " | ", sources joined " | "]. Returns a { historyKey_: row } map; future tours
+// are skipped (not history yet).
 function ledgerHistoryRows_(schedule, bookingsByKey, today) {
   const out = {};
   (schedule || []).forEach(function (shift) {
@@ -4463,11 +4450,10 @@ function writeGuideLedger_(name, dateKey, time, language, rows) {
 
   if (sh.getLastRow() >= 2) {
     const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
-    // PRESERVE each booking's ORIGINAL check-in time. The ledger's "Updated" cell
-    // is what the portal shows as the check-in time; re-stamping it on every save
-    // is what collapsed a tour's individual times (10:06 / 10:13 / …) into one
-    // (10:46) when a later save rewrote the whole shift. Keep the first time we
-    // recorded for any booking we are re-writing.
+    // PRESERVE each booking's ORIGINAL check-in time. The ledger's "Updated" cell is what
+    // the portal shows as the check-in time, so re-stamping it on every save would collapse
+    // a tour's individual times into one. Keep the first time we recorded for any booking
+    // we are re-writing.
     const origUpdated = {};
     for (let i = 0; i < v.length; i++) {
       const idKey = String(v[i][LEDGER_BOOKINGID_COL] || '').trim() + '|' + toDateKey_(v[i][0]);
@@ -4489,19 +4475,17 @@ function writeGuideLedger_(name, dateKey, time, language, rows) {
 
   if (rows.length) {
     const start = sh.getLastRow() + 1;
-    // Time column as TEXT first, so Sheets can never coerce "11:00 AM" into a
-    // Date (the root cause of the duplicate check-ins).
+    // Time column as TEXT first, so Sheets can never coerce "11:00 AM" into a Date (which
+    // would change the key and let a re-save stack a duplicate).
     sh.getRange(start, 3, rows.length, 1).setNumberFormat('@');
     sh.getRange(start, 1, rows.length, LEDGER_HEADERS.length).setValues(rows);
   }
 }
 
 
-/**
- * RUN ONCE: collapses duplicate check-in rows created before the Time-format
- * fix. Keeps the NEWEST row (by the Updated column) per Booking ID + date,
- * rewrites Time cells as text, and reports what it removed.
- */
+// Repair tool (run from the editor): collapse any duplicate check-in rows. Keeps the
+// NEWEST row (by the Updated column) per Booking ID + date, rewrites Time cells as text,
+// and reports how many it removed.
 function repairLedgerDuplicates() {
   const ss = ledgerSS_();
   let removed = 0;
@@ -4541,14 +4525,12 @@ function repairLedgerDuplicates() {
   return removed;
 }
 
-/**
- * All money for one ledger row.
- *   Private tour  -> we owe the guide a flat privatePay; R&R = OTA income - privatePay.
- *   Paid tour     -> we owe the guide 10 €/checked-in; R&R = OTA income - that.
- *   Free tour     -> guide owes us 6 €/checked-in; the platform charges us a
- *                    commission €/checked-in, so R&R keeps (free - commission)
- *                    per checked-in person. Commission is per-platform (Rates).
- */
+// Compute all the money for one ledger row, from the booking's source + checked-in count:
+//   Private -> we owe the guide a flat privatePay;       R&R = OTA income - privatePay
+//   SF ext  -> we owe the guide its own per-person rate;  R&R = OTA income - that
+//   Paid    -> we owe the guide `paid` per checked-in;    R&R = OTA income - that
+//   Free    -> the guide owes us `free` per checked-in;   R&R keeps (free - commission) per
+//              checked-in person (commission is per-platform, from the Rates tab).
 function computeMoney_(source, checkedIn, isPrivate, income, rates) {
   const paid = isPaidSource_(source);
   const inc = Number(income || 0);
@@ -4576,6 +4558,8 @@ function computeMoney_(source, checkedIn, isPrivate, income, rates) {
   return { weOwe: 0, theyOwe, rrMakes: round2_(ppl * (rates.free - commission)), type: 'Free' };
 }
 
+// Assemble one ledger row (in LEDGER_HEADERS column order) from a plain object, stamping
+// "Updated" with now. The caller preserves an earlier time on a re-write (writeGuideLedger_).
 function makeLedgerRow_(o) {
   return [
     o.dateKey, o.day, o.timeLabel, o.language, o.bookingName, o.phone, o.source,
@@ -4590,14 +4574,11 @@ function makeLedgerRow_(o) {
  * 7. TOKENS  (simple signed session)
  ******************************************************/
 
-/**
- * The signing secret for login tokens. It must be strong (the in-code
- * placeholder sits in a PUBLIC repo, so anyone could forge a token with it) and
- * it must live OUTSIDE the repo. This provisions one AUTOMATICALLY on first use:
- * a random secret is generated and stored in Script Properties, so there is
- * nothing for anyone to run by hand. Guides simply re-login once the first time
- * it replaces the placeholder; after that it is stable.
- */
+// The signing secret for login tokens. It must be strong and live OUTSIDE the repo (the
+// in-code placeholder is public, so anyone could forge a token with it), so this provisions
+// one automatically on first use: a random secret is generated and stored in Script
+// Properties. Guides just re-login once the first time it replaces the placeholder; after
+// that it is stable.
 function tokenSecret_() {
   let props;
   try { props = PropertiesService.getScriptProperties(); }
@@ -4623,8 +4604,8 @@ function tokenSecret_() {
   return p;
 }
 
-/** Optional manual override: setTokenSecret('a-long-random-string'). Not required —
- *  tokenSecret_() auto-provisions a strong secret on its own. */
+// Optional manual override: setTokenSecret('a-long-random-string'). Not required —
+// tokenSecret_() auto-provisions a strong secret on its own.
 function setTokenSecret(secret) {
   const s = String(secret || '');
   if (s.length < 24) throw new Error('Use at least 24 characters.');
