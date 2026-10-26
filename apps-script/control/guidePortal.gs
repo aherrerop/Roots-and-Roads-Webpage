@@ -5524,6 +5524,8 @@ function updateManagementQueues() {
   safeTriggerRun_('updateManagementQueues', updateManagementQueuesCore_);
 }
 
+// The hourly background job. Under one lock it runs each queue/reconcile step within a
+// wall-clock budget, so a slow cycle always returns before the ~6-min hard kill.
 function updateManagementQueuesCore_() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) return;
@@ -5555,10 +5557,9 @@ function updateManagementQueuesCore_() {
 var QUEUES_DEADLINE_ = 0;
 function queuesHaveTimeLeft_() { return !QUEUES_DEADLINE_ || Date.now() < QUEUES_DEADLINE_; }
 
-/** All check-in keys across every guide tab: "bookingId|dateKey" -> guide.
- *  Memoised per-run (__RRX): the hourly queue build reads this 3× (reconcile,
- *  no-show, GuruWalk) and no guide-ledger write happens between them, so one read
- *  serves all three — a big slice off the run that was hitting the 6-min kill. */
+// All check-in keys across every guide tab: "bookingId|dateKey" -> guide (+ detail).
+// Memoised per-run (__RRX): the hourly queue build reads this a few times (reconcile,
+// no-show, GuruWalk) with no guide-ledger write between them, so one read serves them all.
 function readAllCheckins_() {
   if (__RRX.qRun && __RRX.checkins) return __RRX.checkins;
   const ss = ledgerSS_();
@@ -5597,10 +5598,9 @@ function readAllCheckins_() {
   return out;
 }
 
-/** Completed bookings from the BookingSheet's hidden Completed Log tab.
- *  Memoised per-run (__RRX): the hourly queue build reads it 3× (unassigned,
- *  no-show, GuruWalk) and only the booking project ever writes it, so one read
- *  serves the whole run — trimming the run that was hitting the 6-min kill. */
+// Completed bookings from the BookingSheet's hidden Completed Log tab. Memoised per-run
+// (__RRX): the hourly queue build reads it a few times (unassigned, no-show, GuruWalk) and
+// only the booking project writes it, so one read serves the whole run.
 function readCompletedLog_() {
   if (__RRX.qRun && __RRX.completedLog) return __RRX.completedLog;
   const out = [];
@@ -5643,6 +5643,10 @@ function guideForShift_(schedule, dateKey, time, language, isPrivate, isSf) {
   return weeklyDefaultGuide_(dateKey, time, language, isSf, isPrivate);
 }
 
+// Fill the Viator + GYG no-show queues: a completed booking with no check-in (or a
+// checked-in count of 0) that the manager must still mark as a no-show on that OTA.
+// Idempotent — keyed by Booking ID | date, so existing rows (and their Done checkbox) are
+// never recreated.
 function updateNoShowQueues_() {
   const ss = ledgerSS_();
   const checkins = readAllCheckins_();
@@ -5700,6 +5704,9 @@ function updateNoShowQueues_() {
   });
 }
 
+// Fill the GuruWalk check-in queue: GuruWalk tours the guide checked people in on, which
+// management must report on the GuruWalk platform within 48h of the tour. Idempotent by
+// Booking ID | date.
 function updateGuruwalkCheckinQueue_() {
   const ss = ledgerSS_();
   ensureQueueTabs_(ss);
