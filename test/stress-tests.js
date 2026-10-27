@@ -480,12 +480,16 @@ check('overlap cap: a lone SF slot that alone hits 20 is still full',
   guide('Unassigned', [grow(999, 999)]);
   guide('no-shows', [grow(500, 500)]);
   led.insertSheet('History').getRange(1, 1, 1, LEDGER_HISTORY_HEADERS.length).setValues([LEDGER_HISTORY_HEADERS]);
+  // Manager tabs (Albert, Carlos) must be EXCLUDED — the summary is guides only.
+  guide('Albert', [grow(200, 50)]);
+  guide('Carlos', [grow(300, 70)]);
 
   const r = writeRatesSummary_(led);
   check('rates summary: owed to guides sums only guide tabs (K)', r.owedTo === 115, r);
   check('rates summary: owed by guides sums only guide tabs (L)', r.owedBy === 6, r);
   check('rates summary: balance = owedTo - owedBy (we-owe positive)', r.balance === 109, r);
   check('rates summary: Unassigned / no-shows / History are excluded', r.owedTo === 115 && r.owedBy === 6, r);
+  check('rates summary: the managers Albert & Carlos are excluded', r.owedTo === 115 && r.owedBy === 6, r);
   check('rates summary: values are written next to their labels (found by column A)',
     rates.getRange(13, 2).getValue() === 115 && rates.getRange(14, 2).getValue() === 6 && rates.getRange(15, 2).getValue() === 109,
     [rates.getRange(13, 2).getValue(), rates.getRange(14, 2).getValue(), rates.getRange(15, 2).getValue()]);

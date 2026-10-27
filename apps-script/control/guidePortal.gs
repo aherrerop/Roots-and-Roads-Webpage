@@ -4287,9 +4287,13 @@ function setupLedgerHistoryTab() {
   return msg;
 }
 
+// Managers whose own ledger tab is NOT counted in the Rates summary (they are the
+// owners, not guides we settle up with). Edit this list to change who is excluded.
+const RATES_SUMMARY_EXCLUDE_GUIDES = ['Albert', 'Carlos'];
+
 // Tell a guide's money ledger apart from the Ledger's helper tabs, so the Rates
 // summary only ever sums real guide pay. Every line here answers one question:
-// "is this tab one guide's per-booking ledger?"
+// "is this tab one guide's per-booking ledger we want in the summary?"
 function isGuideLedgerTab_(sh) {
   const name = sh.getName();
 
@@ -4298,6 +4302,9 @@ function isGuideLedgerTab_(sh) {
   // the past-tours roster; no-shows / check-ins = manager helper tabs.
   if (name === 'Rates' || name === 'Unassigned' || name === 'History') return false;
   if (/no-shows|check-ins/i.test(name)) return false;
+
+  // Reject the managers' own tabs — the summary is what we owe/are owed by GUIDES.
+  if (RATES_SUMMARY_EXCLUDE_GUIDES.some(g => g.toLowerCase() === name.trim().toLowerCase())) return false;
 
   // Reject anything too narrow to even be a guide ledger (fewer columns than the layout).
   if (sh.getLastColumn() < LEDGER_HEADERS.length) return false;
