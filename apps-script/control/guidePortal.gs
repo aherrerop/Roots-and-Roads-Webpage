@@ -4306,8 +4306,9 @@ function isGuideLedgerTab_(sh) {
   // Reject the managers' own tabs — the summary is what we owe/are owed by GUIDES.
   if (RATES_SUMMARY_EXCLUDE_GUIDES.some(g => g.toLowerCase() === name.trim().toLowerCase())) return false;
 
-  // Reject anything too narrow to even be a guide ledger (fewer columns than the layout).
-  if (sh.getLastColumn() < LEDGER_HEADERS.length) return false;
+  // Need at least columns K and L — the two money columns we sum. Some older guide tabs
+  // stop at column P (no trailing "Note" column); that's fine, we only read K and L.
+  if (sh.getLastColumn() < 12) return false;
 
   // Confirm the money columns sit where we expect, so a tab with a coincidental
   // name can't slip through. head[10] = col K "We owe guide (€)", head[11] = col L.

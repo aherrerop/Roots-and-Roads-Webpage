@@ -490,6 +490,19 @@ check('overlap cap: a lone SF slot that alone hits 20 is still full',
   check('rates summary: balance = owedTo - owedBy (we-owe positive)', r.balance === 109, r);
   check('rates summary: Unassigned / no-shows / History are excluded', r.owedTo === 115 && r.owedBy === 6, r);
   check('rates summary: the managers Albert & Carlos are excluded', r.owedTo === 115 && r.owedBy === 6, r);
+
+  // A guide tab missing the trailing "Note" column (16 cols, not 17) must STILL be counted —
+  // only columns K and L need to exist. (This is what dropped Aldo/Polina from the live total.)
+  const H16 = LEDGER_HEADERS.slice(0, 16);
+  const grow16 = (k, l) => { const a = new Array(16).fill(''); a[10] = k; a[11] = l; return a; };
+  const sh16 = led.insertSheet('Shorty16');
+  sh16.getRange(1, 1, 1, 16).setValues([H16]);
+  sh16.getRange(2, 1, 2, 16).setValues([grow16(30, 0), grow16(0, 9)]);
+  const r16 = writeRatesSummary_(led);
+  check('rates summary: a 16-column guide tab (no Note col) is still counted',
+    r16.owedTo === 145 && r16.owedBy === 15, r16);   // 115+30 owed to, 6+9 owed by
+  sh16.getRange(1, 1, 2, 16).clearContent();         // remove it...
+  writeRatesSummary_(led);                           // ...and restore B13:B15 to the baseline totals
   check('rates summary: values are written next to their labels (found by column A)',
     rates.getRange(13, 2).getValue() === 115 && rates.getRange(14, 2).getValue() === 6 && rates.getRange(15, 2).getValue() === 109,
     [rates.getRange(13, 2).getValue(), rates.getRange(14, 2).getValue(), rates.getRange(15, 2).getValue()]);
