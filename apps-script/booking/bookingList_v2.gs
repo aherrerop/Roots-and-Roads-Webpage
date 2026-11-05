@@ -4282,6 +4282,12 @@ function sendPrivateAlertEmail_(b) {
  * 12. DEDUPLICATION
  ******************************************************/
 
+// Remove duplicate rows from every active language tab, surgically.
+// A row with no duplicate is left exactly as it is (so a manually typed name, note
+// or odd source is never reconstructed and lost); among duplicates, the best data
+// is merged into the first one and only the redundant copies are deleted. This
+// avoids a whole-tab parse->rewrite, which could wipe a tab on a transient write
+// failure and mangle hand-entered rows.
 function dedupeActiveSheets_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -4293,14 +4299,6 @@ function dedupeActiveSheets_() {
 
     const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
 
-    // SURGICAL dedupe. The old code rebuilt the WHOLE tab from a parse->write
-    // round-trip, which (a) could wipe the tab if a transient "Service
-    // Spreadsheets failed" hit mid-rewrite (this emptied the English tab on
-    // 2026-09-03) and (b) MANGLED manually typed rows — a hand-entered name,
-    // note or odd source was reconstructed from the parse and lost.
-    // Now: leave every row that has NO duplicate EXACTLY as it is. Only rewrite a
-    // survivor whose fields actually changed by merging a duplicate into it, and
-    // only delete the redundant duplicate rows. A manual entry is never touched.
     const survivors = [];             // { rowIndex, booking, merged }
     const deleteRows = [];
     rows.forEach((row, i) => {
@@ -4318,6 +4316,8 @@ function dedupeActiveSheets_() {
 }
 
 
+// Collapse a list of parsed bookings to the unique ones, keeping the richest copy
+// of each (chooseBetterBooking_) and dropping anything that is not a valid booking.
 function uniqueBookings_(bookings) {
   const out = [];
 
@@ -4332,6 +4332,9 @@ function uniqueBookings_(bookings) {
 }
 
 
+// Of two copies of the same booking, return the one carrying more information. The
+// score rewards a longer name/phone, a real income, and explicit time/guest fields,
+// so a fuller confirmation beats a sparse re-parse.
 function chooseBetterBooking_(a, b) {
   const A = normalizeBooking_(a);
   const B = normalizeBooking_(b);
@@ -4351,6 +4354,12 @@ function chooseBetterBooking_(a, b) {
  * 13. MATCHING
  ******************************************************/
 
+// Decide whether two bookings are the same reservation. Same platform id (within
+// one source) is authoritative; two DIFFERENT ids always mean different bookings
+// and are never merged. With no id to compare it falls back to a soft match:
+// strict (name AND phone AND date AND time) for confirmations, or lenient (date +
+// time + phone-OR-name) for modifications, which often drop the phone or tweak the
+// name.
 function sameBooking_(a, b, opts) {
   const A = normalizeBooking_(a);
   const B = normalizeBooking_(b);
@@ -4392,6 +4401,9 @@ function sameBooking_(a, b, opts) {
 }
 
 
+// Loose name equality: equal after normalising, or one is a prefix word-boundary
+// of the other (so "Maria" matches "Maria Garcia" when a platform drops the
+// surname). Both sides must be non-empty.
 function namesCompatible_(a, b) {
   const A = normalizeNameKey_(a);
   const B = normalizeNameKey_(b);
@@ -4408,6 +4420,9 @@ function namesCompatible_(a, b) {
  * 14. SORTING
  ******************************************************/
 
+// Sort every active language tab by date then time (earliest first), rewriting the
+// rows in bulk. Run after dedupe so insert-in-place upserts can't leave a tab out
+// of order.
 function sortActiveSheets_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -4428,6 +4443,8 @@ function sortActiveSheets_() {
 }
 
 
+// Sort the Done tab newest-first (most recent finished tour on top). Done is an
+// 8-column tab, so read/write exactly 8 — reading 9 would pad a ghost column.
 function sortDoneSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName(RNR.SHEETS.DONE);
@@ -4445,6 +4462,9 @@ function sortDoneSheet_() {
  * 15. PARSING ROUTER
  ******************************************************/
 
+// Parse every message in a thread into booking objects, dispatching to the
+// per-source parser. `mode` ('confirm' / 'modify' / 'any') tells each parser which
+// email shapes to accept. The single entry point the rest of the file parses through.
 function parseThread_(thread, source, mode) {
   const out = [];
 
@@ -4477,6 +4497,12 @@ function parseThread_(thread, source, mode) {
  * 16. VIATOR PARSER
  ******************************************************/
 
+// Parse one Viator email into a booking (or null if it doesn't match `mode`).
+// Classifies the email as confirm / cancel / modify first, then pulls the booking
+// reference (BR-…), lead traveller, participant mix, date, time, phone, language
+// and net rate. Two Viator subtleties handled here: language comes from the Tour
+// Grade, never the generic "Tour Language:" line; and the Sagrada-exterior product
+// is tagged as its own source so the Ledger can pay its own rate.
 function parseViatorMessage_(msg, mode) {
   const subject = msg.getSubject() || '';
   const text = subject + '\n' + getBestMessageText_(msg);
@@ -4565,6 +4591,8 @@ function parseViatorMessage_(msg, mode) {
 }
 
 
+// Total traveller count from any of Viator's labelled count lines, or null when
+// none is present (so the caller can fall back to the participant breakdown).
 function extractViatorGuestCount_(text) {
   const s = String(text || '');
   const direct = extractFirst_(s, [
@@ -4580,11 +4608,8 @@ function extractViatorGuestCount_(text) {
 }
 
 
-/**
- * Adults/children from the Viator "Travelers:" line, e.g.
- * "Travelers: 4 Adults" or "Travelers: 2 Adults, 3 Children".
- * A bare number ("Travelers: 4") counts as adults.
- */
+// Adults/children/infants from the Viator "Travelers:" line, e.g. "Travelers: 2
+// Adults, 3 Children". A bare number ("Travelers: 4") is read as that many adults.
 function viatorParticipants_(text) {
   const line = extractFirst_(text, [
     /Travelers?:\s*([^\n\r]+)/i,
@@ -4601,6 +4626,9 @@ function viatorParticipants_(text) {
 }
 
 
+// Net traveller change from an amendment email: (count of "… added" phrases) minus
+// (count of "… removed"). This is the delta the Viator modification handler adds to
+// the original confirmation.
 function extractViatorGuestDelta_(text) {
   const s = String(text || '');
   const removed = [...s.matchAll(/(?:travell?er|passenger|participant)[^.\n\r]*removed/gi)].length;
