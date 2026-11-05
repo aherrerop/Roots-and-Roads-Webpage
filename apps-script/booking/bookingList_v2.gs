@@ -1910,12 +1910,9 @@ function recoverMissingBookings() {
   }
 }
 
-/**
- * DIAGNOSE one booking id: prints how each of its emails parses, so a booking
- * that won't land can be pinned to the exact field. Run from the editor:
- *   diagnoseBooking('GYGN6BZYAAHH')
- * then read the Execution log.
- */
+// DIAGNOSE one booking id: print how each of its emails parses, so a booking that won't land can
+// be pinned to the exact field. Run from the editor:  diagnoseBooking('GYGN6BZYAAHH')  then read
+// the Execution log.
 function diagnoseBooking(idInput) {
   const id = normalizeId_(idInput || 'GYGN6BZYAAHH');
   console.log('Diagnosing booking id: ' + id);
@@ -1954,6 +1951,8 @@ function diagnoseBooking(idInput) {
  * 8. CANCELLATIONS
  ******************************************************/
 
+// Process every source's Cancellations label (remove the cancelled booking's row + finalise the
+// cancellation thread).
 function processCancellations_() {
   sourceConfigs_().forEach(cfg => {
     if (!cfg.cancel) return;
@@ -1963,6 +1962,9 @@ function processCancellations_() {
 }
 
 
+// Process one source's Cancellations label. A thread is only finalised once we've actually
+// identified and removed the booking it cancels; a cancellation we can't pin to a booking is
+// left unprocessed and logged, so it stays visible and retried.
 function processCancellationLabel_(labelName, source) {
   // Fast runs skip Cancel threads already marked Processed (nothing left to
   // do for a cancellation that was already fully applied last run); the
