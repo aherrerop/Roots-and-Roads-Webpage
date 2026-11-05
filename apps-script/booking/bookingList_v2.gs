@@ -2046,20 +2046,16 @@ function processCancellationLabel_(labelName, source) {
 
 
 
-/** Sources that have a cancellation label. */
+// The sources that have a cancellation label.
 function cancellationConfigs_() {
   return sourceConfigs_().filter(cfg => cfg.cancel);
 }
 
 
-/**
- * Build (once per run) the list of every booking that appears under any
- * cancellation label. Reused by all fail-safe checks below. Respects the
- * same Processed-skip as everything else on fast runs — once a cancellation
- * has been fully applied (sheet row gone, Confirm/Modify threads relabelled)
- * there is nothing left for it to protect against until something changes,
- * and the audit run re-scans everything regardless.
- */
+// Build (once per run) the list of every booking that appears under any cancellation label,
+// reused by all the fail-safe checks below. Respects the same Processed-skip as everything else
+// on fast runs — a fully-applied cancellation has nothing left to protect against, and the audit
+// re-scans everything regardless.
 function getCancellationCache_() {
   if (RNR_CANCEL_CACHE_) return RNR_CANCEL_CACHE_;
 
@@ -2089,6 +2085,9 @@ function getCancellationCache_() {
 }
 
 
+// Parse the bookings a cancellation thread cancels. Unlike confirmations it keeps a code-less
+// cancellation (Airbnb sends no code) — a cancellation is actionable from a name alone and is
+// matched to its booking downstream by id OR date+time+name.
 function cancellationBookingsFromThread_(thread, source) {
   const out = [];
 
@@ -2138,9 +2137,8 @@ function cancellationBookingsFromThread_(thread, source) {
 }
 
 
-/**
- * Cancellation keywords, English + Spanish (GYG/Free Tour arrive in Spanish here).
- */
+// True when a thread actually contains cancellation language (English + Spanish — GYG/Free Tour
+// arrive in Spanish here).
 function threadHasCancellationSignal_(thread) {
   const subject = thread.getFirstMessageSubject() || '';
   const body = thread.getMessages()
@@ -2152,6 +2150,8 @@ function threadHasCancellationSignal_(thread) {
 }
 
 
+// True if a booking has a matching cancellation email (and wasn't rebooked this run). The core
+// "is this cancelled?" check used before inserting or keeping a row.
 function isBookingCancelledByEmail_(booking) {
   const b = normalizeBooking_(booking);
   if (!b.source) return false;
@@ -2164,21 +2164,13 @@ function isBookingCancelledByEmail_(booking) {
 }
 
 
-/**
- * GetYourGuide issues ONE globally-unique booking id per booking, and that id is
- * shared across every GYG listing that can bill it: the main account
- * ('GetYourGuide'), our second-account "3-in-1" listing ('GYG'), and the prepaid
- * Sagrada exterior product ('GYG-SF'). A cancellation or modification email can
- * therefore be tagged with a DIFFERENT GYG listing than the confirmation that
- * created the active row — e.g. a cancel email that omits the "3-in-1" title
- * parses as 'GetYourGuide' while the row is 'GYG'. So when we match by that
- * unique id, treat the whole GYG family as ONE source: a real cancellation must
- * always find and remove its row, and a modification must update the right one
- * instead of duplicating it. Non-GYG sources still require an exact match, and
- * the human-data (no-id) fallbacks below stay source-strict so two platforms can
- * never cross-cancel. (SF_EXT_VIATOR is excluded — Viator ids live in a separate
- * id space and must never be treated as GYG.)
- */
+// The GYG "family": one booking id, several listings that can bill it.
+// GetYourGuide issues one globally-unique id per booking, shared across the main
+// account ('GetYourGuide'), our second-account 3-in-1 listing ('GYG'), and the
+// prepaid Sagrada-exterior product ('GYG-SF'). A cancel/modify email can carry a
+// different listing tag than the confirmation did, so for id matching we treat all
+// three as one source. (Viator's SF product stays out — its ids live in a separate
+// id space and must never be read as GYG.)
 function isGygFamilySource_(s) {
   return s === RNR.SOURCE.GYG || s === RNR.SOURCE.GYG2 || s === RNR.SOURCE.SF_EXT;
 }
@@ -2196,15 +2188,13 @@ function sourcesMatchForId_(a, b) {
          (isFreetourFamilySource_(a) && isFreetourFamilySource_(b));
 }
 
-/**
- * A GYG-family row is tagged with its listing ('GYG' for the 3-in-1, 'GYG-SF'
- * for the Sagrada exterior), but every Gmail thread, cache, config, thread-index
- * and reinstatement key for it lives under the MAIN GetYourGuide source — those
- * emails ride the GetYourGuide labels + parser. So whenever a ROW source has to
- * resolve its config or key into a thread index / cache / reinstatement set (all
- * built under the config source), canonicalise a GYG-family source to
- * GetYourGuide. Identity for every other source, so nothing else changes.
- */
+// Collapse a row's listing tag to the source its Gmail threads live under.
+// A GYG-family row is tagged by listing ('GYG', 'GYG-SF'), but every thread,
+// cache, config and reinstatement key for it is built under the main
+// 'GetYourGuide' source (those emails ride the GetYourGuide labels + parser).
+// So when a row source has to look itself up in any of those, canonicalise it;
+// Freetour's two accounts collapse the same way. Every other source is returned
+// unchanged.
 function threadSourceFor_(source) {
   if (isGygFamilySource_(source)) return RNR.SOURCE.GYG;
   if (isFreetourFamilySource_(source)) return RNR.SOURCE.FREETOUR;
@@ -2212,6 +2202,9 @@ function threadSourceFor_(source) {
 }
 
 
+// True when a parsed cancellation refers to the same booking as an active row.
+// Tries the platform id first (family-aware), then falls back to date+time plus
+// phone-or-name for sources that carry no id — and only within the same source.
 function cancellationMatchesBooking_(cancelled, booking) {
   const C = normalizeBooking_(cancelled);
   const B = normalizeBooking_(booking);
@@ -2238,6 +2231,9 @@ function cancellationMatchesBooking_(cancelled, booking) {
 }
 
 
+// Sweep every active sheet and delete any row that has a matching cancellation
+// email. Collects the row numbers first, then deletes bottom-up so earlier
+// deletions don't shift the indexes of rows still to go.
 function removeActiveBookingsThatHaveCancellationEmails_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -2258,15 +2254,12 @@ function removeActiveBookingsThatHaveCancellationEmails_() {
 }
 
 
-/**
- * For every source, look at every Confirm AND Modify thread. If a thread's
- * booking id is known-cancelled (present in the cancellation cache) AND has
- * NOT been reinstated this run, strip its Confirm/Modify label, add Cancel,
- * mark Processed, and archive. This is the step that makes "once cancelled,
- * pull the Confirm/Modify labels and file everything under Cancel" actually
- * happen — it runs AFTER processModifications_ so a same-run GYG
- * reschedule (markReinstated_) is already known and is correctly skipped.
- */
+// Re-file every thread whose booking turned out to be cancelled.
+// For each source, walk its Confirm and Modify threads: if a thread's booking id
+// is in the cancellation cache and was NOT reinstated this run, strip the
+// Confirm/Modify labels, add Cancel, mark Processed and archive. Runs AFTER
+// processModifications_ so a same-run reschedule (markReinstated_) is already
+// known and correctly skipped.
 function reconcileCancelledThreadLabels_() {
   cancellationConfigs_().forEach(cfg => {
     const seen = new Set();
@@ -2331,12 +2324,9 @@ function removeActiveBookingBySourceAndId_(source, bookingId) {
 }
 
 
-/**
- * Move the Confirm and/or Modify thread(s) for a given booking id straight
- * to Cancel, outside the main reconcile sweep (used when a modification pass
- * discovers, mid-run, that the booking it just computed is actually
- * cancelled).
- */
+// Move one booking's Confirm/Modify thread(s) straight to Cancel, on demand.
+// Used when a modification pass discovers mid-run that the booking it just
+// computed is actually cancelled — outside the main reconcile sweep.
 function moveMatchingThreadsToCancellationById_(source, bookingId) {
   const src = threadSourceFor_(source);   // a 'GYG' row resolves to the GetYourGuide config/threads
   const cfg = sourceConfigs_().find(c => c.source === src);
@@ -2357,14 +2347,11 @@ function moveMatchingThreadsToCancellationById_(source, bookingId) {
 }
 
 
-/**
- * Pull the CONFIRMATION (and modification) email of a cancelled booking OUT of
- * the inbox — relabel it to Cancellations, mark Processed, archive. Uses a
- * TARGETED Gmail search by id, which finds the thread even when it is already
- * marked Processed (the thread indexes and the frequent-run sweeps deliberately
- * skip Processed threads, which is exactly why a cancelled booking's
- * confirmation used to linger in the inbox forever). Works on every run.
- */
+// Pull a cancelled booking's confirmation/modification email out of the inbox.
+// Searches Gmail by id directly rather than reading the thread indexes, because a
+// targeted search still finds a thread that is already marked Processed (the
+// indexes and the frequent-run sweeps skip Processed threads). Relabels to Cancel,
+// marks Processed and archives; returns how many threads it handled.
 function archiveConfirmationThreadsById_(source, bookingId) {
   const src = threadSourceFor_(source);   // a 'GYG' row resolves to the GetYourGuide config/threads
   const cfg = sourceConfigs_().find(c => c.source === src);
@@ -2394,17 +2381,13 @@ function archiveConfirmationThreadsById_(source, bookingId) {
 }
 
 
-/**
- * MANUAL REMOVAL support (guide portal). A manager cancelled a single booking that
- * never arrived as an email cancellation, so there is no cancellation signal to
- * stop the reconcile floor from re-adding this still-confirmed booking. TRASH its
- * confirmation (and any modification) email across EVERY source's labels so the
- * reconcile + confirmation sweep can never resurrect it. Source-agnostic (the
- * portal sends no source) and verified by id, so a fuzzy search hit can't trash
- * the wrong thread. Trash (not archive): a relabelled/archived thread keeps its
- * Confirmations label and would still be re-read. Returns the number trashed.
- * Called ONLY via the ADMIN_KEY-guarded web endpoint (removeBookingManual bridge).
- */
+// Manual-removal support for the guide portal: a manager cancelled a booking that
+// never produced a cancellation email, so nothing stops the reconcile floor from
+// re-adding the still-confirmed row. We TRASH its confirmation (and modification)
+// email across every source's labels so no sweep can resurrect it. Trash, not
+// archive: a relabelled thread keeps its Confirmations label and would be re-read.
+// Source-agnostic (the portal sends none) but verified by id so a fuzzy search hit
+// can't trash the wrong thread. Called only via the ADMIN_KEY-guarded endpoint.
 function trashBookingConfirmationById_(bookingId) {
   const id = normalizeId_(bookingId);
   if (!id) return 0;
@@ -2440,13 +2423,10 @@ function trashBookingConfirmationById_(bookingId) {
 }
 
 
-/**
- * Catch-up sweep: for every cancelled booking, make sure its confirmation email
- * has left the inbox. Runs on audits and can be run manually
- * (cleanupCancelledBookings). Scans ALL cancellation threads (including
- * Processed ones) to build the cancelled-id set, then archives each id's
- * confirmation via the targeted search above.
- */
+// Catch-up sweep: make sure every cancelled booking's confirmation has left the
+// inbox. Scans all cancellation threads (Processed ones included) to build the set
+// of cancelled ids, then archives each id's confirmation via the targeted search
+// above. Runs on audits and can be invoked by hand (cleanupCancelledBookings).
 function archiveAllCancelledConfirmations_() {
   let total = 0;
   cancellationConfigs_().forEach(cfg => {
@@ -2473,10 +2453,8 @@ function archiveAllCancelledConfirmations_() {
 }
 
 
-/**
- * RUN THIS NOW (from the editor) to pull every cancelled booking's confirmation
- * email out of the inbox immediately, without waiting for the twice-daily audit.
- */
+// Manual entry point: run from the editor to pull every cancelled booking's
+// confirmation out of the inbox now, without waiting for the twice-daily audit.
 function cleanupCancelledBookings() {
   RNR_RUN_STARTED_AT_ = Date.now();
   resetRunCaches_();
@@ -2488,12 +2466,9 @@ function cleanupCancelledBookings() {
 }
 
 
-/**
- * A booking was modified but is still active (not cancelled, not done), so its
- * confirmation thread stays in the inbox as an upcoming tour. We only mark it
- * read + Processed. (Before the inbox policy change this archived the thread,
- * which hid upcoming tours.)
- */
+// A booking was modified but is still active (not cancelled, not done), so its
+// confirmation thread must stay in the inbox as an upcoming tour. We only mark it
+// read + Processed here, never archive it.
 function moveMatchingConfirmationOutOfInbox_(booking) {
   const b = normalizeBooking_(booking);
   const id = normalizeId_(b.bookingId);
