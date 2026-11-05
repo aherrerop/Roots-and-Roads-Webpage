@@ -5295,10 +5295,9 @@ function extractGygTime_(token) {
 }
 
 
-/**
- * Guest count. Private tours show "1 x Group up to 10 (6 Personas)" -> take the
- * "(N Personas)" figure. Otherwise sum every "N x" ticket line.
- */
+// Total guest count for a GYG email. A private tour shows "1 x Group up to 10
+// (6 Personas)" -> take the "(N Personas)" figure; otherwise sum every "N x" ticket
+// line under the participants label.
 function gygGuests_(text) {
   // "Group up to 10 ( 2 Personas)" — GYG wraps the count in <strong>, which
   // htmlToText turns into a space after "(", so allow whitespace inside the parens.
@@ -5319,15 +5318,11 @@ function gygGuests_(text) {
 }
 
 
-/**
- * Adults/children/infants for a GYG email. The participants block renders as
- * a label line followed by one line per ticket type, e.g.
- *   "Número de participantes"
- *   "1 x Child (Edad 0 - 13)"
- *   "3 x Adults (Edad 14 - 99)"
- * Private tours show "1 x Group up to 10 (5 Personas)" -> 5 adults, children
- * unknown (GYG does not break a private group down).
- */
+// Adults/children/infants for a GYG email. The participants block is a label line
+// followed by one line per ticket type ("3 x Adults (Edad 14 - 99)", "1 x Child …").
+// A private tour shows "1 x Group up to 10 (5 Personas)" -> 5 adults, children
+// unknown (GYG doesn't break a private group down). Falls back to the total guest
+// count, and never returns a 0-adult tour.
 function gygParticipants_(text) {
   const s = String(text || '');
 
@@ -5355,11 +5350,9 @@ function gygParticipants_(text) {
 }
 
 
-/**
- * Tour language. Prefer "Idioma del tour" (confirmations); fall back to plain
- * "Idioma" (modifications). Never grab the customer contact "Idioma:" line when
- * a tour-language line exists.
- */
+// Tour language: prefer the "Idioma del tour" line (confirmations) and fall back to
+// plain "Idioma" (modifications), so the customer's own contact-language line is
+// never mistaken for the tour language when a tour-language line exists.
 function gygLanguageRaw_(text) {
   const tour = valueAfterLabel_(text, [/^Idioma del tour\b/i, /^Tour language\b/i, /^Language of the tour\b/i]);
   if (tour) return tour;
@@ -5367,9 +5360,8 @@ function gygLanguageRaw_(text) {
 }
 
 
-/**
- * Price shown in the email ("24,00 €", "133,30 €", "Precio abonado 36,00 €").
- */
+// The price shown in a GYG email ("24,00 €", "Precio abonado 36,00 €"): a €-amount
+// if one is present, else the value after a Precio/Price label.
 function gygPrice_(text) {
   const m = String(text || '').match(/([0-9]+[.,][0-9]{2})\s*€/);
   if (m) return parseMoney_(m[1]);
@@ -5378,10 +5370,8 @@ function gygPrice_(text) {
 }
 
 
-/**
- * Income we keep from a GYG price after their commission.
- * income = price * (1 - GYG_COMMISSION).
- */
+// The income we keep from a GYG price after their commission:
+// income = price * (1 - GYG_COMMISSION).
 function gygNetIncome_(price) {
   const p = Number(price || 0);
   if (!p) return 0;
@@ -5389,11 +5379,10 @@ function gygNetIncome_(price) {
 }
 
 
-/**
- * Table-layout helper: find a label line, return its value.
- * GYG / Free Tour render each field as two table cells, so after htmlToText_ the
- * value is usually on the line AFTER the label. Handles "Label: value" too.
- */
+// Table-layout helper: find a label line and return its value. GYG / Free Tour
+// render each field as two table cells, so after htmlToText_ the value usually sits
+// on the line AFTER the label (also handles inline "Label: value"). A "Nuevo/New"
+// change badge is skipped so a modification reads the real value beneath it.
 function valueAfterLabel_(text, labelRegexes) {
   const lines = String(text || '').split('\n').map(l => l.trim());
   for (let i = 0; i < lines.length; i++) {
@@ -5419,6 +5408,13 @@ function valueAfterLabel_(text, labelRegexes) {
  * reference is present, a stable id is generated so re-runs dedupe.
  ******************************************************/
 
+// Parse one Freetour.com email into a booking (or null if it doesn't match `mode`).
+// Freetour is the hardest source: it sends in the guest's own language (EN/ES/DE/
+// FR/IT/PT) and its HTML often collapses every field onto one line. So type is read
+// from the subject only, and every value is pulled by language-independent PATTERN
+// — Freetour always renders the date in English and the id as digits-digits-digits,
+// the name is bounded at the next known label, and guests come from the number
+// before a "person" word in any language.
 function parseFreetourMessage_(msg, mode) {
   const subject = msg.getSubject() || '';
   const text = subject + '\n' + getBestMessageText_(msg);
