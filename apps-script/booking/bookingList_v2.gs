@@ -5855,6 +5855,10 @@ function incomeForFreeSource_(source, guests) {
  * 23. DATE AND TIME HELPERS
  ******************************************************/
 
+// Turn almost any date into a time-stripped Date (midnight), or null. Accepts a real
+// Date, ISO yyyy-MM-dd, European d/m/y, the Spanish long form ("14 de julio de
+// 2026") used by GYG modifications, and finally anything Date can parse. A leading
+// weekday word in any language is dropped first.
 function normalizeDate_(x) {
   if (x instanceof Date && !isNaN(x)) return stripTime_(x);
 
@@ -5888,6 +5892,7 @@ function normalizeDate_(x) {
 }
 
 
+// Normalise a time to the canonical "H:MM AM/PM" the sheet uses, or '' if unreadable.
 function normalizeTime_(x) {
   // A manually-typed time cell that Sheets stored as a time VALUE (a Date, often
   // the 1899 epoch) — not text — must still normalise, or the row looks like it
@@ -5907,6 +5912,7 @@ function normalizeTime_(x) {
 }
 
 
+// Format a 24-hour hour+minute as a 12-hour "H:MM AM/PM" string.
 function timeFrom24_(hour, minute) {
   const suffix = hour >= 12 ? 'PM' : 'AM';
   const h12 = ((hour + 11) % 12) + 1;
@@ -5914,6 +5920,8 @@ function timeFrom24_(hour, minute) {
 }
 
 
+// Combine a date and a time into one sortable Date. A booking with no usable date
+// sorts to the far future (year 9999) so it never looks already past.
 function combineDateTime_(date, time) {
   const d = normalizeDate_(date);
   if (!d) return new Date(9999, 0, 1);
@@ -5933,12 +5941,15 @@ function combineDateTime_(date, time) {
 }
 
 
+// Drop the clock part of a Date, returning midnight of the same day (or null).
 function stripTime_(d) {
   if (!(d instanceof Date) || isNaN(d)) return null;
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
 
+// A date's "yyyy-MM-dd" string key — the day-level identity used for grouping and
+// for matching a cancellation to its booking. '' when the date is unusable.
 function dateKey_(date) {
   const d = normalizeDate_(date);
   if (!d) return '';
@@ -5950,6 +5961,9 @@ function dateKey_(date) {
 }
 
 
+// True once a tour has finished — DONE_AFTER_HOURS past its start. Used to decide a
+// booking is in the past (for modification anchoring and thread archival), distinct
+// from tourDayIsOver_ which governs when the row actually moves to Done.
 function isCompleted_(booking) {
   const b = normalizeBooking_(booking);
   const start = combineDateTime_(b.date, b.time);
@@ -5957,12 +5971,10 @@ function isCompleted_(booking) {
   return new Date() >= doneAt;
 }
 
-/**
- * A tour's booking row moves to Done only when its DAY is over (evening), not
- * 2h after it started. Until then the row stays in the active language tab so
- * the guide portal keeps showing the shift WITH its reservations and check-ins.
- * Aligned with the Control portal's evening cutoff (TOUR_VISIBLE_UNTIL_HOUR).
- */
+// Whether a booking's row should leave the active tabs for Done. It stays until the
+// DAY is over (evening cutoff DONE_VISIBLE_UNTIL_HOUR), not just a couple of hours
+// after the start, so the guide portal keeps showing the shift with its check-ins
+// all day. Aligned with the Control portal's evening cutoff.
 function tourDayIsOver_(booking) {
   const b = normalizeBooking_(booking);
   if (!b.date) return isCompleted_(b);   // no usable date -> fall back to start+2h
@@ -5972,6 +5984,7 @@ function tourDayIsOver_(booking) {
 }
 
 
+// The Done-tab aggregation key: date|time|language, matching readDoneMap_.
 function doneKey_(date, time, language) {
   return [dateKey_(date), normalizeTime_(time), normalizeLanguage_(language)].join('|');
 }
@@ -5979,29 +5992,19 @@ function doneKey_(date, time, language) {
 
 /******************************************************
  * 24. EMAIL TEXT HELPERS
- *
- * getBestMessageText_ is the single choke point for reading a message body.
- * It (a) caches per message id so a message is fetched from Gmail at most once
- * per run, and (b) swallows body-read failures so one bad message cannot
- * abort the run ("operation not allowed" fix).
  ******************************************************/
 
-/**
- * Choose which rendering of a message body to parse, then normalise it.
- *
- * Gmail gives two flavours and they are NOT equivalent:
- *   getBody()       -> real HTML. htmlToText_ turns the booking table into
- *                      "label \n value" lines. This is the good one.
- *   getPlainBody()  -> Gmail's own text conversion. It renders <strong> as
- *                      *asterisks* ("*1 x* Child", "(*5* Personas)") and can
- *                      flatten the table, which is what made a 3-adult
- *                      booking store as 1 guest and a 5-person private group
- *                      store as 1.
- *
- * Rule: prefer the flavour that actually contains the participants block; if
- * both or neither do, prefer HTML when it looks substantial. Then strip the
- * asterisk bold markers so either flavour parses identically.
- */
+// getBestMessageText_ is the single choke point for reading a message body: it
+// caches per message id so a message is fetched at most once per run, and swallows
+// body-read failures so one bad message can't abort the run.
+
+// Choose which rendering of a message body to parse, then normalise it. Gmail gives
+// two non-equivalent flavours: getBody() is real HTML (htmlToText_ turns the booking
+// table into clean "label \n value" lines), while getPlainBody() renders <strong> as
+// *asterisks* and can flatten the table (which once stored a 3-adult booking as 1).
+// Rule: prefer whichever flavour actually contains the participants block; if both or
+// neither do, prefer HTML when it looks substantial; then strip the asterisk bold
+// markers so either flavour parses identically.
 function pickBestBody_(html, plain) {
   const norm = t => String(t || '').replace(/\*+/g, '');
   const h = norm(html), p = norm(plain);
