@@ -6929,11 +6929,9 @@ function restoreUpcomingThreadsToInbox() {
   return restored;
 }
 
-/**
- * True when a thread's tour has NOT finished yet. Uses the parsed bookings
- * first, then the subject/body date fallback. Unknown date -> treated as
- * upcoming, so we never hide something we could not read.
- */
+// True when a thread's tour has NOT finished yet. Tries the parsed bookings first,
+// then the subject/body date fallback. An unreadable date is treated as upcoming,
+// so the backfill never hides something it couldn't read.
 function threadTourIsUpcoming_(thread, source) {
   try {
     const bookings = uniqueBookings_(parseThread_(thread, source, 'any')).filter(isValidBooking_);
@@ -6965,17 +6963,15 @@ function threadTourIsUpcoming_(thread, source) {
  *                                     row. Fixes historical rows in one go.
  ******************************************************/
 
-/**
- * Print the full parsing story for ONE booking id. Read the Execution log
- * top to bottom: it shows which label the thread sits under, which body
- * flavour was chosen and why, the exact participants window the parser saw,
- * and the final parsed booking. This is the fastest way to prove whether a
- * wrong guest count is a parser problem or a "never re-processed" problem.
- */
-// Edit this id, then run debugBooking from the editor (the editor cannot
-// pass arguments to a function).
+// Default id for the editor-run tools below (debugBooking / reprocessBookingById):
+// edit it, then run, since the editor can't pass a function argument.
 const DEBUG_BOOKING_ID = 'GYG996ZFRKQ9';
 
+// Print the full parsing story for ONE booking id. Read the Execution log top to
+// bottom: which label the thread sits under, which body flavour was chosen and why,
+// the exact participants window the parser saw, and the final parsed booking versus
+// the current sheet row. The fastest way to tell a parser bug from a "never
+// re-processed" one.
 function debugBooking(bookingId) {
   const wanted = normalizeId_(bookingId || DEBUG_BOOKING_ID);
   if (!wanted) { console.log('Set DEBUG_BOOKING_ID at the top of section 31, then run again.'); return; }
@@ -7053,12 +7049,10 @@ function debugBooking(bookingId) {
 }
 
 
-/**
- * Re-read every ACTIVE booking row's own confirmation email and rewrite the
- * row from it. Use after a parser fix so historical rows pick up the
- * correction without waiting for anything. Idempotent: rows are updated in
- * place (never duplicated), and cancelled/completed bookings are untouched.
- */
+// Re-read every active booking row's own confirmation email and rewrite the row
+// from it — use after a parser fix so historical rows pick up the correction at
+// once. Idempotent: rows are updated in place (never duplicated), and
+// cancelled/completed bookings are left untouched.
 function reparseActiveRowsFromEmail() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) { console.log('Another run is active; try again in a minute.'); return; }
@@ -7148,16 +7142,12 @@ function reparseActiveRowsFromEmail() {
   return fixed;
 }
 
-/**
- * ONE-OFF (run from the editor): re-tags any ACTIVE booking whose GetYourGuide
- * email now parses to a DIFFERENT GYG-family source than the row currently shows —
- * e.g. an existing "Barcelona 3-in-1 Tour" booking still tagged "GetYourGuide" is
- * re-tagged "GYG". Only re-labels WITHIN the GYG family (GetYourGuide <-> GYG <->
- * GYG-SF), and touches ONLY the Source cell — never another OTA, never any other
- * field or a manager's edits. Idempotent; safe to run any time. Run this after
- * deploying a new GYG product tag so existing rows catch up (new bookings are
- * already tagged correctly by the parser).
- */
+// One-off (run from the editor): re-tag any active booking whose GetYourGuide email
+// now parses to a different GYG-family source than the row shows — e.g. an existing
+// "3-in-1 Tour" row still tagged "GetYourGuide" becomes "GYG". Only re-labels WITHIN
+// the GYG family and touches ONLY the Source cell, never another OTA and never a
+// manager's other edits. Run it after deploying a new GYG product tag so existing
+// rows catch up; new bookings are already tagged by the parser. Idempotent.
 function retagGygProductsNow() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) { console.log('Another run is active; try again in a minute.'); return 0; }
