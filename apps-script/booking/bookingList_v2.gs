@@ -5544,6 +5544,9 @@ function parseFreetourMessage_(msg, mode) {
  * 21. WEBSITE ALERT PARSER
  ******************************************************/
 
+// Parse one website reservation alert into a booking. The easiest source: our own
+// site sends a fixed "NEW WEBSITE RESERVATION" email with one clean "Label: value"
+// line per field, so each is read directly. Income is 0 (the website doesn't charge).
 function parseWebsiteAlertMessage_(msg, mode) {
   const subject = msg.getSubject() || '';
   const text = subject + '\n' + getBestMessageText_(msg);
@@ -5586,11 +5589,10 @@ function parseWebsiteAlertMessage_(msg, mode) {
  * show "2+3". Infants are kept separately when the source supplies them.
  ******************************************************/
 
-/**
- * Count adults/children/infants in a participant text fragment.
- * Matches "3 x Adults (Edad 14 - 99)", "1 x Child (Edad 0 - 13)",
- * "2 adults", "1 Niño", "1 Infant", "2 Erwachsene" etc.
- */
+// Count adults/children/infants in a participant text fragment, across the ticket
+// shapes and languages the OTAs use ("3 x Adults (Edad 14 - 99)", "2 adults",
+// "1 Niño", "1 Infant", "2 Erwachsene"). Bold markers and stray punctuation between
+// the number and the word are tolerated.
 function participantCounts_(text) {
   const s = String(text || '');
   let adults = 0, children = 0, infants = 0;
@@ -5609,10 +5611,9 @@ function participantCounts_(text) {
 }
 
 
-/**
- * Compose the Notes cell. Order: Private flag, children, infants, extra tag.
- * The guide portal parses "Private" and "N children" back out of this string.
- */
+// Compose the Notes cell in a fixed order — Private flag, children, infants, extra
+// tag — joined by " · ". The guide portal parses "Private" and "N children" back
+// out of this string, so the shape matters.
 function composeNotes_(isPrivate, children, infants, extra) {
   const parts = [];
   if (isPrivate) parts.push(RNR.PRIVATE_TOUR_NOTE);
@@ -5623,7 +5624,7 @@ function composeNotes_(isPrivate, children, infants, extra) {
 }
 
 
-/** Recover a child/infant count from a Notes cell ("Private · 3 children"). */
+// Recover the child / infant count back out of a Notes cell ("Private · 3 children").
 function childrenFromNotes_(notes) {
   const m = String(notes || '').match(/(\d+)\s*child/i);
   return m ? Number(m[1]) : 0;
@@ -5639,6 +5640,10 @@ function infantsFromNotes_(notes) {
  * 22. NORMALIZATION HELPERS
  ******************************************************/
 
+// Coerce a raw booking object into the canonical shape every other function relies
+// on: dates/times/language/phone/name cleaned through their own normalisers,
+// numbers forced to numbers, flags forced to booleans. Idempotent, so it is safe to
+// call on an already-normalised booking (which much of the file does defensively).
 function normalizeBooking_(x) {
   const date = normalizeDate_(x && x.date);
   const time = normalizeTime_(x && x.time);
