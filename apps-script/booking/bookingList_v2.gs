@@ -6228,6 +6228,8 @@ function logError_(type, err, rawData) {
  * emails before trusting the automation.
  ******************************************************/
 
+// Editor shortcuts: dump how the GYG / Free Tour confirmation parser reads the
+// latest real emails under that label.
 function debugGygParsingOnly() {
   debugParseLabel_(RNR.LABELS.GYG_CONFIRM, RNR.SOURCE.GYG, parseGygMessage_);
 }
@@ -6236,6 +6238,9 @@ function debugFreetourParsingOnly() {
   debugParseLabel_(RNR.LABELS.FREETOUR_CONFIRM, RNR.SOURCE.FREETOUR, parseFreetourMessage_);
 }
 
+// For each of a label's recent threads, print the parsed booking, whether it is
+// valid, and a sample of the source text — so a regex can be confirmed against real
+// emails before the automation is trusted.
 function debugParseLabel_(labelName, source, parserFn) {
   const label = GmailApp.getUserLabelByName(labelName);
   if (!label) { console.log('Missing label: ' + labelName); return; }
@@ -6260,7 +6265,8 @@ function debugParseLabel_(labelName, source, parserFn) {
 }
 
 
-/** Retained multi-source parser dump. */
+// Editor helper: dump parsed bookings for every source and every mode
+// (confirm/cancel/modify) at once — a broad sanity check across all parsers.
 function debugRecentParsedEmails() {
   const tests = [
     [RNR.LABELS.VIATOR_CONFIRM, RNR.SOURCE.VIATOR, 'confirm'],
@@ -6289,12 +6295,9 @@ function debugRecentParsedEmails() {
 }
 
 
-/**
- * DEBUG: print which labels are currently on every thread under every
- * RNR label, and whether each carries Processed. Useful for sanity-checking
- * the new label lifecycle (cancel should strip confirm/modify; done should
- * strip everything except done) without waiting for a live run.
- */
+// Editor helper: print which labels sit on each thread under every RNR label, to
+// sanity-check the label lifecycle (a cancel strips confirm/modify; done strips
+// everything but done) without waiting for a live run.
 function debugLabelLifecycleAudit() {
   Object.entries(RNR.LABELS).forEach(([key, labelName]) => {
     const label = GmailApp.getUserLabelByName(labelName);
@@ -6319,6 +6322,8 @@ function debugLabelLifecycleAudit() {
  * Add a new fixture whenever an OTA changes its template.
  ******************************************************/
 
+// Build a stand-in Gmail message from a subject + body (and optional from/to/cc) so
+// the parsers can be tested against fixture text with no Gmail reads.
 function makeFakeMsg_(subject, body, opts) {
   const id = 'FIXTURE_' + Math.random().toString(36).slice(2);
   const o = opts || {};
@@ -6334,8 +6339,11 @@ function makeFakeMsg_(subject, body, opts) {
   };
 }
 
+// Embedded copies of real OTA emails (subject + body), each chosen to pin down one
+// tricky parsing case. testBookingParsers() runs the parsers against these with no
+// Gmail reads; add a fixture whenever an OTA changes its template.
 const RNR_FIXTURES_ = {
-  // GYG Spanish confirmation with children (from real email, 2026-07)
+  // GYG Spanish confirmation with children (tour language differs from customer's).
   gygEsChildren: {
     subject: 'Booking - S779080 - GYGWZARHZ63W',
     body: [
@@ -6367,7 +6375,7 @@ const RNR_FIXTURES_ = {
       'Precio', '133,30 €'
     ].join('\n')
   },
-  // Viator private product confirmation (real email, 2026-07)
+  // Viator private product confirmation (language comes from the Tour Grade).
   viatorPrivate: {
     subject: 'New Booking for Fri, Jul 24, 2026 (#BR-1422956849)',
     body: [
@@ -6387,9 +6395,9 @@ const RNR_FIXTURES_ = {
       'Phone: (Alternate Phone)DE+49 1797747255 Send the customer a message.'
     ].join('\n')
   },
-  // REGRESSION (2026-07-20): real bookings that were stored as 1 guest.
-  // Gmail's getPlainBody() renders <strong> as *...*; these are that exact
-  // flavour. GYG996ZFRKQ9 = 3 adults + 1 child, GYG48YMW6KAB = 5-person private.
+  // Guards the plain-body flavour: Gmail's getPlainBody() renders <strong> as
+  // *...*, which can hide the participant counts. These two must still read
+  // 3 adults + 1 child, and a 5-person private group — not 1 guest.
   gygPlainBodyChildren: {
     subject: 'Booking - S779080 - GYG996ZFRKQ9',
     body: [
@@ -6434,10 +6442,9 @@ const RNR_FIXTURES_ = {
       'Phone: +17032093574'
     ].join('\n')
   },
-  // REGRESSION (2026-07): GYG rendered the anonymised customer email (and the
-  // Teléfono/Idioma labels) on the SAME line as "Cliente principal", so the
-  // whole "Name customer-...@... Teléfono ... Idioma ..." string landed in the
-  // Name column. Only the human name must survive.
+  // Guards name cleaning: GYG can render the anonymised customer email and the
+  // Teléfono/Idioma labels on the SAME line as "Cliente principal". Only the human
+  // name ("Daleska Miclos") must survive into the Name column.
   gygInlineCustomerEmail: {
     subject: 'Booking - S779080 - GYG996ZAK7R7',
     body: [
@@ -6493,6 +6500,9 @@ const RNR_FIXTURES_ = {
   }
 };
 
+// Run every fixture through its parser and log PASS/FAIL per assertion. The
+// acceptance test for the parsers — run it from the editor after touching any
+// parser or adding a fixture.
 function testBookingParsers() {
   resetRunCaches_();
   let pass = 0, fail = 0;
