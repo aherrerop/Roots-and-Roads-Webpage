@@ -4637,6 +4637,10 @@ function extractViatorGuestDelta_(text) {
 }
 
 
+// Pull the tour start time out of a Viator email. On an amendment the NEW time is
+// on the "to" side of "changed from … to …", so those patterns come first — never
+// keep the old "from" time. Falls through the tour-grade code, then the labelled
+// Start/Departure/Time lines, and returns the first time-like match.
 function extractViatorTime_(text) {
   const s = String(text || '');
   const candidates = [
@@ -4661,11 +4665,15 @@ function extractViatorTime_(text) {
 }
 
 
+// True when x looks like a clock time (H:MM, optional AM/PM) — guards the matches
+// above against grabbing a stray number.
 function isTimeLike_(x) {
   return /^\d{1,2}:\d{2}\s*(AM|PM)?$/i.test(String(x || '').trim());
 }
 
 
+// Customer phone from any of Viator's labelled phone lines, with the trailing
+// "Send the customer…" boilerplate and "(Alternate Phone)" tag stripped off.
 function extractViatorPhone_(text) {
   const raw = extractFirst_(text, [
     /Phone:\s*([^\n\r]+)/i,
@@ -4681,6 +4689,9 @@ function extractViatorPhone_(text) {
 }
 
 
+// Our net payout from a Viator booking — the money we actually receive. Reads the
+// "Net Rate:" line and takes the LAST number on it (the line can show a per-person
+// rate before the total), with a looser whole-text fallback. Returns 0 if absent.
 function extractViatorNetRate_(text) {
   const lines = String(text || '').split(/\n/);
   for (const line of lines) {
@@ -4698,14 +4709,11 @@ function extractViatorNetRate_(text) {
  * 17. GURUWALK PARSER
  ******************************************************/
 
-/**
- * Last-resort phone: a LABELLED phone value anywhere in the email — used only when a
- * parser's primary (often section-anchored) phone read comes back empty. A real
- * number can sit in a shared header (e.g. a Guruwalk modification's "Phone:" line
- * above the booking blocks) or under a localised label. Labelled only (Phone /
- * Mobile / Telephone / Teléfono / Móvil / Cellulare / Tel / Cell) — NEVER a bare
- * "+digits" scan — so it can't accidentally grab a support hotline from the footer.
- */
+// Last-resort phone: the first LABELLED phone value anywhere in the email, used
+// only when a parser's primary (section-anchored) phone read comes back empty — a
+// real number can sit in a shared header or under a localised label. Labelled lines
+// only (Phone/Mobile/Telephone/Teléfono/Móvil/Cellulare/…), never a bare "+digits"
+// scan, so it can't grab a support hotline from the footer.
 function labeledPhoneFallback_(text) {
   return valueAfterLabel_(String(text || ''), [
     /^Phone\b/i, /^Mobile\b/i, /^Telephone\b/i, /^Cell(?:phone)?\b/i,
@@ -4713,6 +4721,9 @@ function labeledPhoneFallback_(text) {
   ]);
 }
 
+// Parse one Guruwalk email into bookings (array — a modification carries two).
+// Classifies confirm/cancel/modify against `mode`, splits the email into per-code
+// blocks, then tags each booking with the Guruwalk source and its free-tour income.
 function parseGuruwalkMessage_(msg, mode) {
   const subject = msg.getSubject() || '';
   const text = subject + '\n' + getBestMessageText_(msg);
@@ -4735,6 +4746,11 @@ function parseGuruwalkMessage_(msg, mode) {
 }
 
 
+// Split a Guruwalk email into one booking per "Booking code" and parse each.
+// The format varies: a confirmation has one block; a modification has one shared
+// Walker/Phone header plus two codes (new + previous) under "Details of the …"
+// headers. Each code block is anchored to its own header so the two don't collapse
+// into one, and the shared name/phone are read once and used as per-block fallbacks.
 function parseGuruwalkBlocks_(text) {
   const s = String(text || '')
     .replace(/ /g, ' ')
@@ -4752,12 +4768,12 @@ function parseGuruwalkBlocks_(text) {
   while ((m = codeRe.exec(s))) starts.push(m.index);
   const blocks = starts.length
     ? starts.map((start, i) => {
-        // A MODIFICATION email has ONE "Walker:" line but TWO booking codes, each
+        // A modification email has ONE "Walker:" line but TWO booking codes, each
         // under its own "Details of the new/previous booking" header. Anchor each
-        // block to that header so the new and previous codes don't BOTH resolve to
-        // the first code — that left the previous booking un-removed and produced a
-        // duplicate on every Guruwalk move (e.g. Sara Dervishi). Confirmations /
-        // cancellations have no such header, so fall back to the nearest Walker/Name.
+        // block to that header so the new and previous codes don't both resolve to
+        // the first code (which would leave the previous booking un-removed and
+        // duplicate it). Confirmations/cancellations have no such header, so fall
+        // back to the nearest Walker/Name.
         const header = s.lastIndexOf('Details of the', start);
         let from;
         if (header >= 0 && (i === 0 || header > starts[i - 1])) {
@@ -4840,6 +4856,11 @@ function parseGuruwalkBlocks_(text) {
  * 18. AIRBNB PARSER
  ******************************************************/
 
+// Parse one Airbnb email into a booking (or null if it doesn't match `mode`).
+// Airbnb is the awkward source: a cancellation carries no confirmation code, so it
+// must still be matchable by name + date + time, and the date on a cancellation has
+// no year (normalizeAirbnbDate_ supplies it from the email date). Airbnb never gives
+// a phone, so matching leans on date+time+name. English-only, so the language is fixed.
 function parseAirbnbMessage_(msg, mode) {
   const subject = msg.getSubject() || '';
   const text = subject + '\n' + getBestMessageText_(msg);
@@ -4953,6 +4974,10 @@ function parseAirbnbMessage_(msg, mode) {
 }
 
 
+// Normalise an Airbnb date, supplying the year a cancellation omits. A year-less
+// "Month Day" takes its year from the email date (and rolls to next year if that
+// would land in the past) — otherwise normalizeDate_ would default it to 2001 and
+// the cancellation would never match the real booking. A dated string parses normally.
 function normalizeAirbnbDate_(dateText, fallbackMsgDate) {
   const s = cleanText_(dateText);
 
