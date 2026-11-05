@@ -389,11 +389,9 @@ const RNR_SPANISH_MONTHS_ = {
 };
 
 
-/**
- * Central per-source configuration table.
- * Adding another OTA later = add one entry here + one parser function.
- * Loops below iterate this table instead of hard-coding each source.
- */
+// Central per-source configuration table (each source's Gmail labels). Adding another OTA =
+// add one entry here + one parser function; the loops below iterate this table instead of
+// hard-coding each source.
 function sourceConfigs_() {
   return [
     {
@@ -442,8 +440,8 @@ function sourceConfigs_() {
  ******************************************************/
 
 let RNR_RUN_STARTED_AT_ = 0;
-// Wall-clock budget for THIS run. Defaults to the full budget (audit + manual
-// recovery); the frequent 5-min run lowers it to MAX_FAST_RUN_MS for safe margin.
+// Wall-clock budget for THIS run. Defaults to the full budget (audit + manual recovery); the
+// frequent run lowers it to MAX_FAST_RUN_MS for a safe margin.
 let RNR_RUN_BUDGET_MS_ = 180000;
 let RNR_RUN_STATS_ = { processed: 0, upserts: 0, errors: 0, confirmFailures: [] };
 let RNR_LABEL_CACHE_ = null;     // labelName -> GmailLabel (1 lookup per run)
@@ -476,21 +474,18 @@ function resetRunCaches_() {
   RNR_SUPERSEDED_IDS_ = null;
 }
 
-/** Superseded booking ids (memoised once per run; scans Gmail, so computed lazily
- *  and only when the audit/reconcile actually needs it). */
+// Superseded booking ids, memoised once per run. It scans Gmail, so it's computed lazily and
+// only when the audit/reconcile actually needs it.
 function getSupersededIds_() {
   if (RNR_SUPERSEDED_IDS_) return RNR_SUPERSEDED_IDS_;
   return (RNR_SUPERSEDED_IDS_ = supersededBookingIds_());
 }
 
 
-/**
- * Mark a booking as reinstated for this run. A GetYourGuide rebooking
- * ("reprogramada") reuses the ORIGINAL booking code, so a stale cancellation
- * email for that same code must NOT delete the rebooked tour, and must NOT
- * cause its Confirm/Modify Gmail labels to be stripped to Cancel. Any id in
- * this set is treated as active for the rest of the run.
- */
+// Mark a booking as reinstated for this run. A GetYourGuide rebooking ("reprogramada") reuses
+// the ORIGINAL booking code, so a stale cancellation email for that code must NOT delete the
+// rebooked tour or strip its Confirm/Modify labels to Cancel. Any id in this set is treated as
+// active for the rest of the run.
 function markReinstated_(source, bookingId) {
   const id = normalizeId_(bookingId);
   const src = threadSourceFor_(source);   // GYG family shares one reinstatement key
@@ -508,16 +503,11 @@ function runHasTimeLeft_() {
   return !RNR_RUN_STARTED_AT_ || (Date.now() - RNR_RUN_STARTED_AT_ < RNR_RUN_BUDGET_MS_);
 }
 
-/**
- * Run ONE pipeline phase in isolation: skip if out of time, and if it throws,
- * log it and CARRY ON to the next phase. The whole pipeline used to sit in one
- * try block, so an uncaught error in an early phase (e.g. cancellations) silently
- * skipped every later phase — including confirmations — on every run, with no
- * alert. That is the "confirmations stopped for hours" failure mode. Isolating
- * each phase means a booking can never be missed because a *different* phase
- * broke. Errors are deduped in the Errors tab and counted on the Status tab.
- * `cond` (optional) gates audit-only phases without an extra `if` at the call.
- */
+// Run ONE pipeline phase in isolation: skip if out of time, and if it throws, log it and
+// CARRY ON to the next phase. Isolating each phase means a booking can never be missed because
+// a *different* phase broke (a single shared try block would skip every later phase, including
+// confirmations, on one early error). Errors are deduped in the Errors tab and counted on the
+// Status tab. `cond` (optional) gates audit-only phases without an extra `if` at the call.
 function runPhase_(name, fn, cond) {
   if (cond === false) return;
   if (!runHasTimeLeft_()) return;
@@ -530,18 +520,16 @@ function runPhase_(name, fn, cond) {
  * 3. MAIN FUNCTIONS
  ******************************************************/
 
-/**
- * FULL setup. Run once from the editor, or automatically on audit runs.
- * ensureLabels_ + formatSheets_ are Gmail/Spreadsheet-heavy, so the fast
- * 5-minute run does NOT call this (see runBookingCore_).
- */
+// FULL setup: run once from the editor, or automatically on audit runs. ensureLabels_ +
+// formatSheets_ are Gmail/Spreadsheet-heavy, so the fast run does NOT call this (see
+// runBookingCore_).
 function setupBookingSystem() {
   ensureSheets_();
   ensureLabels_();          // ~24 Gmail lookups — audit/manual only
   formatSheets_();
 }
 
-/** Cheap: create the tabs if missing. No Gmail calls. */
+// Cheap: create the tabs if missing. No Gmail calls.
 function ensureSheets_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureSheet_(ss, RNR.SHEETS.ENGLISH, RNR.ACTIVE_HEADERS);
@@ -554,14 +542,11 @@ function ensureSheets_() {
 }
 
 
-/**
- * Trigger entry points must NEVER throw. Apps Script emails the owner a
- * "Summary of failures" for every trigger run that ends in an exception, and a
- * transient "Service Spreadsheets timed out while accessing document" is normal
- * under contention (someone editing the sheet, or the Control project reading
- * it at the same moment). Those are logged to the Errors tab and swallowed —
- * the next poll simply picks the work up again.
- */
+// Trigger entry points must NEVER throw. Apps Script emails the owner a "Summary of failures"
+// for every trigger run that ends in an exception, and a transient "Service Spreadsheets timed
+// out" is normal under contention (someone editing the sheet, or the Control project reading it
+// at the same moment). Those are logged to the Errors tab and swallowed — the next poll picks
+// the work up again.
 function safeTriggerRun_(label, fn) {
   try {
     fn();
