@@ -6563,7 +6563,7 @@ function testBookingParsers() {
     check('Viator kids: income unchanged by children', Math.abs(b.income - 95.6) < 0.01, b.income);
   }
 
-  // REGRESSION: Gmail plain-body (*bold*) flavour must parse identically.
+  // The Gmail plain-body (*bold*) flavour must parse identically to HTML.
   f = RNR_FIXTURES_.gygPlainBodyChildren;
   b = parseGygMessage_(makeFakeMsg_(f.subject, f.body), 'confirm');
   check('GYG plain-body: parses', !!b, b);
@@ -6585,8 +6585,8 @@ function testBookingParsers() {
     check('GYG plain-body private: income 133.30*0.75', Math.abs(b.income - 99.98) < 0.02, b.income);
   }
 
-  // REGRESSION: customer email inline with the name must be stripped so the
-  // Name column holds only the person's name.
+  // A customer email inline with the name must be stripped so the Name column holds
+  // only the person's name.
   f = RNR_FIXTURES_.gygInlineCustomerEmail;
   b = parseGygMessage_(makeFakeMsg_(f.subject, f.body), 'confirm');
   check('GYG inline email: parses', !!b, b);
@@ -6670,6 +6670,10 @@ function testBookingParsers() {
  * Violations are logged (deduped) — they never throw.
  ******************************************************/
 
+// Verify the enforced facts (I1–I5) on every active row and log any violation
+// (deduped), never throwing. This is the run's self-check: a duplicate id, a
+// completed or cancelled row still active, a row missing an essential field, or a
+// contaminated name all surface here so a silent data problem becomes visible.
 function checkInvariants_() {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -6733,11 +6737,10 @@ function checkInvariants_() {
  * testInternalAlertEmail()  -> proves this script can send email
  ******************************************************/
 
-/**
- * One-stop diagnosis. Run from the editor, read the Execution log.
- * Checks: Gmail read access (quota), email quota, unprocessed threads per
- * label, installed triggers, newest Errors rows.
- */
+// One-stop health report. Run from the editor and read the Execution log: it probes
+// Gmail read access (the daily quota), the project timezone, the remaining email
+// quota, unprocessed threads per label, installed triggers, and the newest Errors
+// rows — the first thing to run when something seems stuck.
 function systemStatus() {
   const lines = [];
   resetRunCaches_();
@@ -6811,24 +6814,18 @@ function systemStatus() {
   return lines.join('\n');
 }
 
-/**
- * FORCE button: re-reads EVERY labelled thread (Processed included), repairs
- * sheet state, then prints the status report. Safe to run any time —
- * everything is idempotent. Use when you see mail without Processed or a
- * missing/duplicated booking.
- */
+// Force button: re-read EVERY labelled thread (Processed included), repair sheet
+// state, then print the status report. Idempotent and safe any time — use it when
+// you see mail without Processed, or a missing/duplicated booking.
 function forceProcessEverythingNow() {
   runBookingAudit();
   return systemStatus();
 }
 
-/**
- * RECOVERY: reprocess ONE booking. Set DEBUG_BOOKING_ID (section 31), run
- * this. It strips the Processed label from every thread of that booking's
- * source labels that mentions the id (bounded search), then runs one fast
- * pass so the normal pipeline re-reads exactly those threads. Never touches
- * unread state, never mass-restores mail.
- */
+// Recovery: reprocess ONE booking. Set DEBUG_BOOKING_ID (section 31), then run this.
+// It strips the Processed label from that booking's threads (bounded search by id)
+// and runs one fast pass so the normal pipeline re-reads exactly those threads.
+// Never touches unread state, never mass-restores mail.
 function reprocessBookingById() {
   const wanted = normalizeId_(DEBUG_BOOKING_ID);
   if (!wanted) { console.log('Set DEBUG_BOOKING_ID first (section 31).'); return; }
@@ -6851,7 +6848,7 @@ function reprocessBookingById() {
 }
 
 
-/** Sends a test email to management so you can verify MailApp works. */
+// Send a test email to management to prove this script can send mail at all.
 function testInternalAlertEmail() {
   MailApp.sendEmail({
     to: RNR.INTERNAL_ALERT_TO,
@@ -6864,19 +6861,13 @@ function testInternalAlertEmail() {
 
 /******************************************************
  * 30. INBOX BACKFILL
- *
- * The system used to archive a booking email as soon as it was processed, so
- * confirmations/modifications for tours that have NOT happened yet ended up
- * out of the inbox. Under the current policy the inbox is the live list of
- * upcoming tours, so those threads must come back.
- *
- * restoreUpcomingThreadsToInbox() walks every Confirmations and Modifications
- * label, works out each thread's tour date, and moves it back to the inbox if
- * the tour has not finished yet. Cancelled threads are never restored.
- * Idempotent: a thread already in the inbox is left alone. Run it once from
- * the editor after deploying; safe to run again any time.
  ******************************************************/
 
+// One-off repair for the inbox-as-live-list policy: the inbox should hold every
+// upcoming tour's thread. This walks every Confirmations and Modifications label,
+// works out each thread's tour date, and moves it back to the inbox when the tour
+// has not finished yet. Cancelled threads are never resurrected, and a thread
+// already in the inbox is left alone. Run from the editor; safe to re-run.
 function restoreUpcomingThreadsToInbox() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) { console.log('Another run is active; try again in a minute.'); return; }
