@@ -6020,6 +6020,9 @@ function pickBestBody_(html, plain) {
 }
 
 
+// The single choke point for a message body. Caches per message id (one Gmail fetch
+// per message per run) and, if a body read throws on a rare Gmail state, falls back
+// to the subject so one bad message never aborts the run.
 function getBestMessageText_(msg) {
   try {
     if (!RNR_TEXT_CACHE_) RNR_TEXT_CACHE_ = new Map();
@@ -6046,6 +6049,9 @@ function getBestMessageText_(msg) {
 }
 
 
+// Flatten an HTML email body into parseable text. Block-level close tags become
+// newlines so each field lands on its own "label \n value" line, remaining tags are
+// dropped, entities are decoded, and whitespace is tidied.
 function htmlToText_(html) {
   return String(html || '')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -6076,6 +6082,8 @@ function htmlToText_(html) {
 }
 
 
+// Try each regex in order and return the first capture group that matches (trimmed),
+// or '' if none do. The workhorse behind almost every field read in the parsers.
 function extractFirst_(text, regexes) {
   const s = String(text || '');
   for (const r of regexes) {
@@ -6090,29 +6098,24 @@ function extractFirst_(text, regexes) {
  * 26. RESPONSE AND ERROR HELPERS
  ******************************************************/
 
+// Plain-text web response helper for doGet/doPost.
 function textResponse_(text) {
   return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.TEXT);
 }
 
 
+// Null/undefined -> '', everything else -> String(v).
 function safeString_(v) {
   return v === null || v === undefined ? '' : String(v);
 }
 
 
-/**
- * A confirmation the processing code READ but could NOT turn into a booking
- * (parse failed, or only invalid bookings — e.g. an OTA changed its email format).
- * This is the most dangerous silent failure: the reservation is not on the sheet
- * or in the portal, so a slot looks empty and a real booking is invisible.
- *
- * We do NOT email anyone. Instead:
- *   1. COUNT it (RNR_RUN_STATS_.confirmFailures) -> shown on the Status tab.
- *   2. Mark the email UNREAD, every run, so it stands out in the inbox until a
- *      human fixes the parser. If someone reads it, the next run marks it unread
- *      again (the thread is never Processed, so it is re-seen every run).
- * The unread confirmations ARE the "what has not been processed" signal.
- */
+// Flag a confirmation that was READ but could not become a booking (parse failed or
+// only invalid bookings — usually an OTA changed its email format). This is the most
+// dangerous silent failure: the reservation is on no tab, so a slot looks empty. We
+// don't email; instead we count it for the Status tab and mark the email unread every
+// run (the thread is never Processed, so it is re-seen and re-flagged until a human
+// fixes the parser). The unread confirmations ARE the "not processed" signal.
 function flagUnprocessedConfirmation_(thread, labelName) {
   try {
     if (RNR_RUN_STATS_) {
@@ -6134,7 +6137,7 @@ function flagUnprocessedConfirmation_(thread, labelName) {
   } catch (e) { /* never let flagging break the run */ }
 }
 
-/** Human age like "3 h 12 min" / "8 min" from a past epoch ms, or '' if none. */
+// Human age like "3 h 12 min" / "8 min" from a past epoch-ms, or '' if none.
 function ageText_(ms) {
   if (!ms) return '';
   let mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
@@ -6142,13 +6145,11 @@ function ageText_(ms) {
   return (h ? h + ' h ' : '') + mins + ' min';
 }
 
-/**
- * Escalate to the audit soon (not inline — the current run holds the script lock)
- * when the fast run couldn't register a confirmation, so the fuller, more
- * permissive re-read gets an immediate chance instead of waiting for the next
- * scheduled audit. Throttled, and old one-off triggers are cleared first so they
- * can't pile up to Apps Script's trigger limit (one-off triggers don't self-delete).
- */
+// Schedule the full audit to run in ~1 minute when a fast run couldn't register a
+// confirmation, so the fuller, more permissive re-read happens soon instead of
+// waiting for the next scheduled audit. Not inline (this run holds the script lock).
+// Throttled, and stale one-off triggers are cleared first so they can't pile up to
+// Apps Script's trigger limit (one-off triggers don't self-delete).
 function triggerAuditSoon_() {
   try {
     const props = PropertiesService.getScriptProperties();
@@ -6164,8 +6165,8 @@ function triggerAuditSoon_() {
   } catch (e) { console.log('triggerAuditSoon_: ' + e); }
 }
 
-/** Fired ~1 min after a fast run that hit an unregistered confirmation. Deletes
- *  its own one-off trigger (they are not auto-removed), then runs the full audit. */
+// The handler triggerAuditSoon_ schedules: deletes its own one-off trigger (they are
+// not auto-removed), then forces a full booking audit.
 function runBookingAuditOneShot_() {
   try {
     ScriptApp.getProjectTriggers().forEach(t => {
@@ -6177,6 +6178,8 @@ function runBookingAuditOneShot_() {
   runBookingAudit(true);   // force a FULL re-read: this fires precisely because a confirmation couldn't register
 }
 
+// Record one error on the Errors tab (and bump the run's error count). Wrapped so a
+// logging failure can never itself break the run.
 function logError_(type, err, rawData) {
   try {
     if (RNR_RUN_STATS_) RNR_RUN_STATS_.errors++;
