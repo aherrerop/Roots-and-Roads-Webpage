@@ -5009,6 +5009,11 @@ function normalizeAirbnbDate_(dateText, fallbackMsgDate) {
  * Income: GYG is a PAID channel, so we read the supplier payout / net amount.
  ******************************************************/
 
+// Parse one GetYourGuide email into a booking (or null if it doesn't match `mode`).
+// GYG is multilingual and multi-product: classification keys off the subject (the
+// body contains stray words like "cancelada" even in a reschedule), the tour date
+// is the labelled "Fecha"/"Date" (not the booking date), and the source tag picks
+// the most specific product — Sagrada-exterior, the 3-in-1 listing, or the account.
 function parseGygMessage_(msg, mode) {
   const subject = msg.getSubject() || '';
   const text = subject + '\n' + getBestMessageText_(msg);
@@ -5087,61 +5092,39 @@ function parseGygMessage_(msg, mode) {
   });
 }
 
-/**
- * Which GetYourGuide account a message belongs to. Our SECOND GYG account
- * (RNR.GYG_SECOND_EMAIL) auto-forwards its emails here; the forwarded copy keeps
- * the original "To:" (that second address), so a message addressed to it is tagged
- * source "GYG" — otherwise the normal "GetYourGuide". Falls back to GetYourGuide if
- * the recipient can't be read (a mock message, or a Gmail quirk).
- */
-/**
- * Is this GetYourGuide email the "Sagrada Família Ultimate Exterior Tour"
- * (the prepaid ~8€ first-hour product)? Detected by the distinctive product
- * title fragment or the option id, so its bookings can be tagged SF_EXT and paid
- * at their own guide rate while still landing in the normal date/time/language
- * tab. TUNING POINT: the tour is not published yet — confirm these markers
- * against the FIRST real confirmation email (the customer copy may render the
- * title slightly differently) and widen the pattern if needed.
- */
+// Is this GetYourGuide email the Sagrada-exterior product (the prepaid first-hour
+// tour)? Detected by its distinctive title fragment — "… Exterior Unlocked" or
+// "Sagrada Família Exterior" — so its bookings can be tagged SF_EXT and paid at
+// their own guide rate while still landing in the normal date/time/language tab.
+// Our 3h product is the "Ultimate Tour", so never key off "Ultimate"/"Unlocked"
+// alone: only the EXTERIOR option is SF.
 function gygIsSfExt_(text) {
   const s = String(text || '');
-  // VERIFIED against the first real SF booking (2026-10-16, GYGG45G2M5X2): the
-  // product/option is "Barcelona: Sagrada Família Unlocked Tour w/ Local & Options
-  // — Sagrada Família Exterior Unlocked by a Local". The distinctive marker is
-  // "… Exterior Unlocked" / "Sagrada Família Exterior". NOTE: our 3h product is the
-  // "Barcelona Ultimate Tour: Sagrada Familia, Gaudi & Old Town", so we must NEVER
-  // key off "Ultimate" or "Unlocked" alone — only the EXTERIOR option is SF.
   return /exterior\s+unlocked|sagrad[ae]?\s+fam[ií]l\w*\s+exterior/i.test(s);
 }
 
-/**
- * Is this GetYourGuide email our SECOND product, the "Barcelona 3-in-1 Tour:
- * Sagrada Família, Gaudí & Old Town"? It is the SAME physical walking tour as the
- * Ultimate Tour (same route + slot), just a separate GYG listing — so its bookings
- * are tagged source "GYG" (RNR.SOURCE.GYG2) to tell them apart from the Ultimate
- * Tour on the sheet/ledger, while still landing in the SAME date/time/language tab
- * (they merge into the same tour card). Detected by the distinctive "3-in-1" title
- * fragment; the Ultimate Tour title never contains it.
- * TUNING POINT: verify against the first real emails — if GYG renders it "3 in 1"
- * or you want to pin it to the option id, widen this pattern.
- */
+// Is this GetYourGuide email our SECOND listing, the "Barcelona 3-in-1 Tour"? It is
+// the SAME physical walking tour as the Ultimate Tour, just a separate GYG listing,
+// so its bookings are tagged source GYG2 to tell them apart on the sheet/ledger
+// while still merging into the same tour card. Detected by the "3-in-1" fragment,
+// which the Ultimate title never carries.
 function gygIs3in1_(text) {
   const s = String(text || '');
   return /3\s*-?\s*in\s*-?\s*1/i.test(s);
 }
 
-/**
- * Is this Viator email the Sagrada Família EXTERIOR product (coming later)?
- * TUNING POINT: the Viator listing does not exist yet, so this matches on the
- * product-name concept ("Ultimate Exterior" / "Sagrada … exterior"). When it is
- * created, pin this to the real Viator Product Code (like 5631527P3/P5) and
- * verify against the first real email.
- */
+// Is this Viator email the Sagrada-exterior product? Matches on the product-name
+// concept ("Ultimate Exterior" / "Sagrada … exterior"). If a dedicated Viator
+// listing is ever created, pin this to its real Product Code.
 function viatorIsSfExt_(text) {
   const s = String(text || '');
   return /ultimate\s+exterior|sagrad[ae]?\s+fam[ií]lia[^\n]*exterior/i.test(s);
 }
 
+// Which of our two GetYourGuide accounts a message belongs to. Our second account
+// (RNR.GYG_SECOND_EMAIL) forwards its emails here keeping the original recipient,
+// so a message addressed to it is tagged GYG2, otherwise the main GYG. Falls back
+// to GYG if the recipient can't be read.
 function gygSourceFor_(msg) {
   try {
     if (!RNR.GYG_SECOND_EMAIL || !msg) return RNR.SOURCE.GYG;
@@ -5151,15 +5134,10 @@ function gygSourceFor_(msg) {
   } catch (e) { return RNR.SOURCE.GYG; }
 }
 
-/**
- * Which of our two Freetour.com accounts did this booking come through? The 2nd
- * account (DB Tours) forwards its emails into the mailbox, so its address shows
- * up as the forwarding From/To/Cc AND in the forwarded "To: … <…>" header line in
- * the body — check all of them so a manual OR an auto-forward is caught. Default
- * to the main account ("Free Tour") when the marker is absent.
- * TUNING POINT: verify against the first real 2nd-account email; if the forward
- * strips the address from every header, the body-header check still catches it.
- */
+// Which of our two Freetour.com accounts a booking came through. The second account
+// forwards its emails into this mailbox, so its address can appear in the From/To/Cc
+// OR in the forwarded "To:" header inside the body — all four are checked so both a
+// manual and an auto-forward are caught. Defaults to the main account when absent.
 function freetourSourceFor_(msg) {
   try {
     if (!RNR.FREETOUR_SECOND_EMAIL || !msg) return RNR.SOURCE.FREETOUR;
@@ -5175,10 +5153,9 @@ function freetourSourceFor_(msg) {
 }
 
 
-/**
- * Find a GYG booking (with a real name) by id inside a given label's threads.
- * Used to recover a rescheduled booking whose confirmation was archived to Done.
- */
+// Find a GYG booking (with a real name) by id inside a given label's threads, using
+// a bounded targeted search so the whole Done label is never scanned. Used to
+// recover a rescheduled booking whose confirmation was already archived to Done.
 function findGygBookingInLabelById_(labelName, bookingId) {
   const id = normalizeId_(bookingId);
   if (!id) return null;
@@ -5201,10 +5178,9 @@ function findGygBookingInLabelById_(labelName, bookingId) {
 }
 
 
-/**
- * DEBUG: run from the editor to see where a booking id lives and how it parses.
- * Edit the id below, run, then read the Execution log.
- */
+// Debug helper: run from the editor to find which Gmail label a booking id lives
+// under. Edit the id below, run, then read the Execution log — if nothing prints,
+// the id is under no label and the Gmail filter needs fixing.
 function debugWhereIsBooking() {
   const id = 'GYG996ZWGNXL';   // <-- change to the booking id you're chasing
 
@@ -5225,16 +5201,10 @@ function debugWhereIsBooking() {
 }
 
 
-/**
- * Extract every GYG field from the (subject + body) text in one place, so the
- * confirmation parser and the modification handler stay in sync.
- */
-/**
- * GYG booking reference, tolerant to a code-format change. First by SHAPE (the
- * GYG… code), then whatever the "Reference number" label points at (so even a new
- * code prefix still resolves), and only as a last resort the shared S-order number
- * — which is NOT unique per booking, so it is used solely to avoid an empty id.
- */
+// GYG booking reference, tolerant to a code-format change. First by SHAPE (the
+// GYG… code), then whatever the "Reference number" label points at (so even a new
+// code prefix still resolves), and only as a last resort the shared S-order number
+// — which is NOT unique per booking, so it is used solely to avoid an empty id.
 function gygBookingId_(text) {
   const byShape = extractFirst_(text, [/\b(GYG[A-Z0-9]{5,})\b/i]);
   if (byShape) return byShape;
@@ -5248,6 +5218,8 @@ function gygBookingId_(text) {
   return extractFirst_(text, [/\b(S\d{5,})\b/i]);
 }
 
+// Extract every GYG field from the (subject + body) text in one place, so the
+// confirmation parser and the modification handler read bookings the same way.
 function gygFields_(text) {
   return {
     bookingId: gygBookingId_(text),
@@ -5276,17 +5248,12 @@ function gygFields_(text) {
 }
 
 
-/**
- * Keep only the human name from a value an OTA gave us. Some templates render
- * an email address and/or field labels on the SAME line as the name — e.g. GYG
- * anonymises the customer as customer-xxxx@reply.getyourguide.com:
- *   "Daleska Miclos customer-raawfecnv52myobv@reply.getyourguide.com Teléfono: +34632276997 Idioma: English"
- * Everything from the email (or a trailing field label) onward is dropped, so
- * only "Daleska Miclos" survives. A clean name is returned unchanged.
- *
- * Applied centrally in normalizeBooking_, so EVERY source (GYG, Viator,
- * Website, Free Tour, …) is protected against this class of contamination.
- */
+// Keep only the human name from a value an OTA gave us. Some templates render an
+// email address and/or field labels on the SAME line as the name (e.g. GYG
+// anonymises the customer as customer-xxxx@reply.getyourguide.com, followed by
+// "Teléfono:" / "Idioma:"). Everything from the email or a trailing field label
+// onward is dropped; a clean name is returned unchanged. Applied centrally in
+// normalizeBooking_, so every source is protected against this contamination.
 function cleanPersonName_(raw) {
   let s = String(raw || '').replace(/\s+/g, ' ').trim();
   s = s.replace(/\s*\S*@\S+.*$/i, '');                               // email + anything after it
@@ -5295,25 +5262,17 @@ function cleanPersonName_(raw) {
 }
 
 
-/**
- * All date tokens in order of appearance. Confirmations use an English date
- * ("July 14, 2026 11:00 AM"); modifications use a Spanish one
- * ("14 de julio de 2026 a las 17:00") and list both the new and the old date.
- */
+// All date tokens in order of appearance. Confirmations use an English date
+// ("July 14, 2026 11:00 AM"); modifications use a Spanish one ("14 de julio de 2026
+// a las 17:00") and list both the new and the old date.
 function gygDateTokens_(text) {
   const s = String(text || '');
-  // The time may follow the year after a SPACE ("September 10, 2026 5:00 PM") or,
-  // since GYG's Sept-2026 template change, after a COMMA ("September 10, 2026,
-  // 5:00 PM"). Allow an optional comma and flexible whitespace before the time —
-  // otherwise the token loses its time, the booking has no time, isValidBooking_
-  // rejects it, and (on the fast run) it is silently skipped. `extractGygTime_`
-  // still reads the time from the token; the callers also fall back to the whole
-  // labelled Date line, so even a future format tweak can't drop the time.
-  // Tolerant on purpose: the day/year separator may be ", " or a bare space, and
-  // the time may follow after a space or a comma. So "September 10, 2026 5:00 PM",
-  // "September 10, 2026, 5:00 PM" and "September 10 2026 5:00 PM" all parse. Keeping
-  // punctuation optional is what stops a minor OTA template tweak from silently
-  // dropping the date or time.
+  // The separators are kept optional on purpose so a minor template tweak can't drop
+  // the time: the day/year separator may be ", " or a bare space, and the time may
+  // follow the year after a space OR a comma — so "September 10, 2026 5:00 PM",
+  // "September 10, 2026, 5:00 PM" and "September 10 2026 5:00 PM" all match. If the
+  // token ever lost its time the booking would have none, isValidBooking_ would
+  // reject it, and a fast run would silently skip it.
   const re = /([A-Z][a-z]+ \d{1,2},?\s+\d{4}(?:,?\s*\d{1,2}:\d{2}\s*(?:AM|PM))?)|(\d{1,2}\s+de\s+[a-zà-ÿ]+\s+de\s+\d{4}(?:\s+a\s+las\s+\d{1,2}:\d{2})?)/gi;
   const out = [];
   let m;
@@ -5322,9 +5281,8 @@ function gygDateTokens_(text) {
 }
 
 
-/**
- * Time from a GYG date token: "11:00 AM", "a las 17:00" (24h) or bare "17:00".
- */
+// Time from a GYG date token, in any of its three shapes: "11:00 AM", "a las 17:00"
+// (24h), or a bare "17:00".
 function extractGygTime_(token) {
   const s = String(token || '');
   let m = s.match(/(\d{1,2}:\d{2})\s*(AM|PM)/i);
