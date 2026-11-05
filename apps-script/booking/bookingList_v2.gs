@@ -2501,25 +2501,16 @@ function processModifications_() {
 }
 
 
-/**
- * Viator modification handler.
- *
- * Your Gmail filter files every Viator "Amended Booking:" email straight
- * into Viator/Modifications. These are delta-style notifications ("1
- * traveler added" / "1 traveler removed"), not a full restated booking, so
- * final guest count = ORIGINAL CONFIRMATION guests + sum of every delta in
- * the thread's message history (a thread accumulates one message per
- * amendment over the life of the booking).
- *
- * IMPORTANT correctness fix vs the old logic: the delta is always anchored
- * to the ORIGINAL CONFIRMATION booking (findConfirmationBookingBySourceAndId_),
- * never to the current active-sheet row. Anchoring to the active row would
- * double-apply the delta every time the thread is re-processed (each re-run
- * would add totalDelta on top of a row that already reflects totalDelta from
- * the previous run), causing the guest count to drift upward forever. Anchoring
- * to the stable original confirmation makes re-processing idempotent no
- * matter how many times this function runs against the same thread.
- */
+// Viator modification handler.
+// Viator "Amended Booking:" emails are DELTAS ("1 traveler added" / "removed"),
+// not a full restated booking. So the final guest count is the original
+// confirmation's guests plus the sum of every delta in the thread (one message
+// per amendment accumulates over the booking's life).
+//
+// The delta is always added to the ORIGINAL CONFIRMATION booking, never to the
+// current active-sheet row. Anchoring to the row would re-add the whole delta on
+// every re-run and drift the count upward forever; anchoring to the stable
+// confirmation makes re-processing the same thread idempotent.
 function processViatorModificationsLabel_() {
   const threads = getThreadsSafe_(RNR.LABELS.VIATOR_MODIFY);
 
@@ -2602,19 +2593,16 @@ function processViatorModificationsLabel_() {
 }
 
 
-/**
- * Dedicated GetYourGuide modification handler (fixes "rescheduled twice but
- * not updated").
- *
- * For every GYG/Modifications thread it:
- *   1. Groups messages by booking code (GYG........).
- *   2. Keeps the LATEST message per code (by email date) for the new
- *      date/time/guests/language, and the latest message that carries a PRICE.
- *   3. Fills missing fields (name, phone, ...) from the existing active row or
- *      the confirmation, recomputes income = price * (1 - GYG_COMMISSION), and
- *      writes the final state.
- *   4. Marks the code reinstated so a stale cancellation cannot delete it.
- */
+// GetYourGuide modification handler. A GYG activity can be rescheduled several
+// times, each email carrying both the new and the struck-through old date, so we
+// must apply only the most recent change per booking. For every GYG/Modifications
+// thread it:
+//   1. Groups messages by booking code (GYG…).
+//   2. Keeps the latest message per code (by email date) for the new
+//      date/time/guests/language, and the latest message that carries a price.
+//   3. Fills missing fields (name, phone, …) from the active row or confirmation,
+//      recomputes income = price * (1 - GYG commission), and writes the result.
+//   4. Marks the code reinstated so a stale cancellation cannot delete it.
 function processGygModificationsLabel_() {
   const threads = getThreadsSafe_(RNR.LABELS.GYG_MODIFY);
 
@@ -2737,11 +2725,10 @@ function processGygModificationsLabel_() {
 }
 
 
-/**
- * Generic single-message modification handler (Guruwalk, Free Tour).
- * Guruwalk's message carries both the new state and a "previous booking"
- * block; Free Tour carries only the new state.
- */
+// Generic modification handler for sources whose email fully restates the
+// booking (Guruwalk carries new + "previous booking"; Free Tour carries only the
+// new state). "Processed" must mean "applied": a thread whose change we could not
+// resolve is left unprocessed and logged so it stays visible and gets retried.
 function processModificationLabel_(labelName, source) {
   const threads = getThreadsSafe_(labelName);
 
@@ -2766,6 +2753,10 @@ function processModificationLabel_(labelName, source) {
 }
 
 
+// Apply one thread's modification messages. Each message may remove the old
+// booking and/or write the new one; a new state that turns out to be cancelled is
+// deleted instead. Returns whether anything landed, so the caller knows whether to
+// mark the thread Processed.
 function processModificationThread_(thread, source) {
   const messages = thread.getMessages();
   let applied = false;
@@ -2798,12 +2789,9 @@ function processModificationThread_(thread, source) {
 }
 
 
-/**
- * Route a single modification message to old/new booking objects.
- * Free Tour delivers a single "new state" message; Guruwalk delivers new +
- * previous in one message. Viator is handled entirely by
- * processViatorModificationsLabel_ and never reaches this router.
- */
+// Route one modification message to { oldBooking, newBooking } objects.
+// Free Tour delivers a single "new state"; Guruwalk delivers new + previous in one
+// message. Viator has its own handler and never reaches this router.
 function parseModificationMessage_(msg, source) {
   if (source === RNR.SOURCE.FREETOUR) {
     return { oldBooking: null, newBooking: parseFreetourMessage_(msg, 'modify') };
@@ -2818,10 +2806,9 @@ function parseModificationMessage_(msg, source) {
 }
 
 
-/**
- * Modification emails often omit fields. Fill the gaps from the existing
- * active row (or its confirmation) and recompute income from guest count.
- */
+// Modification emails often omit fields. Fill the gaps from the existing active
+// row (or its confirmation) and recompute income: explicit income wins, free
+// channels price from guest count, paid channels scale the payout proportionally.
 function completeModifiedBookingFromExisting_(booking) {
   const b = normalizeBooking_(booking);
   const existing =
@@ -2870,12 +2857,15 @@ function completeModifiedBookingFromExisting_(booking) {
 }
 
 
+// Convenience: just the booking object for a source+id, or null.
 function findActiveBookingById_(source, bookingId) {
   const ref = findActiveBookingRowRef_(source, bookingId);
   return ref ? ref.booking : null;
 }
 
-/** Locate a booking's row ACROSS ALL language tabs: {sh, row, sheetName, booking}. */
+// Locate a booking's row across all language tabs -> {sh, row, sheetName, booking}.
+// Family-aware on source, so a GYG-family id matches whichever listing tag the row
+// carries (see sourcesMatchForId_).
 function findActiveBookingRowRef_(source, bookingId) {
   const id = normalizeId_(bookingId);
   if (!id) return null;
@@ -2907,6 +2897,10 @@ function findActiveBookingRowRef_(source, bookingId) {
 
 
 
+// Move every tour whose day is over off the active tabs and into Done.
+// Collects the finished rows (deleting bottom-up so indexes stay valid), logs
+// them in full to the Completed Log, then merges aggregated rows into Done.
+// Returns the completed bookings so the caller can archive their Gmail threads.
 function moveCompletedBookingRowsToDone_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const completed = [];
@@ -2947,13 +2941,10 @@ function moveCompletedBookingRowsToDone_() {
 }
 
 
-/**
- * Append completed bookings (full detail incl. booking id and children) to
- * the hidden Completed Log tab. Idempotent: keyed on bookingId|dateKey, an
- * existing entry is never duplicated. Entries older than
- * COMPLETED_LOG_KEEP_DAYS are pruned. The guide portal's no-show queues
- * consume this tab.
- */
+// Append finished tours in full detail (booking id, children, income, notes) to
+// the hidden Completed Log tab, which the guide portal's no-show queues read.
+// Idempotent: keyed on bookingId|dateKey so an entry is never duplicated, and
+// rows older than COMPLETED_LOG_KEEP_DAYS are pruned on the way through.
 function appendCompletedLog_(completed) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -3007,6 +2998,9 @@ function appendCompletedLog_(completed) {
 }
 
 
+// Fold completed bookings into the Done tab's per-slot aggregates (one row per
+// date+time+language). Guests land in the free or paid bucket by the source's
+// MODEL; income accumulates. The whole tab is then rewritten newest-first.
 function mergeCompletedIntoDone_(completed) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const done = ss.getSheetByName(RNR.SHEETS.DONE);
@@ -3064,6 +3058,8 @@ function mergeCompletedIntoDone_(completed) {
 }
 
 
+// Read the Done tab back into a slot-keyed map so a new merge adds to the existing
+// totals instead of starting from zero each run.
 function readDoneMap_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const done = ss.getSheetByName(RNR.SHEETS.DONE);
@@ -3095,25 +3091,12 @@ function readDoneMap_() {
 }
 
 
-/**
- * QUOTA-CRITICAL. Archive the Gmail threads of tours that are over.
- *
- * WHY THIS CHANGED (the "Service invoked too many times for one day: gmail"
- * loop): the inbox policy keeps every UPCOMING booking in the inbox, so the
- * old "scan label:x in:inbox and parse each thread" sweep read ~200 message
- * bodies EVERY five minutes — 288 runs/day blew the daily Gmail read quota
- * by mid-morning. The Processed label cannot fix that, because those inbox
- * threads are all legitimately Processed already.
- *
- * Now: we already KNOW which bookings just completed (they were moved to
- * Done Tours this very run). We look their threads up by booking id with a
- * Gmail SEARCH — which does not read message bodies — and archive only
- * those. A run with no completions costs ZERO Gmail calls here.
- *
- * The exhaustive body-reading sweep still exists as a safety net for
- * threads whose id could not be matched, but it runs on the AUDIT only
- * (a few times a day, where the cost is affordable).
- */
+// Archive the Gmail threads of tours that are over. Quota-critical: we already
+// know which bookings completed this run, so we look their threads up by id with a
+// Gmail SEARCH (no body reads) and archive only those — a run with no completions
+// costs zero Gmail calls. The exhaustive body-reading sweep still runs as a safety
+// net for threads whose id could not be matched, but only on the audit (a few
+// times a day), so the frequent fast runs never blow the daily Gmail read quota.
 function moveCompletedGmailThreadsToDone_(completedBookings) {
   archiveCompletedThreadsByIds_(completedBookings || []);
 
@@ -3124,12 +3107,9 @@ function moveCompletedGmailThreadsToDone_(completedBookings) {
   }
 }
 
-/**
- * Targeted archive: for each just-completed booking, find its thread(s) by
- * booking id (Gmail search, no body reads), strip the working labels, apply
- * <Source>/Done and archive. Idempotent: a thread already carrying Done is
- * skipped by the search filter.
- */
+// Targeted archive: for each just-completed booking, find its thread(s) by id
+// (Gmail search, no body reads), strip the working labels, apply <Source>/Done and
+// archive. Idempotent — the search filter excludes a thread already marked Done.
 function archiveCompletedThreadsByIds_(completedBookings) {
   if (!completedBookings.length) return;
 
@@ -3163,22 +3143,14 @@ function archiveCompletedThreadsByIds_(completedBookings) {
 }
 
 
-/**
- * Once a booking is completed, its Confirm/Modify/Cancel/Processed labels
- * are ALL stripped and only Done is left, so the live Confirmations and
- * Modifications labels show exclusively upcoming tours — anything that
- * looks "stuck" there but is missing from the sheet is genuinely lost, not
- * just old and completed.
- */
-/**
- * MANUAL CLEANUP — run from the editor whenever old tour emails pile up in the
- * inbox. Moves EVERY Confirmation/Modification thread whose tour has already
- * finished to its <Source>/Done label and out of the inbox, regardless of when
- * the sheet row was completed (the normal archive only touches threads whose
- * booking finished on that same run, so a backlog can build up). Idempotent and
- * safe to re-run; NOT on a trigger. Returns how many threads it moved; if it
- * runs low on time it stops gracefully — just run it again.
- */
+// Manual cleanup — run from the editor whenever old tour emails pile up. Moves
+// every Confirmation/Modification thread whose tour has already finished to its
+// <Source>/Done label and out of the inbox, regardless of when the sheet row was
+// completed (the normal archive only touches threads that finished on the same
+// run, so a backlog can build up). Once a booking is done, all its working labels
+// are stripped and only Done remains — so anything still showing under
+// Confirmations/Modifications is genuinely upcoming, not just old. Idempotent and
+// safe to re-run; not on a trigger. Stops gracefully if it runs low on time.
 function archivePastTourEmails() {
   RNR_RUN_STARTED_AT_ = Date.now();
   RNR_SKIP_PROCESSED_ = false;         // read every labelled thread, not just inbox
@@ -3218,6 +3190,9 @@ function archivePastTourEmails() {
 }
 
 
+// Audit-time sweep: walk each source's Confirm/Modify labels and move any thread
+// whose tour is over to Done. The costly body-reading backstop for the per-run
+// archive above; runs only on the audit, never on the frequent fast runs.
 function moveCompletedPlatformThreadsToDone_() {
   sourceConfigs_().filter(cfg => cfg.done).forEach(cfg => {
     if (!GmailApp.getUserLabelByName(cfg.done)) return;
@@ -3248,6 +3223,10 @@ function moveCompletedPlatformThreadsToDone_() {
 }
 
 
+// Decide whether a thread's tour has finished, trying three signals in order:
+// a normal parse, the platform booking id matched against an active row, and
+// finally a date pulled from the subject/body. Returns true only when every
+// recoverable booking on the thread is already completed.
 function completedThreadShouldMoveToDone_(thread, source) {
   // 1) Normal parse (ordinary confirmations).
   const bookings = uniqueBookings_(parseThread_(thread, source, 'any')).filter(isValidBooking_);
@@ -3286,11 +3265,9 @@ function completedThreadShouldMoveToDone_(thread, source) {
 
 
 
-/**
- * Confirmation bookings indexed by "source|id" (built once per run).
- * Used to anchor modifications to the ORIGINAL confirmation, and to fill
- * fields a modification email omits.
- */
+// Confirmation bookings indexed by "source|id", built once per run. Lets a
+// modification anchor to the original confirmation and borrow any field its own
+// email left out.
 function getConfirmationCache_() {
   if (RNR_CONFIRMATION_CACHE_) return RNR_CONFIRMATION_CACHE_;
 
@@ -3319,28 +3296,28 @@ function getConfirmationCache_() {
 }
 
 
-/**
- * Confirmation THREADS indexed by "source|id" (built once per run). Avoids
- * per-booking full-label rescans, which is what originally blew the Gmail
- * read quota.
- */
+// Confirmation THREADS indexed by "source|id", built once per run so a lookup is
+// a map hit instead of a full-label rescan per booking (the rescan was a major
+// source of Gmail read-quota pressure).
 function getConfirmationThreadIndex_() {
   if (RNR_CONFIRM_THREAD_INDEX_) return RNR_CONFIRM_THREAD_INDEX_;
   RNR_CONFIRM_THREAD_INDEX_ = buildThreadIndex_(cfg => cfg.confirm, 'confirm');
   return RNR_CONFIRM_THREAD_INDEX_;
 }
 
-/**
- * Modification THREADS indexed by "source|id" (built once per run). Used by
- * the cancellation reconcile step to strip the Modify label without
- * rescanning the whole label per booking.
- */
+// Modification THREADS indexed by "source|id", built once per run. The
+// cancellation reconcile step uses it to find and strip a Modify label without
+// rescanning the whole label for every booking.
 function getModificationThreadIndex_() {
   if (RNR_MODIFY_THREAD_INDEX_) return RNR_MODIFY_THREAD_INDEX_;
   RNR_MODIFY_THREAD_INDEX_ = buildThreadIndex_(cfg => cfg.modify, 'any');
   return RNR_MODIFY_THREAD_INDEX_;
 }
 
+// Shared builder for the two thread indexes above. Walks every source's chosen
+// label once, collects each thread's booking ids (parsed plus the id pulled from
+// the thread itself), and maps "source|id" -> thread, keeping the first thread
+// seen for an id.
 function buildThreadIndex_(labelPicker, parseMode) {
   const index = new Map();
 
@@ -3378,6 +3355,8 @@ function buildThreadIndex_(labelPicker, parseMode) {
 }
 
 
+// The original confirmation booking for a source+id (from the per-run cache), or
+// null. This is the stable anchor a modification is applied against.
 function findConfirmationBookingBySourceAndId_(source, bookingId) {
   const id = normalizeId_(bookingId);
   if (!id) return null;
