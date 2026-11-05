@@ -5678,17 +5678,24 @@ function normalizeBooking_(x) {
 }
 
 
+// A booking is only written if it has all six essentials: name, id, date, time,
+// language and source. Anything missing one is incomplete and must not reach a tab
+// (an invalid row would also make a cancellation unable to match it).
 function isValidBooking_(x) {
   const b = normalizeBooking_(x);
   return Boolean(b.name && b.bookingId && b.date && b.time && b.language && b.source);
 }
 
 
+// Collapse runs of whitespace to single spaces and trim — the baseline tidy applied
+// to almost every parsed string.
 function cleanText_(x) {
   return String(x || '').replace(/\s+/g, ' ').trim();
 }
 
 
+// Normalise a phone number to "+<digits>": strip spreadsheet armour (leading =, '),
+// labels and boilerplate, keep only digits and a single leading +.
 function cleanPhone_(x) {
   let s = String(x || '').trim();
   s = s
@@ -5714,11 +5721,15 @@ function cleanPhone_(x) {
 }
 
 
+// Digits-only form of a phone, used as the match key so "+34 600…" and "0034600…"
+// compare equal.
 function cleanPhoneKey_(x) {
   return String(x || '').replace(/[^\d]/g, '');
 }
 
 
+// Fold a name to a comparison key: lower-case, strip accents and punctuation,
+// collapse spaces — so "José García" and "jose garcia" match.
 function normalizeNameKey_(x) {
   return String(x || '')
     .toLowerCase()
@@ -5730,11 +5741,15 @@ function normalizeNameKey_(x) {
 }
 
 
+// Canonical booking-id form for comparison: upper-case, no spaces, no leading '#'.
 function normalizeId_(x) {
   return String(x || '').toUpperCase().replace(/\s+/g, '').replace(/^#/, '').trim();
 }
 
 
+// Map any language wording (across the languages the OTAs send in) to one of the
+// five we run. An unrecognised value defaults to English — see languageFromText_
+// for the stricter variant that returns '' instead.
 function normalizeLanguage_(x) {
   const s = String(x || '').toLowerCase();
 
@@ -5764,11 +5779,10 @@ function normalizeLanguage_(x) {
   return RNR.LANGUAGE.ENGLISH;
 }
 
-/** Like normalizeLanguage_ but returns '' when the text names NO language we run
- *  (instead of defaulting to English), so a caller can fall back to another
- *  field. Used to read the customer's chosen language from a Viator "Tour Grade"
- *  ("Italian Tour 16:00" / "Italian-language tour") without it silently becoming
- *  English. */
+// Like normalizeLanguage_ but returns '' when the text names no language we run,
+// instead of defaulting to English, so the caller can fall back to another field.
+// Used to read the customer's chosen language from a Viator "Tour Grade" without it
+// silently becoming English.
 function languageFromText_(x) {
   const s = String(x || '').toLowerCase();
   if (/spanish|español|espanol|castellano|spanisch|espagnol/.test(s)) return RNR.LANGUAGE.SPANISH;
@@ -5779,12 +5793,10 @@ function languageFromText_(x) {
   return '';
 }
 
-/**
- * True only when the raw language string actually matched a language we run.
- * An empty string is treated as recognised (mono-language platforms simply omit
- * it — that is normal). A NON-empty string that matches nothing is the danger
- * case: it would silently default to English and could go to the wrong tour.
- */
+// True when the raw language string actually matched a language we run. An empty
+// string counts as recognised (mono-language platforms just omit it). A non-empty
+// string that matches nothing is the danger case — it would default to English and
+// could send the booking to the wrong tour — so callers flag it as uncertain.
 function languageRecognised_(raw) {
   const s = String(raw || '').trim();
   if (!s) return true;                    // no language stated -> platform default, fine
@@ -5793,6 +5805,9 @@ function languageRecognised_(raw) {
 }
 
 
+// Map a language to the active tab that holds it, and back. The two are inverses:
+// languageToSheet_ decides which tab a booking is written to, sheetToLanguage_
+// recovers the language when reading a row.
 function languageToSheet_(language) {
   const lang = normalizeLanguage_(language);
   if (lang === RNR.LANGUAGE.SPANISH) return RNR.SHEETS.SPANISH;
@@ -5812,6 +5827,8 @@ function sheetToLanguage_(sheetName) {
 }
 
 
+// Parse a money string to a number, tolerant of currency symbols and either decimal
+// separator ("36,00 €" and "36.00" both -> 36). Returns 0 when there is no number.
 function parseMoney_(x) {
   const s = String(x || '').replace(/[^\d.,]/g, '').replace(',', '.');
   const n = Number(s);
@@ -5821,16 +5838,14 @@ function parseMoney_(x) {
 
 
 
-/** Guruwalk income = flat commission we charge the guide, 6 €/guest. */
+// Guruwalk income = the flat commission we charge the guide, 6 €/guest.
 function guruwalkIncome_(guests) {
   return Number(guests || 0) * Number(RNR.FREE_COMMISSION_PER_GUEST || 0);
 }
 
 
-/**
- * Income for free-model sources = flat 6 €/guest commission the guide owes us
- * (Guruwalk, Free Tour and Website alike).
- */
+// Income for every free-model source (Guruwalk, Free Tour, Website): the same flat
+// 6 €/guest commission the guide owes us.
 function incomeForFreeSource_(source, guests) {
   return Math.round(Number(guests || 0) * Number(RNR.FREE_COMMISSION_PER_GUEST || 0) * 100) / 100;
 }
