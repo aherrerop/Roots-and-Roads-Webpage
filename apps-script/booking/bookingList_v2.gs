@@ -1352,6 +1352,7 @@ function websiteParamsToBooking_(p) {
 
 
 
+// A unique website booking id: "RR" + a short MD5 hash of date|name|phone|guests + a timestamp.
 function generateWebsiteBookingId_(date, name, phone, guests) {
   const d = dateKey_(date) || Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd');
 
@@ -1371,11 +1372,9 @@ function generateWebsiteBookingId_(date, name, phone, guests) {
 }
 
 
-/**
- * Deterministic fallback booking id (no timestamp) for sources whose emails
- * may not carry a stable platform reference (e.g. some Free Tour notifications).
- * Because it is stable, re-processing the same booking dedupes cleanly.
- */
+// Deterministic fallback booking id (NO timestamp) for sources whose emails may lack a stable
+// platform reference (e.g. some Free Tour notifications). Being stable, re-processing the same
+// booking dedupes cleanly.
 function generateFallbackBookingId_(prefix, date, name, phone, guests) {
   const base = [
     prefix,
@@ -1393,6 +1392,8 @@ function generateFallbackBookingId_(prefix, date, name, phone, guests) {
 }
 
 
+// Send the guest their booking confirmation via Brevo's transactional email (a template +
+// params). Throws on a missing email, missing Brevo config, or an API error.
 function sendWebsiteConfirmationViaBrevo_(booking, params) {
   const email = cleanText_(params.email);
   if (!email) throw new Error('Missing website customer email');
@@ -1432,6 +1433,8 @@ function sendWebsiteConfirmationViaBrevo_(booking, params) {
 }
 
 
+// Email management a "NEW WEBSITE RESERVATION" alert. It carries machine-readable DateKey/Time24
+// lines so the confirmation pass can reconstruct the booking and mark the thread Processed.
 function sendWebsiteReservationAlert_(booking, params) {
   const subject = 'NEW WEBSITE RESERVATION - Roots & Roads';
 
@@ -1462,6 +1465,8 @@ function sendWebsiteReservationAlert_(booking, params) {
  * 7. CONFIRMATIONS
  ******************************************************/
 
+// Process every Confirmations label (one per source) into booking rows, then the website
+// alerts. Each source's label + source tag comes from the sourceConfigs_ registry.
 function processConfirmations_() {
   processConfirmationLabel_(RNR.LABELS.VIATOR_CONFIRM, RNR.SOURCE.VIATOR);
   processConfirmationLabel_(RNR.LABELS.GURUWALK_CONFIRM, RNR.SOURCE.GURUWALK);
@@ -1479,12 +1484,9 @@ function processConfirmations_() {
 }
 
 
-/**
- * Parse the internal "NEW WEBSITE RESERVATION" alert back into a booking. The
- * alert (sendWebsiteReservationAlert_) is our own email, so the format is
- * fixed; the machine "DateKey"/"Time24" lines make the date/time unambiguous.
- * Returns null if it is not a complete website alert.
- */
+// Parse our own "NEW WEBSITE RESERVATION" alert back into a booking. The alert is our email so
+// the format is fixed; the machine "DateKey"/"Time24" lines make the date/time unambiguous.
+// Returns null if it isn't a complete website alert.
 function parseWebsiteAlert_(message) {
   const body = getBestMessageText_(message) || '';
   const get = re => { const m = body.match(re); return m ? String(m[1]).trim() : ''; };
@@ -1508,12 +1510,10 @@ function parseWebsiteAlert_(message) {
 }
 
 
-/**
- * Mark every website alert thread Processed (matching OTA confirmations), and
- * re-insert its booking if it is somehow missing from the sheet. doPost is the
- * authority — it writes the row before the alert is sent — so upsert with
- * allowUpdate=false never disturbs an existing row or a manager's edits.
- */
+// Mark every website-alert thread Processed (like OTA confirmations), and re-insert its booking
+// if it's somehow missing from the sheet. doPost is the authority — it writes the row before
+// the alert is sent — so upsert with allowUpdate=false never disturbs an existing row or a
+// manager's edits.
 function processWebsiteConfirmations_() {
   const threads = getThreadsSafe_(RNR.LABELS.WEB_CONFIRM);
   for (const thread of threads) {
@@ -1554,6 +1554,9 @@ function threadIsModifyOrCancel_(thread) {
 }
 
 
+// Process one source's Confirmations label into booking rows. A thread is only marked Processed
+// once at least one valid booking was actually registered (inserted, or legitimately skipped as
+// already-done/cancelled/superseded) — "Processed" must mean "in the sheet".
 function processConfirmationLabel_(labelName, source) {
   const threads = getThreadsSafe_(labelName);
 
@@ -1576,23 +1579,19 @@ function processConfirmationLabel_(labelName, source) {
         // — those passes run after this one and select threads with the same
         // "not yet Processed" search, so finalising now would make them skip
         // the thread entirely.
-        // Ownership is decided by CLASSIFICATION as well as by a full parse: a
-        // "Booking detail change" carries only the reference + the new date, so
-        // it can never yield a complete booking on its own (the modification
-        // pass looks the original up by id). Without this it was logged as a
-        // bogus "Confirmation parse failed".
+        // Ownership is decided by CLASSIFICATION as well as by a full parse: a "Booking detail
+        // change" carries only the reference + the new date, so it can never yield a complete
+        // booking on its own (the modification pass looks the original up by id), and must not
+        // be logged as a bogus "Confirmation parse failed".
         const ownedElsewhere = parseThread_(thread, source, 'any').length > 0 ||
                                threadIsModifyOrCancel_(thread);
         if (ownedElsewhere) continue;
 
-        // Nothing parsed in ANY mode -> a genuine parser/misfile problem (e.g. an
-        // OTA changed its email template). Logged on EVERY run, fast included:
-        // logError_ deduplicates by type+subject within 24h (one row, bumped
-        // count), so this can't flood, and surfacing it on the 5-minute run turns
-        // a silent multi-hour gap — an unparsed confirmation nobody sees until the
-        // twice-daily audit — into an immediate signal on the Status/Errors tabs.
-        // Not marked Processed, so it keeps being retried and self-heals once the
-        // parser is fixed. Maxim: cannot miss a booking.
+        // Nothing parsed in ANY mode -> a genuine parser/misfile problem (e.g. an OTA changed
+        // its email template). Logged on EVERY run (logError_ dedupes by type+subject within
+        // 24h, so it can't flood), which turns a silent multi-hour gap — an unparsed confirmation
+        // nobody sees until the daily audit — into an immediate signal on the Status/Errors tabs.
+        // Not marked Processed, so it keeps being retried and self-heals once the parser is fixed.
         logError_('Confirmation parse failed (no booking found)',
           'Subject: ' + (thread.getFirstMessageSubject() || ''), labelName);
         flagUnprocessedConfirmation_(thread, labelName);   // count + mark UNREAD (no email)
@@ -1655,7 +1654,7 @@ function processConfirmationLabel_(labelName, source) {
 }
 
 
-/** Normalised booking ids currently on the active language tabs. */
+// The normalised booking ids currently on the active language tabs.
 function activeBookingIdSet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const set = {};
@@ -1669,12 +1668,10 @@ function activeBookingIdSet_() {
   return set;
 }
 
-/** The booking id in a confirmation / cancellation / modification SUBJECT, in the
- *  same form the sheet stores it: GYG… (GetYourGuide), BR-… (Viator), BAR+number
- *  (Guruwalk — its subjects show only the number: "Confirmed booking 12779994",
- *  "has canceled booking 12779994", "a modification on booking 12779994"). Empty
- *  when no id can be read; callers then fall back to a full parse, so a subject
- *  format change can only cost speed, never a missed booking. */
+// The booking id in a confirmation / cancellation / modification SUBJECT, in the form the sheet
+// stores it: GYG… (GetYourGuide), BR-… (Viator), BAR+number (Guruwalk, whose subjects show only
+// the number). Empty when no id can be read; callers then fall back to a full parse, so a
+// subject-format change can only cost speed, never a missed booking.
 function confirmationIdFromSubject_(subject) {
   const s = String(subject || '');
   let m = s.match(/\b(GYG[A-Z0-9]{5,})\b/i);  if (m) return m[1].toUpperCase();
@@ -1683,10 +1680,10 @@ function confirmationIdFromSubject_(subject) {
   return '';
 }
 
-/** Cheap pre-filter for the reconcile: a SINGLE-message confirmation whose id is
- *  already on the sheet is fully represented, so skip its body read. Anything with
- *  more than one message (it might also carry a modification for a different code)
- *  is always parsed — so the pre-filter can never miss a booking. */
+// Cheap pre-filter for the reconcile: a SINGLE-message confirmation whose id is already on the
+// sheet is fully represented, so skip its body read. Anything with more than one message (it
+// might also carry a modification for a different code) is always parsed — so the pre-filter can
+// never miss a booking.
 function reconcileThreadAlreadyCovered_(thread, activeIds) {
   try {
     if (thread.getMessageCount() !== 1) return false;
@@ -1695,27 +1692,19 @@ function reconcileThreadAlreadyCovered_(thread, activeIds) {
   } catch (e) { return false; }
 }
 
-/**
- * SAFETY NET — the booking list must always hold EVERY confirmed, upcoming,
- * non-cancelled booking; this reads the confirmations straight from Gmail and
- * re-inserts any that are missing. It runs on every audit (and in recoverMissing-
- * Bookings), so a booking that never landed OR was later removed is put back
- * automatically — the list self-heals.
- *
- * It scans the WHOLE Confirmations label, not just the inbox, so it also catches a
- * confirmation that was somehow archived out of the inbox while its tour is still
- * upcoming. With `includeDone` it ALSO scans the Done label — the last place a
- * still-upcoming booking could hide if an earlier step wrongly archived it "as
- * completed". Past tours are dropped by isCompleted_, cancelled/superseded by their
- * own guards, so ONLY genuinely-missing upcoming bookings are recovered — it can
- * never resurrect a tour that already ran or was cancelled.
- *
- * This replaced a newest-60 cap that lost bookings booked months ahead (Olga
- * Akhapkina, 30 pax) — a count cap on the wrong dimension. A cheap pre-filter (an
- * already-present single-message confirmation is skipped without a body read) plus
- * per-thread time-gating keep it inside the run budget. Parses in permissive 'any'
- * mode so a confirmation sharing a thread with a modification is not dropped.
- */
+// SAFETY NET — the booking list must always hold EVERY confirmed, upcoming, non-cancelled
+// booking, so this reads the confirmations straight from Gmail and re-inserts any that are
+// missing. Runs on every audit (and in recoverMissingBookings), so a booking that never landed
+// OR was later removed is put back automatically — the list self-heals.
+//
+// It scans the WHOLE Confirmations label, not just the inbox, so it also catches a confirmation
+// archived out of the inbox while its tour is still upcoming. With `includeDone` it ALSO scans
+// the Done label — the last place a still-upcoming booking could hide if an earlier step wrongly
+// archived it. Past tours are dropped by isCompleted_, cancelled/superseded by their own guards,
+// so ONLY genuinely-missing upcoming bookings are recovered. It scans the whole label (not a
+// newest-N cap, which would lose a booking made months ahead); a cheap pre-filter + per-thread
+// time-gating keep it inside the run budget, and it parses in permissive 'any' mode so a
+// confirmation sharing a thread with a modification isn't dropped.
 function reconcileConfirmationsToBookingList_(includeDone) {
   const ctx = { activeIds: activeBookingIdSet_(), superseded: getSupersededIds_(), recovered: 0 };
 
