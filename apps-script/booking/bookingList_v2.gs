@@ -699,13 +699,10 @@ function runBookingCore_(skipProcessed) {
     // confirmations from being processed. Maxim: cannot miss a booking.
     runPhase_('cancellations', processCancellations_);
 
-    // 1b. AUDIT-only recovery, run BEFORE the heavy confirmation re-read. The
-    //     audit's time budget (MAX_RUN_MS = 180s) is consumed mostly by
-    //     processConfirmations_ re-reading every confirmation thread, so anything
-    //     placed AFTER it is silently skipped (this is why the superseded-row
-    //     removal never ran — Sara Dervishi stayed). Do the recovery FIRST:
-    //     drop any row a modification superseded (Sara), then apply modifications
-    //     stuck under Done (Anna Erb).
+    // 1b. AUDIT-only recovery, run BEFORE the heavy confirmation re-read — the audit's time
+    //     budget is consumed mostly by processConfirmations_, so anything placed AFTER it can
+    //     be skipped when time runs out. Do recovery FIRST: drop any row a modification
+    //     superseded, then apply modifications stuck under the Done label.
     runPhase_('removeSuperseded', removeSupersededActiveBookings_, !RNR_SKIP_PROCESSED_);
     runPhase_('strayModifications', processStrayModifications_, !RNR_SKIP_PROCESSED_);
 
@@ -770,10 +767,10 @@ function runBookingCore_(skipProcessed) {
     //     read-quota cost on the fast run.
     runPhase_('privateAlerts', privateBookingAlerts_);
 
-    // 7b. CLEAN UP STALE ALERTS: trash a full-tour OR private alert once its tour
-    //     has run. AUDIT-ONLY (it does a Gmail search every pass): housekeeping that
-    //     does not need the 5-min cadence, and keeping Gmail calls off the fast run
-    //     protects the daily Gmail quota (a quota exhaustion stalls ALL processing).
+    // 7b. CLEAN UP STALE ALERTS: trash a full-tour OR private alert once its tour has run.
+    //     AUDIT-ONLY (it does a Gmail search every pass): housekeeping that doesn't need the
+    //     frequent cadence, and keeping Gmail calls off the fast run protects the daily Gmail
+    //     quota (quota exhaustion stalls ALL processing).
     runPhase_('capacityAlertCleanup', cleanupExpiredCapacityAlerts_, !RNR_SKIP_PROCESSED_);
 
   } catch (err) {
@@ -796,10 +793,8 @@ function runBookingCore_(skipProcessed) {
 }
 
 
-/**
- * Heartbeat: rewrites the small "Status" tab after EVERY run so a manager can
- * see at a glance that the system is alive and what the last run did.
- */
+// Heartbeat: rewrite the small "Status" tab after EVERY run so a manager can see at a glance
+// that the system is alive and what the last run did.
 function writeRunStatus_(mode) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -870,16 +865,11 @@ function ensureProcessedLabel_() {
 }
 
 
-/**
- * Website booking endpoint.
- */
-/**
- * A log-safe view of website booking params. The Errors tab is a persistent store
- * anyone with sheet access can read, so it must NOT hold raw personal data. Keep
- * enough to diagnose (date/time/language/guests/source) but mask name, email and
- * phone and drop the free-text message. (GDPR data-minimisation; the full details
- * still go to management's own inbox for the busy-system manual-entry case.)
- */
+// A log-safe view of website booking params. The Errors tab is a persistent store anyone with
+// sheet access can read, so it must NOT hold raw personal data: keep enough to diagnose
+// (date/time/language/guests/source) but mask name, email and phone and drop the free-text
+// message. (GDPR data-minimisation; the full details still go to management's own inbox for the
+// busy-system manual-entry case.)
 function redactParams_(params) {
   const p = params || {};
   const maskEmail = e => { e = String(e || ''); const at = e.indexOf('@'); return at > 0 ? (e.charAt(0) + '***@' + e.slice(at + 1)) : (e ? '***' : ''); };
@@ -893,6 +883,10 @@ function redactParams_(params) {
   });
 }
 
+// Website booking endpoint (the site POSTs a reservation here). Saves it to the sheet under a
+// lock; if a booking run holds the lock, it emails management the raw details for manual entry
+// so a reservation is never lost. Confirmation/alert emails are best-effort — a mail hiccup
+// never fails a saved booking.
 function doPost(e) {
   const lock = LockService.getScriptLock();
 
@@ -957,21 +951,22 @@ function doPost(e) {
  * 4. SHEET SETUP AND FORMATTING
  ******************************************************/
 
+// The five active language Tours tabs.
 function activeSheetNames_() {
   return [RNR.SHEETS.ENGLISH, RNR.SHEETS.GERMAN, RNR.SHEETS.SPANISH,
           RNR.SHEETS.ITALIAN, RNR.SHEETS.FRENCH];
 }
 
 
+// Create a tab with the given headers if missing, and fix its header row only when it's wrong.
 function ensureSheet_(ss, name, headers) {
   let sh = ss.getSheetByName(name);
   const isNew = !sh;
   if (isNew) sh = ss.insertSheet(name);
 
-  // Only touch the header row when it is actually wrong. This runs for EVERY
-  // active tab on EVERY 5-minute run; rewriting headers unconditionally was
-  // pure Spreadsheets load (and load is what triggers "Service Spreadsheets
-  // timed out" under contention).
+  // Only touch the header row when it is actually wrong. This runs for every active tab on
+  // every run, and rewriting headers unconditionally is pure Spreadsheets load — which is what
+  // trips "Service Spreadsheets timed out" under contention.
   if (!isNew) {
     const current = sh.getRange(1, 1, 1, headers.length).getValues()[0];
     if (headers.every((h, i) => String(current[i]) === String(h))) return;
@@ -981,6 +976,7 @@ function ensureSheet_(ss, name, headers) {
 }
 
 
+// Create every Gmail label the system uses if it's missing (~24 lookups; audit/manual only).
 function ensureLabels_() {
   Object.values(RNR.LABELS).forEach(labelName => {
     try {
@@ -995,6 +991,7 @@ function ensureLabels_() {
 }
 
 
+// Apply fonts, column widths and number formats to the active + Done tabs (audit/manual only).
 function formatSheets_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
