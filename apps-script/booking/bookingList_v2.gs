@@ -3364,6 +3364,10 @@ function findConfirmationBookingBySourceAndId_(source, bookingId) {
 }
 
 
+// Last-resort tour date for a thread we could not parse into a booking: scan the
+// subject + every message body for the first date that follows a known label
+// (Amended/Cancelled/New Booking, Travel/Tour Date, Fecha, Date). Returns a
+// normalized Date, or null when nothing matches.
 function extractTourDateFromThread_(thread) {
   const subject = thread.getFirstMessageSubject() || '';
   const text = subject + '\n' + thread.getMessages()
@@ -3383,6 +3387,10 @@ function extractTourDateFromThread_(thread) {
 }
 
 
+// Last-resort tour time for the same unparsed threads: Viator threads (subject
+// says Viator, or a BR- id appears) go through the Viator time extractor; every
+// other source scans for a labelled Time/Hora/Start time or an HH:MM before a
+// dash. Returns a normalized time, or '' when nothing matches.
 function extractTourTimeFromThread_(thread) {
   const text = thread.getMessages()
     .map(m => (m.getSubject() || '') + '\n' + getBestMessageText_(m)).join('\n');
@@ -3402,6 +3410,9 @@ function extractTourTimeFromThread_(thread) {
 }
 
 
+// Website equivalent of the platform completion sweep: move a Website confirmation
+// thread to Web/Done once every booking on it has finished. Website threads carry
+// their own labels (not the <Source>/Done config), so the label swap is explicit.
 function moveCompletedWebsiteThreadsToDone_() {
   const threads = getThreadsForCompletionSweep_(RNR.LABELS.WEB_CONFIRM);
   if (!GmailApp.getUserLabelByName(RNR.LABELS.WEB_DONE)) return;
@@ -3427,6 +3438,9 @@ function moveCompletedWebsiteThreadsToDone_() {
 }
 
 
+// Archive Viator/Conversations threads (traveller message chains, not bookings)
+// once their booking has finished. Matches each thread to its booking by id and
+// keeps the Conversations label — only the inbox placement changes.
 function moveCompletedViatorConversationThreads_() {
   const threads = getThreadsForCompletionSweep_(RNR.LABELS.VIATOR_CONVERSATIONS);
 
@@ -3452,11 +3466,9 @@ function moveCompletedViatorConversationThreads_() {
 }
 
 
-/**
- * Pull a platform booking id from a thread. Each source uses its own reference
- * shape: Viator BR-#######, GetYourGuide GYG######## / S######, Guruwalk /
- * Free Tour alphanumeric codes.
- */
+// Pull a platform booking id straight from a thread's subject + bodies. Each
+// source has its own reference shape, so the patterns are tried per source:
+// Viator BR-#######, GetYourGuide GYG…/S######, Guruwalk BAR…, Free Tour codes.
 function extractBookingIdFromThread_(thread, source) {
   const subject = thread.getFirstMessageSubject() || '';
   const body = thread.getMessages().map(m => getBestMessageText_(m)).join('\n');
@@ -3497,7 +3509,8 @@ function extractBookingIdFromThread_(thread, source) {
  * 11. ACTIVE SHEET WRITE / DELETE
  ******************************************************/
 
-/** Rewrite ONLY the Source cell of an existing row (text format, no re-sort). */
+// Rewrite only the Source cell of an existing row (text format, no re-sort), and
+// mark the run dirty so the portal feed rebuilds.
 function reconcileSourceCell_(sh, row, source) {
   const col = RNR.ACTIVE_HEADERS.indexOf('Source') + 1;
   if (col < 1) return;
@@ -3505,6 +3518,14 @@ function reconcileSourceCell_(sh, row, source) {
   if (RNR_RUN_STATS_) RNR_RUN_STATS_.upserts++;   // marks the run dirty -> feed rebuilds
 }
 
+// The one path that writes a booking to the active tabs: insert a new row or
+// update the existing one. Guards a cancelled booking (delete, never restore),
+// respects cross-tab authority (a manager's "move" to another language wins over
+// an email), and respects manual-edit authority (insert-only re-reads never touch
+// an existing row). New rows slide into sorted position so the tab needn't re-sort.
+//   allowUpdate  - true for modification/cancellation emails; false for audits.
+//   lenientMatch - match on id OR date+time+phone-or-name, so a tweaked field
+//                  still updates the right row instead of duplicating it.
 function upsertActiveBooking_(booking, allowUpdate, lenientMatch) {
   if (allowUpdate === undefined) allowUpdate = true;
   const b = normalizeBooking_(booking);
@@ -3592,19 +3613,16 @@ function upsertActiveBooking_(booking, allowUpdate, lenientMatch) {
 }
 
 
-/** One retry after a pause for Google's transient "Service Spreadsheets
- *  failed" errors (seen in the Errors tab on heavy write passes). */
+// Run fn once more after a short pause if it throws — covers Google's transient
+// "Service Spreadsheets failed" errors on heavy write passes.
 function withRetry_(fn) {
   try { return fn(); }
   catch (e) { Utilities.sleep(1500); return fn(); }
 }
 
-/**
- * BULK write of many booking rows in ONE setValues call (plus one number-
- * format pass per column). The old per-cell writer cost 9 API calls per row,
- * which is what made dedupe/sort passes slow and prone to transient
- * Spreadsheets-service failures.
- */
+// Write many booking rows in ONE setValues call (plus one number-format pass per
+// column), instead of cell-by-cell. Keeps dedupe/sort passes fast and clear of the
+// write quota.
 function writeBookingRowsBulk_(sh, startRow, bookings) {
   if (!bookings.length) return;
   const n = bookings.length;
@@ -3625,16 +3643,17 @@ function writeBookingRowsBulk_(sh, startRow, bookings) {
 }
 
 
-/** Per-column formats of an active booking row (matches ACTIVE_HEADERS). */
+// Per-column number formats of one active booking row (matches ACTIVE_HEADERS).
 const RNR_ROW_FORMATS_ = [['@', '@', '0', 'ddd, mmm d', '@', '@', '0.##', '@', '@']];
 
+// Write a single booking into one row with ONE format call + ONE value call
+// (not ~24 per-cell calls — the per-cell writer was the biggest Spreadsheets cost
+// on every run). The phone is stored with a leading apostrophe so Sheets keeps it
+// as text and never drops a leading zero or "+".
 function writeBookingRow_(sh, rowNumber, booking) {
   const b = normalizeBooking_(booking);
   const phone = cleanPhone_(b.phone);
 
-  // ONE format call + ONE value call instead of ~24 per-cell calls. The
-  // per-cell writer was the single biggest Spreadsheets cost on every run and
-  // is what made the 5-minute trigger hit "Service Spreadsheets timed out".
   const r = sh.getRange(rowNumber, 1, 1, 9);
   withRetry_(() => r.setNumberFormats(RNR_ROW_FORMATS_));
   withRetry_(() => r.setValues([[
@@ -3651,14 +3670,14 @@ function writeBookingRow_(sh, rowNumber, booking) {
 }
 
 
+// Delete a booking from the active tabs. A cancellation passes lenient=true, which
+// matches like cancellationMatchesBooking_ (same id, or same date+time with a
+// compatible name OR phone) — strict sameBooking_ needs both name and phone and so
+// never deletes a phone-less source like Airbnb, leaving the tour on the list.
 function removeActiveBooking_(booking, lenient) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const target = normalizeBooking_(booking);
 
-  // A CANCELLATION matches like cancellationMatchesBooking_: same id, OR same
-  // date+time with a compatible name OR phone. The strict sameBooking_ needs BOTH
-  // name AND phone, which never matches a phone-less source — Airbnb gives no phone,
-  // so a strict cancellation left the tour on the list forever (Vladimir, TA4XBEYM).
   activeSheetNames_().forEach(sheetName => {
     const sh = ss.getSheetByName(sheetName);
     if (!sh || sh.getLastRow() < 2) return;
@@ -3679,6 +3698,8 @@ function removeActiveBooking_(booking, lenient) {
 
 
 
+// Turn a raw active-sheet row (9 columns A..I) back into a normalized booking,
+// recovering language from the tab name and children/infants from the notes cell.
 function rowToBooking_(row, sheetName) {
   return normalizeBooking_({
     name: row[0],
@@ -3703,18 +3724,24 @@ function rowToBooking_(row, sheetName) {
 
 /******************************************************
  * 11B. PORTAL FEED  (read-optimised view for the guide portal)
- *
- * ONE visible tab with every upcoming reservation across all languages, so the
- * portal reads a single tab instead of opening and scanning six. Rebuilt every
- * run from the active language tabs. The two check-in columns (L,M) are the
- * portal's alone: the rebuild PRESERVES them by Booking ID and never overwrites
- * a check-in with a blank.
  ******************************************************/
+
+// One visible tab holding every upcoming reservation across all languages, so the
+// portal reads a single tab instead of scanning six. Rebuilt every run from the
+// active language tabs, but the columns the CONTROL project owns (check-in and
+// assigned guide) are preserved by Booking ID — a rebuild never wipes a check-in.
+
+// Wrapper that never lets a feed-rebuild failure abort the run — it only logs.
 function safeRebuildPortalFeed_() {
   try { rebuildPortalFeed_(); }
   catch (e) { logError_('Portal feed rebuild failed', e, RNR.SHEETS.PORTAL_FEED); }
 }
 
+// Rebuild the portal feed tab. In order: snapshot what Control owns on the current
+// rows (check-in M/N, guide O, and empty 'shift' placeholder rows) so it survives;
+// archive rows now aging out into Past2Days for the manager History view; gather
+// this window's reservations from every language tab; then rewrite the tab,
+// re-attaching each preserved check-in/guide by Booking ID.
 function rebuildPortalFeed_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const H = RNR.PORTAL_FEED_HEADERS;
