@@ -1260,20 +1260,10 @@ function moveThreadOutOfInbox_(thread) {
   safeArchive_(thread);
 }
 
-/**
- * Finalise a thread as Processed: add the marker label, archive it. Used
- * after a Confirmation/Modification/Cancellation thread has been fully read
- * and acted on this run, regardless of which label it keeps.
- */
-/**
- * Mark a thread as fully handled by the algorithm.
- *
- * IMPORTANT: this does NOT archive. A processed booking email stays in the
- * inbox until its tour is over (see RNR.ARCHIVE_CANCELLED_IMMEDIATELY and
- * moveCompletedPlatformThreadsToDone_). The inbox is the live list of
- * upcoming tours; the Processed label is what tells the algorithm — and you —
- * that the booking is already in the sheet.
- */
+// Mark a thread as fully handled: add the Processed label and mark it read. It does NOT
+// archive — a processed booking email stays in the inbox until its tour is over (the inbox is
+// the live list of upcoming tours; the Processed label tells the algorithm, and you, that the
+// booking is already in the sheet).
 function finalizeThreadProcessed_(thread) {
   safeAddLabel_(thread, RNR.LABELS.PROCESSED);
   safeMarkRead_(thread);
@@ -1281,8 +1271,8 @@ function finalizeThreadProcessed_(thread) {
   if (RNR_RUN_STATS_) RNR_RUN_STATS_.processed++;
 }
 
-/** Remember a thread's subject once it is successfully processed, so any stale
- *  Errors-tab row about it can be removed at the end of the run. */
+// Remember a thread's subject once it is successfully processed, so any stale Errors-tab row
+// about it can be removed at the end of the run.
 function recordResolvedThread_(thread) {
   try {
     if (!RNR_RESOLVED_SUBJECTS_) return;
@@ -1291,12 +1281,9 @@ function recordResolvedThread_(thread) {
   } catch (e) { /* best-effort */ }
 }
 
-/**
- * Remove Errors-tab rows whose Details reference a subject we SUCCESSFULLY
- * processed this run. An error that has since resolved (e.g. a cancellation
- * whose booking is now handled) should not keep showing. Runs once at the end
- * of a run, so it is one read + a few deletes, not a scan per thread.
- */
+// Remove Errors-tab rows whose Details reference a subject we SUCCESSFULLY processed this run
+// (an error that has since resolved shouldn't keep showing). Runs once at the end of a run —
+// one read + a few deletes, not a scan per thread.
 function pruneResolvedErrors_() {
   try {
     if (!RNR_RESOLVED_SUBJECTS_ || !RNR_RESOLVED_SUBJECTS_.size) return;
@@ -1313,10 +1300,8 @@ function pruneResolvedErrors_() {
   } catch (e) { /* best-effort; a leftover error row is harmless */ }
 }
 
-/**
- * Same as above, but for a thread whose booking is CANCELLED: that tour will
- * never run, so it also leaves the inbox straight away.
- */
+// Like finalizeThreadProcessed_, but for a thread whose booking is CANCELLED: that tour will
+// never run, so it also leaves the inbox straight away (archived).
 function finalizeThreadCancelled_(thread) {
   safeAddLabel_(thread, RNR.LABELS.PROCESSED);
   safeMarkRead_(thread);
@@ -1325,11 +1310,9 @@ function finalizeThreadCancelled_(thread) {
   if (RNR_RUN_STATS_) RNR_RUN_STATS_.processed++;
 }
 
-/**
- * Strip every RNR-managed label this source uses from a thread except the
- * ones listed in keep[]. Used when a booking is cancelled (keep = [cancel])
- * or completed (keep = [done], i.e. strip everything including Processed).
- */
+// Strip every RNR-managed label this source uses from a thread except the ones in keep[]. Used
+// when a booking is cancelled (keep = [cancel]) or completed (keep = [done] — strip everything,
+// including Processed).
 function stripSourceLabelsExcept_(thread, cfg, keep) {
   const all = [cfg.confirm, cfg.modify, cfg.cancel, RNR.LABELS.PROCESSED].filter(Boolean);
   all.forEach(labelName => {
