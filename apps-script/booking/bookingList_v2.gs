@@ -3857,18 +3857,13 @@ function rebuildPortalFeed_() {
   return rows.length;
 }
 
-/**
- * Maintain the Past2Days tab — a rolling snapshot of the Portal Feed rows for the
- * last RNR.PAST_FEED_DAYS days. A tour on day D has live-feed rows only while
- * D >= today; the first rebuild after midnight sees D's rows aging out (via the
- * oldFeedRows the rebuild just read) and copies them here, WITH their check-in
- * (M/N) and assigned guide (O). Merged with the rows already here and pruned to
- * the window, so each past day's detail survives exactly PAST_FEED_DAYS days.
- * This is what powers the portal's manager "History" view (mark Guruwalk/Freetour
- * no-shows, undo a check-in) after a tour has run and left the live feed.
- * `oldFeedRows` = the pre-rebuild Portal Feed rows (freshest M/N/O). Best-effort:
- * a failure here never breaks the live-feed rebuild.
- */
+// Maintain Past2Days — a rolling snapshot of Portal Feed rows for the last
+// RNR.PAST_FEED_DAYS days, keeping each past tour's roster WITH its check-in (M/N)
+// and assigned guide (O) after it has left the live feed. This is what powers the
+// portal's manager History view (mark no-shows, undo a check-in). The rows the
+// rebuild just read (`oldFeedRows`, the freshest M/N/O) are overlaid onto what is
+// already here and pruned to the window, so a tour's detail survives exactly
+// PAST_FEED_DAYS days. Best-effort: a failure here never breaks the live rebuild.
 function updatePast2DaysFeed_(ss, oldFeedRows) {
   try {
     const H = RNR.PORTAL_FEED_HEADERS;
@@ -3929,24 +3924,25 @@ function updatePast2DaysFeed_(ss, oldFeedRows) {
  * 11b. FULL-TOUR ALERTS  (reach the cap -> close it / add a 2nd guide)
  ******************************************************/
 
-/** Is this booking's SOURCE the Sagrada exterior product (its own tour: GYG-SF / Viator-SF)? */
+// True when the source is the Sagrada-exterior product (its own tour, either
+// account: GYG-SF or Viator-SF).
 function bookingIsSfExtSource_(source) {
   const s = String(source || '').trim().toLowerCase();
   return s === String(RNR.SOURCE.SF_EXT).toLowerCase() ||
          s === String(RNR.SOURCE.SF_EXT_VIATOR).toLowerCase();
 }
 
-/** A compact, unambiguous day label from a yyyy-MM-dd key: "Fri 26 Sep". */
+// A compact, unambiguous day label from a yyyy-MM-dd key: "Fri 26 Sep".
 function tourDayLabel_(dateKey) {
   const d = new Date(String(dateKey) + 'T12:00:00');
   if (isNaN(d.getTime())) return String(dateKey || '');
   return Utilities.formatDate(d, 'Europe/Madrid', 'EEE d MMM');
 }
 
-/** A Portal Feed DATE cell -> "yyyy-MM-dd". Sheets returns the column as a real
- *  Date object in production (text only in unit tests), so normalise both — else
- *  a date like "Thu Oct 15 2026 00:00:00 GMT+0200" leaks into the subject.
- *  Built from the Date's components (not Utilities.formatDate) so it is robust. */
+// Normalise a Portal Feed DATE cell to "yyyy-MM-dd". The column comes back as a
+// real Date in production but as text in unit tests, so handle both — otherwise a
+// value like "Thu Oct 15 2026 00:00:00 GMT+0200" would leak into an alert subject.
+// Built from the Date's own components so there is no timezone surprise.
 function feedYmd_(v) {
   const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   if (v instanceof Date && !isNaN(v.getTime())) return ymd(v);
@@ -3957,15 +3953,12 @@ function feedYmd_(v) {
   return isNaN(d.getTime()) ? s : ymd(d);
 }
 
-/**
- * Group every upcoming REAL booking in the Portal Feed into its tour card —
- * keyed date|time|language|variant, exactly like the portal (regular "3h" and
- * the Sagrada exterior "SF" are DIFFERENT tours; private tours are excluded,
- * each private booking is its own single group). Returns { key -> {people,...} }
- * where people = adults + children (the head-count that walks with the guide).
- * The single source of truth read by capacityAlerts_ (kept separate so it is
- * unit-testable without sending mail).
- */
+// Group every upcoming real booking in the Portal Feed into its tour card, keyed
+// date|time|language|variant exactly like the portal (the regular "3h" tour and
+// the Sagrada-exterior "SF" are different tours; private tours are excluded, each
+// its own single group). Returns { key -> {people, …} } where people = adults +
+// children (the head-count walking with the guide). Kept separate from
+// capacityAlerts_ so it can be unit-tested without sending mail.
 function readUpcomingTourGroups_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName(RNR.SHEETS.PORTAL_FEED);
@@ -4001,6 +3994,9 @@ function readUpcomingTourGroups_() {
   return out;
 }
 
+// Read/write the "already alerted" set (key -> level) kept in a Script Property, so
+// the once-per-tour rule survives across runs. A read failure yields {} (alert
+// again rather than go silent); a write failure only logs.
 function readCapacityState_() {
   try {
     const raw = PropertiesService.getScriptProperties().getProperty(RNR.CAPACITY_ALERT_PROP);
@@ -4014,25 +4010,22 @@ function writeCapacityState_(obj) {
   } catch (e) { logError_('capacity state write failed', e, ''); }
 }
 
-/**
- * Email management the moment an upcoming group tour reaches the people cap, so
- * they can CLOSE it (pause its availability on the platforms/website) or add a
- * SECOND GUIDE. Fires ONCE per tour: the alerted tours are remembered in a Script
- * Property, and a tour re-alerts only if it drops back below the cap and later
- * refills. Everything the manager needs is in the SUBJECT; the body adds the
- * per-source and per-booking breakdown. Runs at the end of every booking pass, so
- * the alert lands within one cycle of the booking that filled the tour.
- */
-/** Effective people toward the full-tour cap. Adults always count. Children are
- *  free up to 5; once there are MORE than 5 children, EVERY child counts as HALF
- *  an adult. Unchanged for adult-heavy tours, catches a child-heavy one (17+13 ->
- *  17 + 13*0.5 = 23.5 >= 20). Must match the control project's fullTourCount_ so
- *  this email and the portal's red "Full" outline always agree. */
+// Effective head-count toward the full-tour cap. Adults always count; children are
+// free up to 5, but once there are MORE than 5 children every child counts as half
+// an adult (so 17+13 -> 17 + 13*0.5 = 23.5 >= 20 trips a child-heavy tour that
+// adults alone would not). Must match the control project's fullTourCount_ so this
+// email and the portal's red "Full" outline always agree.
 function fullTourCount_(adults, children) {
   const a = Number(adults || 0), c = Number(children || 0);
   return a + (c > 5 ? c * 0.5 : 0);
 }
 
+// Email management the moment an upcoming group tour reaches the people cap so they
+// can close it (pause availability on the platforms/website) or add a second guide.
+// Fires once per tour — alerted tours are remembered in a Script Property and only
+// re-alert if a tour drops below the cap and later refills. State is persisted ONLY
+// after a successful send, so a thrown email is retried next run: a rare duplicate
+// alert is acceptable, a missed "tour is full" is not.
 function capacityAlerts_() {
   const groups = readUpcomingTourGroups_();
   const THRESH = Number(RNR.TOUR_FULL_THRESHOLD) || 20;
@@ -4062,8 +4055,9 @@ function capacityAlerts_() {
   return crossed.length;
 }
 
-/** One full tour, all detail in the subject line:
- *  🔴 {language}[ · SF] · {date, no year} {time} · FULL {people}p — close or add 2nd guide */
+// Single-tour alert: everything actionable is in the subject line
+// (🔴 {language}[ · SF] · {date} {time} · FULL {adults} adults[ +Nk] — close or add
+// 2nd guide); the body carries the per-source and per-booking breakdown.
 function sendCapacityAlertEmail_(g, thresh) {
   const sfTag = g.variant === 'SF' ? ' · SF' : '';
   const kids = g.children ? ' +' + g.children + 'k' : '';
@@ -4072,6 +4066,9 @@ function sendCapacityAlertEmail_(g, thresh) {
   MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: capacityAlertBody_(g, thresh) });
 }
 
+// Build the plain-text body of a single-tour alert: what to do, the tour line,
+// adults/children, assigned guide, the per-source and per-booking breakdown, and
+// the machine-readable removal marker cleanupExpiredCapacityAlerts_ reads back.
 function capacityAlertBody_(g, thresh) {
   const L = [];
   L.push('This tour has reached the ' + thresh + '-person cap (children are free up to 5, then each counts as half an adult).');
@@ -4099,8 +4096,9 @@ function capacityAlertBody_(g, thresh) {
   return L.join('\n');
 }
 
-/** Several tours crossed in one pass (e.g. the first run after enabling this):
- *  one digest instead of a burst of separate emails. */
+// When several tours cross the cap in one pass, send one digest instead of a burst
+// of separate emails. Carries one removal marker per tour so the cleanup sweep can
+// trash the digest once every tour it covers has run.
 function sendCapacityDigestEmail_(list, thresh) {
   const subject = '🔴 ' + list.length + ' tours full (' + thresh + '+) — close or add a 2nd guide';
   const blocks = list.map(g => {
@@ -4120,17 +4118,13 @@ function sendCapacityDigestEmail_(list, thresh) {
   MailApp.sendEmail({ to: RNR.INTERNAL_ALERT_TO, subject: subject, body: body });
 }
 
-/**
- * A full-tour alert is actionable only until the tour runs — once its time has
- * passed you can no longer close it or add a guide — so trash each alert once its
- * tour is over. The tour's start time is read back from the ISO marker the sender
- * wrote into the body ("…after the tour runs: 2026-10-16 10:30 AM."), which is
- * locale-independent; a digest carries one marker per tour and is trashed only
- * when EVERY tour it covers has passed. Matches ONLY our own alerts (the 🔴
- * "…2nd guide" subject plus the marker phrase), so it can never touch a real
- * booking email, and if a date can't be read the alert is left alone — never a
- * guess-delete. Best-effort + bounded, so it is safe to run every pass.
- */
+// Trash each full-tour alert once its tour is over, since you can no longer close
+// it or add a guide. The start time is read back from the locale-independent ISO
+// marker the sender wrote into the body ("…after the tour runs: 2026-10-16 10:30
+// AM."); a digest carries one marker per tour and is trashed only when every tour
+// it covers has passed. Matches only our own alerts (the 🔴 subject plus the marker
+// phrase), so it can never touch a real booking email, and an alert whose date
+// can't be read is left alone — never a guess-delete. Best-effort and bounded.
 function cleanupExpiredCapacityAlerts_() {
   let threads;
   try {
@@ -4171,12 +4165,10 @@ function cleanupExpiredCapacityAlerts_() {
  * 11c. PRIVATE-TOUR ALERTS  (a private is booked -> close the others at that slot)
  ******************************************************/
 
-/**
- * Every upcoming PRIVATE booking in the Portal Feed, as a flat list — ONE entry
- * per private tour (so we email one per tour, not a digest). Kept separate from
- * readUpcomingTourGroups_ (which EXCLUDES private) so it is unit-testable without
- * sending mail.
- */
+// Every upcoming PRIVATE booking in the Portal Feed as a flat list — one entry per
+// private tour, so a private gets one email rather than a digest. Kept separate
+// from readUpcomingTourGroups_ (which excludes private) so it is unit-testable
+// without sending mail.
 function readUpcomingPrivateBookings_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName(RNR.SHEETS.PORTAL_FEED);
@@ -4208,6 +4200,9 @@ function readUpcomingPrivateBookings_() {
   return out;
 }
 
+// Read/write the "already alerted" set for privates (keyed by booking id) in a
+// Script Property, so the once-per-booking rule survives across runs. Same failure
+// policy as the capacity state: a bad read yields {}, a bad write only logs.
 function readPrivateAlertState_() {
   try {
     const raw = PropertiesService.getScriptProperties().getProperty(RNR.PRIVATE_ALERT_PROP);
@@ -4221,8 +4216,8 @@ function writePrivateAlertState_(obj) {
   } catch (e) { logError_('private alert state write failed', e, ''); }
 }
 
-/** Short platform label for the subject: GYG_RR (main GYG), GYG_SS (2nd GYG account),
- *  Viator, else the raw source. */
+// Short platform label for the alert subject: GYG_RR (main GYG), GYG_SS (2nd GYG
+// account), Viator, else the raw source.
 function privateSourceLabel_(source) {
   const s = String(source || '').trim();
   if (s === RNR.SOURCE.GYG) return 'GYG_RR';
@@ -4230,12 +4225,12 @@ function privateSourceLabel_(source) {
   if (s === RNR.SOURCE.VIATOR) return 'Viator';
   return s || '?';
 }
-/** A date (yyyy-MM-dd, Date object, or raw string) -> "10/21/2026" (US month/day/year). */
+// A date (yyyy-MM-dd, Date, or raw string) -> "10/21/2026" (US month/day/year).
 function privateDateMDY_(dateKey) {
   const m = feedYmd_(dateKey).match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? (Number(m[2]) + '/' + Number(m[3]) + '/' + m[1]) : feedYmd_(dateKey);
 }
-/** "10:30 AM" / "3:30 PM" -> "10:30" / "15:30" (24h, compact subject). */
+// "10:30 AM" / "3:30 PM" -> "10:30" / "15:30" (24h, for a compact subject line).
 function time24FromLabel_(t) {
   const m = String(t || '').trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
   if (!m) return String(t || '');
@@ -4245,15 +4240,11 @@ function time24FromLabel_(t) {
   return String(h).padStart(2, '0') + ':' + m[2];
 }
 
-/**
- * Email management ONE message PER private tour, once it is booked (confirmed in
- * the feed), so they can CLOSE the other private tours at that slot — a private
- * takes the whole slot. Everything is in the subject; the body is two lines.
- * Fires once per BOOKING (keyed by booking id); a cancelled private drops out of
- * the state, so a re-book re-alerts. Each send is marked only on success, so a
- * mail hiccup retries that one without duplicating the rest. MailApp send only —
- * no Gmail read quota.
- */
+// Email one message per private tour once it is booked, so they can close the
+// other private slots at that day+time (a private takes the whole slot). Fires once
+// per booking (keyed by id); a cancelled private drops out of the state so a re-book
+// re-alerts. Each send is marked only on success, so a mail hiccup retries just that
+// one. MailApp send only — no Gmail read quota.
 function privateBookingAlerts_() {
   const bookings = readUpcomingPrivateBookings_();
   const prev = readPrivateAlertState_();
@@ -4271,9 +4262,9 @@ function privateBookingAlerts_() {
   return sentN;
 }
 
-/** One private tour per email. Everything is in the subject so management sees it
- *  from the phone notification without opening it:
- *  "🔴 Private GYG_RR 10:30 10/21/2026"  (icon · Private · source · time · date) */
+// Send one private-tour alert. Everything is in the subject so it reads from a
+// phone notification without opening ("🔴 Private GYG_RR 10:30 10/21/2026"); the
+// body is one action line plus the hidden removal marker the cleanup sweep reads.
 function sendPrivateAlertEmail_(b) {
   const subject = '🔴 Private ' + privateSourceLabel_(b.source) + ' ' +
                   time24FromLabel_(b.time) + ' ' + privateDateMDY_(b.dateKey);
