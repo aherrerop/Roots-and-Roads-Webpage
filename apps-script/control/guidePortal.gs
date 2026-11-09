@@ -967,7 +967,7 @@ function apiTours_(p) {
   schedule = _t('closed', function () {
     const closed = readClosedShifts_();
     return schedule.filter(s =>
-      !closed[shiftDomId_(s)] ||                              // not closed -> show
+      !isShiftClosed_(closed, s) ||                           // not closed -> show
       bookingsForShift_(bookingsByKey, s).length > 0);        // closed but has a real booking -> resurface
   });
 
@@ -1245,14 +1245,24 @@ function writeBookingNote_(bookingId, language, note) {
   return { ok: false, error: 'Booking ' + bookingId + ' not found' };
 }
 
-// The id a shift is tracked under when closed: regular = the bare shift key, private
-// = key|P<index>, SF = key|SF. SF gets its own id so it never shares a closed-shift
-// entry with the 3h tour at the same slot; regular keeps the bare key so existing
-// Closed_Shifts entries still match.
+// The id a shift is tracked under when closed. It MUST equal the id the client card
+// carries (key + '|' + variantKey_), because apiCloseShift_ stores that id verbatim
+// and the filter below looks a shift up by this id — regular = key|R, private =
+// key|P<index>, SF = key|SF. (Earlier this returned a BARE key for regular tours,
+// which never matched the key|R the client sends, so a closed regular card always
+// came back — the "deleted cards reappear" bug.)
 function shiftDomId_(s) {
   const k = shiftKey_(s.dateKey, s.minutes, s.language);
-  if (s.sfExt) return k + '|SF';
-  return s.private ? k + '|P' + (s.privIndex || 1) : k;
+  return k + '|' + variantKey_(s.sfExt, s.private, s.privIndex);
+}
+
+// Is this shift one the manager closed? Matches the current variant id, and also a
+// LEGACY bare-key entry for a regular tour (rows written before the id above was
+// fixed), so an older closure keeps working. SF/private never used a bare key.
+function isShiftClosed_(closed, s) {
+  if (closed[shiftDomId_(s)]) return true;
+  if (!s.sfExt && !s.private && closed[shiftKey_(s.dateKey, s.minutes, s.language)]) return true;
+  return false;
 }
 
 // The set of tour ids a manager has closed (hidden from the portal). Cached on the
@@ -5914,6 +5924,14 @@ function archiveLedgerMonthlyCore_() {
   if (props.getProperty('LAST_LEDGER_ARCHIVE') === stamp) return;   // already archived
 
   const ss = ledgerSS_();
+
+  // Freeze the month's balances into the Rates > Summary block BEFORE copying, so
+  // the archived copy carries this month's final totals (and the live Rates tab,
+  // which survives the clear, is current too). The summary is otherwise only
+  // recomputed on demand, so without this the archive would show stale numbers.
+  try { writeRatesSummary_(ss); } catch (e) { Logger.log('writeRatesSummary_ before archive failed: ' + e); }
+  SpreadsheetApp.flush();   // make sure the summary is written before the copy is taken
+
   const file = DriveApp.getFileById(ss.getId());
   const name = stamp + '_' + PORTAL.LEDGER_NAME;
   let folder;
