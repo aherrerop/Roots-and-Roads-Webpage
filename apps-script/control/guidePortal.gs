@@ -4243,8 +4243,11 @@ function isLedgerGuideTabForHistory_(sh) {
   const name = sh.getName();
   if (name === 'Rates' || name === 'Unassigned' || name === 'History') return false;
   if (/no-shows|check-ins/i.test(name)) return false;
-  if (sh.getLastColumn() < LEDGER_BOOKINGID_COL + 1) return false;           // need at least through Booking ID
-  const head = sh.getRange(1, 1, 1, LEDGER_HEADERS.length).getValues()[0].map(String);
+  const cols = sh.getLastColumn();
+  if (cols < LEDGER_BOOKINGID_COL + 1) return false;                         // need at least through Booking ID
+  // Read only as many columns as the tab actually has — some guide tabs were trimmed
+  // to 16 (no trailing "Note"), and reading past the last column throws.
+  const head = sh.getRange(1, 1, 1, Math.min(cols, LEDGER_HEADERS.length)).getValues()[0].map(String);
   return head[0] === 'Date' && head[LEDGER_BOOKINGID_COL] === 'Booking ID';
 }
 
@@ -4259,12 +4262,16 @@ function readLedgerMonthFeed_(ss, loKey, hiKeyExcl, onlyGuideName) {
   const only = onlyGuideName ? String(onlyGuideName).trim().toLowerCase() : null;
 
   ss.getSheets().forEach(sh => {
+   try {
     if (!isLedgerGuideTabForHistory_(sh)) return;
     const guide = sh.getName();
     if (only && guide.trim().toLowerCase() !== only) return;
     if (sh.getLastRow() < 2) return;
 
-    const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
+    // Read only the columns the tab has (a trimmed 16-col tab has no "Note"); reading
+    // past the last column throws, which would otherwise drop the WHOLE month.
+    const width = Math.min(sh.getLastColumn(), LEDGER_HEADERS.length);
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
     v.forEach(r => {
       const dateKey = toDateKey_(r[0]);
       if (!dateKey || dateKey < loKey || dateKey >= hiKeyExcl) return;       // window only
@@ -4293,6 +4300,7 @@ function readLedgerMonthFeed_(ss, loKey, hiKeyExcl, onlyGuideName) {
       else if (entry.feedCheckedIn != null && arr[idx].feedCheckedIn == null) arr[idx] = entry;   // prefer the checked-in copy
       if (checked > 0) checkins[key + '|' + bookingId] = { n: checked, at: entry.feedCheckedAt };
     });
+   } catch (e) { /* one odd tab must never drop the rest of the month */ }
   });
   return { feed, checkins, guideByShift };
 }
