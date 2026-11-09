@@ -2936,13 +2936,15 @@ function apiNoShow_(p) {
   return { ok: true, cleared: clear, guide: guide };
 }
 
-// action=history -> the tours of the last PORTAL.HISTORY_DAYS days (today-N .. yesterday),
-// so a manager can mark Guruwalk/Freetour no-shows and undo a check-in AFTER the tour ran
-// (a guide sees only their own past tours). Roster + check-in (M/N) + assigned guide (O)
-// come from the Past2Days snapshot (the live feed has already dropped these days); the
-// Completed Log fills any booking the snapshot missed, and the ledger is unioned in as the
-// money backstop. Cards are the SAME shape as the live tours, so the no-show + undo
-// controls work unchanged. Read-only; the actual no-show/undo are the normal mutations.
+// action=history -> every tour of a chosen MONTH, so a manager can review any month
+// (and mark Guruwalk/Freetour no-shows + undo a check-in for the current month, after a
+// tour ran). A guide sees only their own past tours. The roster comes from the ledger:
+// the LIVE ledger for the current month, the ARCHIVED monthly copy for a past month
+// (the archive clears the live ledger each month). For the current month the Past2Days
+// snapshot + Completed Log are unioned in so a just-finished, not-yet-checked-in tour
+// still shows. Cards are the SAME shape as the live tours. `p.month` = "yyyy-MM"
+// (default: the current month). Returns `month`, `editable` (only the current month can
+// be mutated) and `months` (the list for the picker).
 function apiHistory_(p) {
   __RRX = {};
   const name = requireToken_(p.token);
@@ -2951,66 +2953,76 @@ function apiHistory_(p) {
   if (!me) return { ok: false, error: 'Session expired, please log in again' };
   // A MANAGER sees every past tour; a GUIDE sees only their OWN (so they can follow
   // up with their guests for reviews the next day). Both are read-only except the
-  // manager's no-show / undo controls (apiNoShow_/apiUncheckin_ enforce that too).
+  // manager's no-show / undo controls on the CURRENT month (apiNoShow_/apiUncheckin_
+  // enforce that too), since those mutate the live ledger.
   const isManager = !!me.manager;
 
+  // Which month to show. Default = the current month; a past month reads its archive.
   const today = todayKey_();
-  const days = Math.max(1, Number(PORTAL.HISTORY_DAYS) || 2);
-  const loKey = addDaysKey_(today, -days);
+  const curYm = today.slice(0, 7);                            // "yyyy-MM" of today (Madrid)
+  let ym = String(p.month || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(ym)) ym = curYm;
+  const bounds = monthBoundsKeys_(ym) || monthBoundsKeys_(curYm);
+  const isCurrent = (ym === curYm);
+  const loKey = bounds.lo;
+  // The current month stops at today (today's tours are still live, not history); a
+  // past month shows the whole month.
+  const hiKey = isCurrent ? today : bounds.hi;
 
-  // Combined booking index for the window: Past2Days (carries check-in M/N + guide O)
-  // UNION the Completed Log (every completed booking). Dedupe by booking id per shift,
-  // the snapshot row winning (it has the check-in/guide the Completed Log lacks).
-  const feed = readPast2DaysFeed_() || {};
-  const done = readCompletedLogReservations_() || {};
-  Object.keys(done).forEach(k => {
-    const dk = k.split('|')[0];
-    if (!dk || dk < loKey || dk >= today) return;                 // window only
-    const arr = feed[k] = feed[k] || [];
-    (done[k] || []).forEach(b => {
-      if (arr.some(x => x.bookingId === b.bookingId)) return;      // snapshot already has it
-      arr.push({
-        name: b.name, phone: b.phone, guests: Number(b.guests || 0),
-        children: Number(b.children || 0), infants: 0, source: b.source,
-        income: Number(b.income || 0), bookingId: b.bookingId,
-        manualNote: '', note: b.note || '',
-        feedCheckedIn: null, feedCheckedAt: '', feedGuide: '', rowType: 'booking'
+  // Month roster from the ledger (who ran each tour + who checked in). Live ledger for
+  // the current month, the archived copy for a past one.
+  const resolved = ledgerFileForMonth_(ym, curYm);
+  const m = readLedgerMonthFeed_(resolved.ss, loKey, hiKey, isManager ? null : name);
+  const feed = m.feed || {};
+  const priorCheckins = m.checkins || {};
+  const guideByShift = m.guideByShift || {};
+
+  // CURRENT month only: union the live recent sources so a just-finished tour that
+  // nobody checked in yet still appears (the manager needs it to mark a no-show).
+  // Dedupe by booking id per shift; a checked-in copy wins. Past months rely on the
+  // archive alone (Past2Days / Completed Log only cover the last few days).
+  if (isCurrent) {
+    const snap = readPast2DaysFeed_() || {};
+    Object.keys(snap).forEach(k => {
+      const dk = k.split('|')[0];
+      if (!dk || dk < loKey || dk >= hiKey) return;
+      const arr = feed[k] = feed[k] || [];
+      (snap[k] || []).forEach(b => {
+        if ((b.rowType || 'booking') === 'shift') { arr.push(b); return; }
+        const idx = arr.findIndex(x => x.bookingId === b.bookingId);
+        if (idx === -1) arr.push(b);
+        else if (b.feedCheckedIn != null && arr[idx].feedCheckedIn == null) arr[idx] = b;
       });
     });
-  });
+    const done = readCompletedLogReservations_() || {};
+    Object.keys(done).forEach(k => {
+      const dk = k.split('|')[0];
+      if (!dk || dk < loKey || dk >= hiKey) return;
+      const arr = feed[k] = feed[k] || [];
+      (done[k] || []).forEach(b => {
+        if (arr.some(x => x.bookingId === b.bookingId)) return;
+        arr.push({
+          name: b.name, phone: b.phone, guests: Number(b.guests || 0),
+          children: Number(b.children || 0), infants: 0, source: b.source,
+          income: Number(b.income || 0), bookingId: b.bookingId,
+          manualNote: '', note: b.note || '',
+          feedCheckedIn: null, feedCheckedAt: '', feedGuide: '', rowType: 'booking'
+        });
+      });
+    });
+  }
 
-  let schedule = buildHistoryFromFeed_(feed, loKey, today);
+  let schedule = buildHistoryFromFeed_(feed, loKey, hiKey);
 
-  // Ledger = the money truth for who was checked in (and what undo mutates), and
-  // the reliable record of who RAN each past tour. Scan ALL active guides for the
-  // window: the Past2Days snapshot can be empty right after rollout, so check-ins
-  // must come from the ledger, not only the snapshot's M/N.
-  let priorCheckins = {}, guideByShift = {};
-  try {
-    // A manager scans every active guide's ledger; a guide needs only their own tab.
-    let guidesToRead;
-    if (isManager) {
-      const raw = readGuidesRaw_();
-      const cols = guideColumns_(raw.header);
-      guidesToRead = raw.rows.map(row => parseGuideRow_(row, cols))
-        .filter(g => g.name && g.active).map(g => g.name);
-    } else {
-      guidesToRead = [name];
-    }
-    const lh = readLedgerHistory_(guidesToRead, loKey);
-    priorCheckins = lh.checkins || {};
-    guideByShift = lh.guideByShift || {};
-  } catch (e) { priorCheckins = {}; guideByShift = {}; }
-
-  // Fill the tour's guide from the ledger when the snapshot didn't carry it, so the
-  // card shows who ran it (and the no-show control has a guide to pay) even on day 1.
+  // Fill the tour's guide from the ledger when the feed row didn't carry it, so the
+  // card shows who ran it (and the no-show control has a guide to pay).
   schedule.forEach(s => {
     if ((!s.assigned || !s.assigned.length)) {
       const g = guideByShift[shiftKey_(s.dateKey, s.minutes, s.language)];
       if (g) { s.assigned = [g]; s.status = 'OK'; }
     }
   });
-  applyNoShowOverlay_(schedule);                                  // surface a no-show already flagged
+  if (isCurrent) applyNoShowOverlay_(schedule);                  // a no-show flagged this month shows
   sortSchedule_(schedule);
   // GUIDES: keep only their own tours — filtering BEFORE the card build means another
   // guide's guests are never assembled into or returned in the response (privacy).
@@ -3056,7 +3068,8 @@ function apiHistory_(p) {
     };
   }).filter(t => t.bookings.length);                              // only tours that actually had bookings
 
-  return { ok: true, guide: name, manager: isManager, history: true, days: days,
+  return { ok: true, guide: name, manager: isManager, history: true,
+           month: ym, editable: isCurrent, months: listLedgerMonths_(curYm),
            tours: tours,
            now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };
 }
@@ -4176,6 +4189,114 @@ function readLedgerHistory_(guides, loKey) {
   });
   return out;
 }
+
+// ---- Month history (any month, not just the last couple of days) -----------
+// The live ledger only holds the CURRENT month (the monthly archive clears it on the
+// 1st and keeps a dated copy, "YYYY_MM_Guide_Ledger_v1", in the ledger folder). So a
+// month view reads the live ledger for this month and the matching archived copy for
+// a past one. These helpers resolve the file, list which months exist, and turn a
+// ledger's per-guide tabs into the same feed shape the history cards already render.
+
+// The first day of a month and the first day of the NEXT month, as "yyyy-MM-dd" keys
+// (lo inclusive, hi exclusive). Pure string math — no Date/timezone — so it is exact
+// at a month boundary. Null if ym isn't "yyyy-MM".
+function monthBoundsKeys_(ym) {
+  const m = String(ym || '').match(/^(\d{4})-(\d{2})$/);
+  if (!m) return null;
+  let y = Number(m[1]), mo = Number(m[2]) + 1;               // first day of the next month
+  if (mo > 12) { mo = 1; y += 1; }
+  return { lo: ym + '-01', hi: y + '-' + String(mo).padStart(2, '0') + '-01' };
+}
+
+// The ledger spreadsheet that holds a given month: the live one for the current month,
+// else the archived "YYYY_MM_Guide_Ledger_v1" copy in the ledger folder. { ss, found }.
+function ledgerFileForMonth_(ym, curYm) {
+  if (ym === curYm) { try { return { ss: ledgerSS_(), found: true }; } catch (e) { return { ss: null, found: false }; } }
+  const fname = String(ym).replace('-', '_') + '_' + PORTAL.LEDGER_NAME;     // e.g. 2026_10_Guide_Ledger_v1
+  try {
+    const it = DriveApp.getFolderById(PORTAL.LEDGER_FOLDER_ID).getFilesByName(fname);
+    if (it.hasNext()) return { ss: SpreadsheetApp.openById(it.next().getId()), found: true };
+  } catch (e) { /* fall through */ }
+  return { ss: null, found: false };
+}
+
+// Every month a history is available for ("yyyy-MM"), newest first: the current month
+// plus every archived ledger copy found in the folder. Drives the portal's month picker.
+function listLedgerMonths_(curYm) {
+  const months = {}; months[curYm] = true;
+  try {
+    const esc = PORTAL.LEDGER_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('^(\\d{4})_(\\d{2})_' + esc + '$');
+    const it = DriveApp.getFolderById(PORTAL.LEDGER_FOLDER_ID).getFiles();
+    let guard = 0;
+    while (it.hasNext() && guard++ < 500) {
+      const mm = String(it.next().getName()).match(re);
+      if (mm) months[mm[1] + '-' + mm[2]] = true;
+    }
+  } catch (e) { /* folder unreadable -> just the current month */ }
+  return Object.keys(months).sort().reverse();
+}
+
+// A tab is a guide's ledger (not a system tab). Unlike isGuideLedgerTab_ this KEEPS
+// Albert & Carlos — they run tours, so their rosters belong in history.
+function isLedgerGuideTabForHistory_(sh) {
+  const name = sh.getName();
+  if (name === 'Rates' || name === 'Unassigned' || name === 'History') return false;
+  if (/no-shows|check-ins/i.test(name)) return false;
+  if (sh.getLastColumn() < LEDGER_BOOKINGID_COL + 1) return false;           // need at least through Booking ID
+  const head = sh.getRange(1, 1, 1, LEDGER_HEADERS.length).getValues()[0].map(String);
+  return head[0] === 'Date' && head[LEDGER_BOOKINGID_COL] === 'Booking ID';
+}
+
+// Turn a ledger's per-guide tabs into a history feed for a date window: one booking per
+// ledger row, grouped by shift (date|time|language), carrying the check-in count and the
+// guide (= the tab name). Returns { feed, checkins, guideByShift } — the same shape the
+// live history path feeds to buildHistoryFromFeed_. `onlyGuideName` limits a guide to
+// their own tab (a manager passes null to scan every guide).
+function readLedgerMonthFeed_(ss, loKey, hiKeyExcl, onlyGuideName) {
+  const feed = {}, checkins = {}, guideByShift = {};
+  if (!ss) return { feed, checkins, guideByShift };
+  const only = onlyGuideName ? String(onlyGuideName).trim().toLowerCase() : null;
+
+  ss.getSheets().forEach(sh => {
+    if (!isLedgerGuideTabForHistory_(sh)) return;
+    const guide = sh.getName();
+    if (only && guide.trim().toLowerCase() !== only) return;
+    if (sh.getLastRow() < 2) return;
+
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
+    v.forEach(r => {
+      const dateKey = toDateKey_(r[0]);
+      if (!dateKey || dateKey < loKey || dateKey >= hiKeyExcl) return;       // window only
+      const minutes = timeToMinutes_(normTime24_(r[2]));
+      const language = String(r[3] || '').trim();
+      const bookingId = String(r[LEDGER_BOOKINGID_COL] || '').trim();
+      if (!language || !bookingId) return;
+
+      const key = shiftKey_(dateKey, minutes, language);
+      guideByShift[key] = guide;                                             // this guide ran the shift
+      if (/^NOSHOW\|/.test(bookingId)) return;                              // guide-pay row, not a guest
+
+      const checked = Number(r[LEDGER_CHECKEDIN_COL] || 0);
+      const entry = {
+        name: String(r[4] || '').trim(), phone: String(r[5] || '').trim(),
+        guests: Number(r[7] || 0), children: Number(r[8] || 0), infants: 0,
+        source: String(r[LEDGER_SOURCE_COL] || '').trim(), income: Number(r[12] || 0),
+        bookingId: bookingId, manualNote: '', note: String(r[LEDGER_NOTE_COL] || '').trim(),
+        feedCheckedIn: checked > 0 ? checked : null,
+        feedCheckedAt: hhmmFromStamp_(r[LEDGER_UPDATED_COL]),
+        feedGuide: guide, rowType: 'booking'
+      };
+      const arr = feed[key] = feed[key] || [];
+      const idx = arr.findIndex(x => x.bookingId === bookingId);
+      if (idx === -1) arr.push(entry);
+      else if (entry.feedCheckedIn != null && arr[idx].feedCheckedIn == null) arr[idx] = entry;   // prefer the checked-in copy
+      if (checked > 0) checkins[key + '|' + bookingId] = { n: checked, at: entry.feedCheckedAt };
+    });
+  });
+  return { feed, checkins, guideByShift };
+}
+
 
 // Full reservation detail from the BookingSheet's "Completed Log", keyed by shift. The
 // Completed Log records EVERY completed booking with full detail (name, phone, adults,

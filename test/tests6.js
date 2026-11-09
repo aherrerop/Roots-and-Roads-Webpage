@@ -476,21 +476,28 @@ cc2.insertSheet('Closed_Shifts').getRange(1,1,2,3).setValues([
  ['2026-07-30|660|italian','Albert','2026-07-29 10:00']]);
 const closedSet=readClosedShifts_();
 check('closed shift id is read', closedSet['2026-07-30|660|italian']===true, closedSet);
-check('shiftDomId_ regular = shiftKey_',
-  shiftDomId_({dateKey:'2026-07-30',minutes:660,language:'Italian',private:false})==='2026-07-30|660|italian', null);
+// A card's id carries its variant (key|R / key|P<idx> / key|SF) and shiftDomId_ must
+// match it, or a closed regular card (key|R) never matches the bare shiftKey_ and
+// reappears — the deleted-card bug.
+check('shiftDomId_ regular = key|R',
+  shiftDomId_({dateKey:'2026-07-30',minutes:660,language:'Italian',private:false})==='2026-07-30|660|italian|R', null);
 check('shiftDomId_ private = key|P<idx>',
   shiftDomId_({dateKey:'2026-07-30',minutes:660,language:'Italian',private:true,privIndex:2})==='2026-07-30|660|italian|P2', null);
 check('an unclosed shift is not in the closed set', !closedSet['2026-07-30|660|french'], closedSet);
-// New semantics: a closed slot stays hidden while EMPTY, but a real booking
-// landing on it must resurface it. Exercises the REAL production helper.
+// A closed slot stays hidden while EMPTY, but a real booking landing on it must
+// resurface it. Exercises the REAL production helper isShiftClosed_, which matches the
+// variant id AND a legacy bare key (rows written before the id was fixed).
 const _closeFilter=(shifts,closed,bbk)=>shifts.filter(s=>
-  !closed[shiftDomId_(s)] || bookingsForShift_(bbk,s).length>0);
+  !isShiftClosed_(closed,s) || bookingsForShift_(bbk,s).length>0);
 const _s1={dateKey:'2026-07-30',minutes:660,language:'Italian',private:false};
 const _s2={dateKey:'2026-07-31',minutes:660,language:'Italian',private:false};
-const _closed={'2026-07-30|660|italian':true,'2026-07-31|660|italian':true};
+const _s3={dateKey:'2026-08-01',minutes:660,language:'Italian',private:false};
+// _s1 = legacy bare-key closure; _s3 = new variant-id closure. Both must stay hidden.
+const _closed={'2026-07-30|660|italian':true,'2026-07-31|660|italian':true,'2026-08-01|660|italian|R':true};
 const _bbk={}; _bbk[shiftKey_('2026-07-31',660,'Italian')]=[{bookingId:'X',note:''}];
-const _kept=_closeFilter([_s1,_s2],_closed,_bbk);
-check('closed shift with NO booking stays hidden', !_kept.some(s=>s.dateKey==='2026-07-30'), _kept);
+const _kept=_closeFilter([_s1,_s2,_s3],_closed,_bbk);
+check('closed shift with NO booking stays hidden (legacy bare key)', !_kept.some(s=>s.dateKey==='2026-07-30'), _kept);
+check('closed shift stays hidden (new variant id key|R)', !_kept.some(s=>s.dateKey==='2026-08-01'), _kept);
 check('closed shift WITH a booking comes back', _kept.some(s=>s.dateKey==='2026-07-31'), _kept);
 
 // bookingsForShift_: a slot holding BOTH a private and a regular tour splits

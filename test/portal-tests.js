@@ -251,19 +251,19 @@ check('History cards are collapsed by default, with a remembered open set',
   /b\.style\.display = HISTORY_OPEN_CARDS\.has\(card\.dataset\.tour\) \? "" : "none";/.test(html) &&
   /if\(nowOpen\) HISTORY_OPEN_CARDS\.add\(card\.dataset\.tour\); else HISTORY_OPEN_CARDS\.delete\(card\.dataset\.tour\);/.test(html) &&
   /HISTORY_OPEN_CARDS\.clear\(\)/.test(html), null);
-check('a guide history is read-only: no-show/undo bindings + controls are manager-gated',
-  /const histGuide = HISTORY_RENDER && !MANAGER;/.test(html) &&
-  /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER\) :/.test(html) &&
+check('a guide history is read-only: no-show/undo bindings + controls are manager-gated (and past months are read-only)',
+  /const histGuide = HISTORY_RENDER && \(!MANAGER \|\| !HISTORY_EDITABLE\);/.test(html) &&
+  /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER \|\| !HISTORY_EDITABLE\) :/.test(html) &&
   /\/\/ No-show \+ undo-check-in are MANAGER-only in History[\s\S]*?if\(!MANAGER\) return;/.test(html), null);
-check('opening History fetches action=history and renders cards in history mode',
-  /function openHistory\(\)\{/.test(html) && /api\("history",\{token:store\.token\}\)/.test(html) &&
+check('opening History fetches action=history for the chosen month and renders cards in history mode',
+  /function openHistory\(\)\{/.test(html) && /api\("history",\{token:store\.token, month:HISTORY_MONTH\|\|""\}\)/.test(html) &&
   /HISTORY_RENDER=true;/.test(html) && /tourCard\(t, MANAGER, dayTimes\)/.test(html), null);
 check('history mode drops the editing UI (close / assign / 2nd-guide) from the card',
   /const closeBtn=\(canAssign && !HISTORY_RENDER\)\?/.test(html) &&
   /if\(canAssign && !HISTORY_RENDER\)\{/.test(html) && /chips \+= assignSelect\(t,1\);/.test(html) &&
   /const canEdit = canAssign && !HISTORY_RENDER;/.test(html), null);
 check('history keeps no-show + undo live: stepper read-only, check-in button undo-only',
-  /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER\) :/.test(html) &&
+  /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER \|\| !HISTORY_EDITABLE\) :/.test(html) &&
   /const dis = HISTORY_RENDER \? ' disabled' : '';/.test(html) &&
   /root\.querySelectorAll\("\.ckin\.done:not\(\[disabled\]\)"\)/.test(html) &&
   /api\("uncheckin",\{token:store\.token,bookingId:b\.bookingId\}\)/.test(html), null);
@@ -274,6 +274,11 @@ check('the live poll pauses while the History overlay is open',
   /if\(HISTORY_OPEN\) return false;/.test(html), null);
 check('closing History empties the pane so a poll never touches its cards',
   /\$\("historyPane"\)\.innerHTML="";/.test(html), null);
+check('History has a month picker (any month), filled from the server and re-fetching on change',
+  /id="histMonth" class="histmonth"/.test(html) &&
+  /function fillMonthPicker\(months,current\)\{/.test(html) &&
+  /\$\("histMonth"\)\.onchange=\(e\)=>\{ HISTORY_MONTH=e\.target\.value\|\|""; HISTORY_OPEN_CARDS\.clear\(\); historyRefresh\(\); \};/.test(html) &&
+  /HISTORY_EDITABLE=\(r\.editable!==false\);/.test(html), null);
 
 console.log('--- Per-booking manager note shows INLINE (no tap), post-it is edit-only ---');
 check('a manager note renders inline below the name (like the source note)',

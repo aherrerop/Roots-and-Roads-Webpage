@@ -60,6 +60,10 @@
   .histhdr h2{font-size:22px;font-weight:800;margin:0}
   .histhdr .sub{font-size:12px;color:var(--muted);margin-top:2px}
   .histclose{background:var(--ink);color:#fff;border:none;border-radius:999px;padding:8px 16px;font-weight:800;cursor:pointer}
+  /* History month picker + read-only badge. */
+  .histctrls{display:flex;align-items:center;gap:8px}
+  .histmonth{font-size:13px;font-weight:700;color:#2547a0;background:#eef2fb;border:1px solid #d3ddf2;border-radius:9px;padding:7px 10px;cursor:pointer}
+  .histro{display:inline-block;margin-left:6px;font-size:11px;font-weight:800;color:var(--muted);background:#eceff5;border-radius:999px;padding:2px 8px;vertical-align:middle}
 
   .tabs{display:flex;gap:8px;margin:0 2px 18px}
   .tab{flex:1;text-align:center;padding:11px;border-radius:12px;background:#e2e5ea;color:var(--muted);font-weight:700;cursor:pointer;border:none;font-size:14px}
@@ -206,7 +210,7 @@
     <div class="topbar">
       <div><h1>Tours</h1><div id="who" class="who"></div></div>
       <div class="actions">
-        <button id="historyBtn" class="histbtn hidden" title="Your tours from the last 2 days (managers see all)">History</button>
+        <button id="historyBtn" class="histbtn hidden" title="Past tours by month (managers see all; pick a month inside)">History</button>
         <button id="logoutBtn" class="iconbtn">Log out</button>
       </div>
     </div>
@@ -222,13 +226,17 @@
     <div id="ver" class="ver"></div>
   </div>
 
-  <!-- MANAGER history overlay: the last 2 days of tours, for marking Guruwalk/Freetour
-       no-shows and undoing check-ins after a tour ran. Opened by the History button. -->
+  <!-- MANAGER history overlay: past tours by month (month picker inside). The current
+       month is live (mark Guruwalk/Freetour no-shows, undo check-ins); a past month is
+       read-only. Opened by the History button. -->
   <div id="historyView" class="histview hidden">
     <div class="histwrap">
       <div class="histhdr">
-        <div><h2>History</h2><div class="sub" id="histSub">Last 2 days</div></div>
-        <button id="histCloseBtn" class="histclose">Done</button>
+        <div><h2>History</h2><div class="sub" id="histSub">Loading…</div></div>
+        <div class="histctrls">
+          <select id="histMonth" class="histmonth" title="Choose a month"></select>
+          <button id="histCloseBtn" class="histclose">Done</button>
+        </div>
       </div>
       <div id="historyPane"><div class="spin">Loading…</div></div>
     </div>
@@ -441,6 +449,9 @@ let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={}, GUIDE_TOUR_TYPES
 // UI (assign/move/close/new check-in). Its own cache + binding keep it isolated
 // from the live poll, which pauses while the overlay is open.
 let HISTORY_RENDER=false, HISTORY_OPEN=false, HISTORY_CACHE=[];
+// The month being viewed ("" = current) and whether it can be edited. Only the current
+// month is editable (no-show / undo mutate the live ledger); a past month is read-only.
+let HISTORY_MONTH="", HISTORY_EDITABLE=true;
 // Which History cards are expanded (by tour id). Default is CLOSED so the list stays
 // scannable (a manager can have dozens of past tours); tapping a card opens it and the
 // choice survives a history refresh. Cleared when the overlay is closed.
@@ -569,6 +580,8 @@ async function doLogin(){
 $("logoutBtn").onclick=()=>{ store.token=""; location.reload(); };
 $("historyBtn").onclick=()=>{ openHistory(); };
 $("histCloseBtn").onclick=()=>{ closeHistory(); };
+// Pick a month -> reload history for it (keeps the overlay open).
+$("histMonth").onchange=(e)=>{ HISTORY_MONTH=e.target.value||""; HISTORY_OPEN_CARDS.clear(); historyRefresh(); };
 
 /* ================== TABS ================== */
 $("tabTours").onclick=()=>switchTab("tours");
@@ -1074,7 +1087,9 @@ function nsInfo(t, guide){
 function noShowControl(t, canAssign){
   // A GUIDE's History is read-only: they can SEE a no-show was flagged, but cannot
   // mark or remove one there (that's a manager action in History).
-  const histGuide = HISTORY_RENDER && !MANAGER;
+  // A guide's History is read-only, and so is ANY past month (only the current month's
+  // ledger can be mutated) — treat both like a read-only guide view.
+  const histGuide = HISTORY_RENDER && (!MANAGER || !HISTORY_EDITABLE);
   if(t.noShow){
     // A manager can always remove it; a guide only on their own LIVE card. In History
     // the whole point is that management can take it off that day (explicit label).
@@ -1171,7 +1186,10 @@ function ckBtn(tourId,i,b,gi,label,title){
   // In History: only a MANAGER can tap a checked-in guest's button (= undo); new
   // check-ins are disabled, and a guide's history is fully read-only. Live: a done
   // button is tappable only by a manager (undo).
-  const dis = HISTORY_RENDER ? (!done || !MANAGER) : ((done && !(MANAGER && !b.pending)) || lockedOther);
+  // History: only a manager, and only on the EDITABLE (current) month, can tap a
+  // checked-in guest to undo; new check-ins are always disabled, and a past month is
+  // fully read-only.
+  const dis = HISTORY_RENDER ? (!done || !MANAGER || !HISTORY_EDITABLE) : ((done && !(MANAGER && !b.pending)) || lockedOther);
   const txt = done ? (b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))) : (gi?esc(label):'Check in');
   return '<button class="ckin'+(done?' done':'')+(gi?' g'+gi:'')+(lockedOther?' lockedother':'')+'" data-ck="'+ref+'"'+
     (dis?' disabled':'')+(title?' title="'+esc(title)+'"':'')+'>'+txt+'</button>';
@@ -1561,15 +1579,16 @@ function renderSchedule(rows){
   if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
 }
 
-/* ================== HISTORY (manager: last 2 days) ==================
-   A manager-only overlay of the tours that already ran (last PORTAL.HISTORY_DAYS
-   days), so no-shows (Guruwalk/Freetour) can be marked and a wrong check-in undone
-   after the fact. It fetches action=history and renders the SAME tour cards in a
-   read-only mode (no assign/move/close/new check-in) — only the no-show control and
-   the tap-✓-to-undo stay live. Isolated from the live poll: its own cache + binding,
-   and the poll pauses while it's open. */
+/* ================== HISTORY (manager: any month) ==================
+   A manager-only overlay of the tours that already ran, for ANY month (a guide sees
+   only their own). A month picker chooses which month; the current month's ledger is
+   live (no-shows can be marked and a wrong check-in undone), a past month reads its
+   archive and is read-only. It fetches action=history&month=YYYY-MM and renders the
+   SAME tour cards. Isolated from the live poll: its own cache + binding, and the poll
+   pauses while it's open. */
 async function openHistory(){
   HISTORY_OPEN=true;
+  HISTORY_MONTH="";                        // default to the current month each time it opens
   $("historyView").classList.remove("hidden");
   $("historyPane").innerHTML='<div class="spin">Loading…</div>';
   await historyRefresh();
@@ -1580,20 +1599,38 @@ function closeHistory(){
   $("historyPane").innerHTML="";          // drop the cards so a live poll never touches them
   HISTORY_CACHE=[]; HISTORY_OPEN_CARDS.clear();   // reopen History with everything collapsed
 }
+// "2026-10" -> "October 2026" for the picker + subtitle.
+function monthLabel(ym){
+  const m=/^(\d{4})-(\d{2})$/.exec(ym||""); if(!m) return ym||"";
+  const names=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return names[Number(m[2])-1]+" "+m[1];
+}
+// Fill the month <select> from the server's list (newest first), keeping the chosen month.
+function fillMonthPicker(months,current){
+  const sel=$("histMonth"); if(!sel) return;
+  const list=(months&&months.length)?months:[current];
+  sel.innerHTML=list.map(ym=>'<option value="'+esc(ym)+'"'+(ym===current?' selected':'')+'>'+esc(monthLabel(ym))+'</option>').join("");
+}
 async function historyRefresh(){
-  let r; try{ r=await api("history",{token:store.token}); }
+  // On a month change, swap the spinner in so the stale month's cards don't linger.
+  if(HISTORY_MONTH!==undefined) $("historyPane").innerHTML='<div class="spin">Loading…</div>';
+  let r; try{ r=await api("history",{token:store.token, month:HISTORY_MONTH||""}); }
   catch(err){ $("historyPane").innerHTML='<div class="loaderr"><b>Could not load history.</b>Check your connection and tap Done, then History again.</div>'; return; }
   if(!r || !r.ok){
     if(r && /expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
     $("historyPane").innerHTML='<div class="empty">'+esc((r&&r.error)||"Could not load history.")+'</div>'; return;
   }
-  const sub=$("histSub"); if(sub) sub.textContent=(r.manager?"Last ":"Your last ")+(r.days||2)+" days"+(r.now?" · updated "+esc(r.now):"");
+  HISTORY_MONTH=r.month||HISTORY_MONTH; HISTORY_EDITABLE=(r.editable!==false);
+  fillMonthPicker(r.months, HISTORY_MONTH);
+  const sub=$("histSub");
+  if(sub) sub.innerHTML=esc(monthLabel(HISTORY_MONTH))+(HISTORY_EDITABLE?"":'<span class="histro">view only</span>')+
+    (r.now&&HISTORY_EDITABLE?" · updated "+esc(r.now):"");
   renderHistory(r.tours||[]);
 }
 function renderHistory(tours){
   HISTORY_CACHE=tours;
   const pane=$("historyPane");
-  if(!tours.length){ pane.innerHTML='<div class="empty">No tours with bookings in the last 2 days.</div>'; return; }
+  if(!tours.length){ pane.innerHTML='<div class="empty">No tours with bookings in '+esc(monthLabel(HISTORY_MONTH))+'.</div>'; return; }
   // Build the cards in history mode so the shared helpers drop the editing UI.
   HISTORY_RENDER=true;
   let html="";

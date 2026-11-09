@@ -426,7 +426,7 @@ past.getRange(2, 1, 3, 16).setValues([
   [YDAY, '03:00 PM', 'English', 'Hist Two', '+34600000011', 4, 0, 'Guruwalk', 0, 'HIST002', '', '', '', '', 'Carlos', 'booking'],
   [YDAY, '05:00 PM', 'English', 'Hist Three', '+34600000012', 2, 0, 'GetYourGuide', 30, 'HIST003', '', '', 2, '17:05', 'Albert', 'booking']]);
 let rHist = apiHistory_({ token: token });
-check('apiHistory_ ok for a manager, flagged history, window = 2 days', rHist && rHist.ok === true && rHist.history === true && rHist.days === 2, rHist && rHist.error);
+check('apiHistory_ ok for a manager, flagged history, current month editable', rHist && rHist.ok === true && rHist.history === true && rHist.editable === true && /^\d{4}-\d{2}$/.test(rHist.month || '') && Array.isArray(rHist.months), rHist && rHist.error);
 const h1 = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '10:00' && t.language === 'English');
 const h2 = (rHist.tours || []).find(t => t.dateKey === YDAY && t.time === '15:00' && t.language === 'English');
 check('a past tour surfaces with its guide (Carlos) from the snapshot', h1 && (h1.assigned || []).indexOf('Carlos') !== -1, h1 && h1.assigned);
