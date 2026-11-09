@@ -1074,6 +1074,68 @@ function setupWeeklySchedule() {
   sh.setFrozenRows(1);
 }
 
+// Run once (from the editor: Run > extendDailyAvailabilityUntilMarch). Makes the
+// availability sheet (Weekly_Schedule) offer a 10:30 AND a 15:30 group tour in EVERY
+// language, EVERY day of the week, through the end of March 2026. Purely ADDITIVE —
+// it only appends the rows that are missing; it never edits an existing row, another
+// tab, or a guide assignment. Idempotent: once the rows exist, a re-run adds nothing.
+function extendDailyAvailabilityUntilMarch() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName('Weekly_Schedule');
+  if (!sh) throw new Error('Weekly_Schedule tab not found');
+
+  // What we want offered: every language, both daily group-tour times, all seven days,
+  // with an end date so it runs "until March" and then stops on its own.
+  const TIMES = ['10:30', '15:30'];
+  const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const ACTIVE_UNTIL = '2026-03-31';            // only on the NEW rows this adds
+
+  // Normalise a time cell (a Date, "3:30 PM", or "15:30") to 24h "H:mm", so a slot that
+  // already exists is recognised whatever format it was typed in.
+  const norm24 = v => {
+    if (v instanceof Date && !isNaN(v)) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'H:mm');
+    const s = String(v || '').trim();
+    const ap = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (ap) { let h = Number(ap[1]); if (/pm/i.test(ap[3]) && h !== 12) h += 12; if (/am/i.test(ap[3]) && h === 12) h = 0; return h + ':' + ap[2]; }
+    const m = s.match(/^(\d{1,2}):(\d{2})$/);
+    return m ? (Number(m[1]) + ':' + m[2]) : s;
+  };
+
+  // Index the GROUP-tour rows already present, keyed day|time|language, so a slot is
+  // never duplicated. A Private row or an SF row is not a group tour, so it doesn't count.
+  const last = sh.getLastRow();
+  const existing = {};
+  if (last >= 2) {
+    sh.getRange(2, 1, last - 1, 11).getValues().forEach(r => {
+      const isPrivate = /^(1|true|yes|y|x)$/i.test(String(r[9] || '').trim());   // col J = Private
+      const isSf = /^\s*sf\b/i.test(String(r[3] || '').trim());                   // col D = Tour Type
+      if (isPrivate || isSf) return;
+      const key = String(r[0] || '').trim().toLowerCase() + '|' + norm24(r[1]) + '|' +
+                  String(r[2] || '').trim().toLowerCase();
+      existing[key] = true;
+    });
+  }
+
+  // Build only the missing rows. Column order (see setupWeeklySchedule):
+  // Day, Time, Language, Tour Type, Guides needed, Active from, Active until, Guide,
+  // Hide from availability, Private, Hide from website.
+  const toAdd = [];
+  LANGUAGES.forEach(lang => {
+    TIMES.forEach(time => {
+      DAYS.forEach(day => {
+        if (existing[day.toLowerCase() + '|' + time + '|' + lang.toLowerCase()]) return;
+        toAdd.push([day, time, lang, '3h', 1, '', ACTIVE_UNTIL, '', '', '', '']);
+      });
+    });
+  });
+
+  if (toAdd.length) sh.getRange(sh.getLastRow() + 1, 1, toAdd.length, 11).setValues(toAdd);
+
+  const msg = 'Added ' + toAdd.length + ' availability row(s): 10:30 & 15:30, all languages, every day, Active until ' + ACTIVE_UNTIL + '.';
+  Logger.log(msg);
+  return msg;
+}
+
 // Email the generated Schedule_<Language> tables to management as HTML, ready to forward to
 // guides. Called at the end of runWeeklyScheduling.
 function emailWeeklySchedule() {
