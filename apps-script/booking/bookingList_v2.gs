@@ -855,7 +855,7 @@ function writeRunStatus_(mode) {
 }
 
 
-/** Create the PROCESSED label once so safeAddLabel_ can apply it. */
+// Create the Processed label once (if absent) so safeAddLabel_ can apply it.
 function ensureProcessedLabel_() {
   try {
     if (!GmailApp.getUserLabelByName(RNR.LABELS.PROCESSED)) {
@@ -1076,22 +1076,12 @@ function formatSheets_() {
  * mutation and every batch read goes through these guards.
  ******************************************************/
 
-/**
- * QUOTA MODEL (the fix for "Service invoked too many times for one day: gmail")
- *
- * The old approach fetched every thread under every label and then read each
- * thread's labels to decide whether to skip it — hundreds of Gmail calls per
- * run, ~288 runs/day, quota dead by afternoon.
- *
- * Now:
- *   FAST run  -> ONE GmailApp.search per label:
- *                  label:<x> -label:publishing-pages-processed
- *                Gmail itself returns only the not-yet-processed threads.
- *                An idle 5-minute run costs ~15 Gmail calls total.
- *   AUDIT run -> direct label.getThreads (complete, no filtering needed
- *                because audits deliberately re-read everything).
- *   Every label object and every thread list is cached per run.
- */
+// The quota-safe way to list the threads a run still needs to process. A FAST run
+// does ONE Gmail search per label ("label:<x> -label:…processed"), so Gmail itself
+// returns only the not-yet-processed threads and an idle 5-minute run costs ~15
+// Gmail calls total; an AUDIT run reads the whole label directly, because it
+// deliberately re-reads everything. Both the label object and the thread list are
+// cached per run so nothing is fetched twice.
 function getThreadsSafe_(labelName) {
   try {
     if (!RNR_THREADS_CACHE_) RNR_THREADS_CACHE_ = new Map();
@@ -1139,15 +1129,11 @@ function getThreadsSafe_(labelName) {
   }
 }
 
-/**
- * Threads to consider for "tour finished -> archive + Done label".
- *
- * Since processed bookings now STAY in the inbox until their tour is over,
- * the set of candidates is exactly "still in the inbox under this label" —
- * a small, cheap search (one call per label) that keeps completion timely on
- * the 5-minute run. The audit still walks the whole label so nothing that was
- * archived by hand or by an older version is missed.
- */
+// Threads to consider for "tour finished -> archive + Done label". Because a
+// processed booking stays in the inbox until its tour is over, the fast run's
+// candidates are exactly "still in the inbox under this label" — one cheap search
+// that keeps completion timely. The audit walks the whole label so a thread
+// archived by hand is still caught. Cached per run.
 function getThreadsForCompletionSweep_(labelName) {
   try {
     if (!RNR_THREADS_CACHE_) RNR_THREADS_CACHE_ = new Map();
@@ -1169,13 +1155,14 @@ function getThreadsForCompletionSweep_(labelName) {
   }
 }
 
-/** Gmail search canonical form: "Publishing Pages/Viator/Confirmations"
- *  -> label:publishing-pages-viator-confirmations  (spaces and / become -). */
+// Turn a label name into its Gmail search token: lower-cased with spaces and
+// slashes collapsed to hyphens ("Publishing Pages/Viator/Confirmations" ->
+// "label:publishing-pages-viator-confirmations").
 function searchTokenForLabel_(labelName) {
   return 'label:' + String(labelName || '').toLowerCase().replace(/[\s/]+/g, '-');
 }
 
-/** Cached label lookup: each label name costs at most ONE Gmail call per run. */
+// Cached label lookup, so each label name costs at most one Gmail call per run.
 function getLabel_(labelName) {
   if (!RNR_LABEL_CACHE_) RNR_LABEL_CACHE_ = new Map();
   if (RNR_LABEL_CACHE_.has(labelName)) return RNR_LABEL_CACHE_.get(labelName);
@@ -1185,6 +1172,7 @@ function getLabel_(labelName) {
   return label;
 }
 
+// Does this thread already carry the Processed label? (and the general form below).
 function threadHasProcessedLabel_(thread) {
   try {
     const labels = thread.getLabels() || [];
@@ -1205,10 +1193,8 @@ function threadHasLabel_(thread, labelName) {
   return false;
 }
 
-/**
- * Unconditional read of every thread under a label, ignoring PROCESSED.
- * Cached per run. Only used where full visibility matters (GYG Done lookup).
- */
+// Read every thread under a label regardless of Processed, cached per run. Used
+// only where full visibility matters, such as the GYG Done lookup.
 function getThreadsForce_(labelName) {
   try {
     if (!RNR_THREADS_CACHE_) RNR_THREADS_CACHE_ = new Map();
@@ -1225,6 +1211,7 @@ function getThreadsForce_(labelName) {
   }
 }
 
+// Mark a thread read / unread, swallowing any Gmail error (used as best-effort).
 function safeMarkRead_(thread) {
   try { if (thread) thread.markRead(); } catch (e) { /* ignore */ }
 }
@@ -1531,16 +1518,12 @@ function processWebsiteConfirmations_() {
 }
 
 
-/**
- * True when a thread filed under Confirmations is really a modification or a
- * cancellation. Gmail groups a booking's confirmation, modification and
- * cancellation into ONE conversation, and OTA subjects overlap ("Booking detail
- * change: - S779080 - GYG…" also matches the broad "Booking -" filter).
- *
- * Classified from the TEXT, so it still works when the message alone cannot
- * produce a complete booking — resolving it is the modification pass's job, not
- * the confirmation pass's. Same wording the parsers route on.
- */
+// True when a thread filed under Confirmations is really a modification or a
+// cancellation. Gmail groups a booking's confirmation, modification and cancellation
+// into one conversation, and OTA subjects overlap ("Booking detail change: … GYG…"
+// also matches the broad "Booking -" confirmation filter). Classified from the text
+// (the same wording the parsers route on), so it works even when the message alone
+// can't produce a complete booking.
 function threadIsModifyOrCancel_(thread) {
   try {
     return thread.getMessages().some(m => {
