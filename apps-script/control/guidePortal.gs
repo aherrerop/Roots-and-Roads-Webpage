@@ -3948,6 +3948,69 @@ function installLedgerBackupTriggers() {
 }
 
 
+// ---- Unstaffed-tour alert -------------------------------------------------
+// Where the "a tour tomorrow has guests but no guide" alarm goes (same inbox as the
+// weekly schedule email).
+const UNSTAFFED_ALERT_TO = 'rootsandroadstours@gmail.com';
+const UNSTAFFED_ALERT_PROP = 'UNSTAFFED_ALERT_SENT';       // { tourId: tourDateKey } already alerted
+
+// Nightly alarm (runs ~19:00). For every tour the NEXT day that has guests but no guide
+// — no manual assignment and no weekly default; a default guide on vacation counts as
+// none — email management ONE alarm per tour. Subject only, no body. Fires once per tour
+// (remembered in a Script Property, past days pruned) so a manual re-run never double-sends.
+function alertUnstaffedToursTomorrow() {
+  __RRX = {};                                              // fresh per-run memo (trigger context)
+  const today = todayKey_();
+  const target = addDaysKey_(today, 1);                    // the day the tours run (tomorrow)
+
+  let feed; try { feed = readPortalFeed_(); } catch (e) { feed = null; }
+  if (!feed) return 0;
+
+  // Assemble the schedule exactly as the portal does (grid + weekly defaults + cleared /
+  // second-guide / no-show overlays), then keep only the next day's shifts.
+  let schedule; try { schedule = assembleSchedule_(feed, 2); } catch (e) { return 0; }
+  const tomorrow = schedule.filter(s => s.dateKey === target);
+
+  // Already-alerted set, pruned to drop anything before today so it can't grow forever.
+  const props = PropertiesService.getScriptProperties();
+  let sent = {}; try { sent = JSON.parse(props.getProperty(UNSTAFFED_ALERT_PROP) || '{}') || {}; } catch (e) { sent = {}; }
+  Object.keys(sent).forEach(k => { if (String(sent[k]) < today) delete sent[k]; });
+
+  let n = 0;
+  tomorrow.forEach(s => {
+    if (s.assigned && s.assigned.length) return;           // has a guide (manual or weekly default) -> fine
+    const bookings = bookingsForShift_(feed, s);
+    const guests = bookings.reduce((t, b) => t + Number(b.guests || 0) + Number(b.children || 0), 0);
+    if (guests <= 0) return;                               // no guests -> nothing to staff
+
+    const id = s.dateKey + '|' + s.minutes + '|' + String(s.language || '').toLowerCase() + '|' +
+               variantKey_(s.sfExt, s.private, s.privIndex);
+    if (sent[id]) return;                                  // already alerted this exact tour
+
+    const time = s.timeLabel || to12h_(s.time);
+    const subject = s.language + ', ' + time + ', ' + prettyDate_(s.dateKey) + ', ' + guests + ' guests without a guide';
+    try {
+      MailApp.sendEmail({ to: UNSTAFFED_ALERT_TO, subject: subject, body: '' });   // no body — just an alarm
+      sent[id] = s.dateKey;                                // mark only after a successful send
+      n++;
+    } catch (e) { Logger.log('alertUnstaffedToursTomorrow send failed: ' + e + ' | ' + subject); }
+  });
+
+  try { props.setProperty(UNSTAFFED_ALERT_PROP, JSON.stringify(sent)); } catch (e) { /* best-effort */ }
+  if (n) Logger.log('Unstaffed-tour alerts sent: ' + n);
+  return n;
+}
+
+// Install the nightly ~19:00 trigger for the unstaffed-tour alarm. Run ONCE from the editor.
+function installUnstaffedAlertTrigger() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'alertUnstaffedToursTomorrow') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('alertUnstaffedToursTomorrow').timeBased().everyDays(1).atHour(19).create();
+  return 'Unstaffed-tour alert installed: runs daily ~19:00 for the next day\'s tours.';
+}
+
+
 // Read the money rates from the Ledger's Rates tab, starting from the PORTAL defaults so a
 // missing row still resolves. Returns { paid, free, privatePay, sfPay, freeCommissions,
 // paidSources }. GYG and the SF sources are forced paid whenever their base platform is.

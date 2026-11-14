@@ -541,6 +541,30 @@ const nfShift2 = (nfTours2.allTours || []).find(s => s.dateKey === DATE && s.tim
 check('after a change the stale tab is bypassed; live build still returns the tour', !!nfShift2, nfShift2 && nfShift2.bookings.map(b => b.bookingId));
 check('the fallback did a live build (asm.build timing set)', nfTours2.timings && typeof nfTours2.timings['asm.build'] === 'number', nfTours2.timings);
 
+console.log('--- Unstaffed-tour alarm: a tour tomorrow with guests but NO guide emails management (subject only) ---');
+const TOM = dayKey(1);
+// Append tomorrow rows to the Portal Feed (16 cols incl. O=Guide, P=Type). 13:00 is not a
+// standard tour time, so no Weekly_Schedule default fills it — the Italian one is truly unstaffed.
+const feedNext = feed.getLastRow() + 1;
+feed.getRange(feedNext, 2, 2, 1).setNumberFormat('@'); feed.getRange(feedNext, 10, 2, 1).setNumberFormat('@');
+feed.getRange(feedNext, 1, 2, 16).setValues([
+  [TOM, '1:00 PM', 'Italian', 'Guest A', '+34600000001', 3, 1, 'GetYourGuide', 60, 'E2EUNSTAFF1', '', '', '', '', '', 'booking'],   // 4 people, NO guide
+  [TOM, '1:00 PM', 'German',  'Guest B', '+34600000002', 3, 0, 'GetYourGuide', 45, 'E2ESTAFF1',   '', '', '', '', 'Miguel', 'booking']  // has a guide
+]);
+const _realSend = MailApp.sendEmail; const _sent = [];
+MailApp.sendEmail = (o) => { _sent.push(o); };
+let alertN;
+try { alertN = alertUnstaffedToursTomorrow(); } finally { /* keep override for the idempotency check below */ }
+check('exactly ONE unstaffed tour was alerted (the Italian 13:00; the staffed German one was not)',
+  alertN === 1 && _sent.length === 1, [alertN, _sent.map(m => m.subject)]);
+check('subject = Language, Time, Date, Guests without a guide (no body)',
+  _sent[0] && _sent[0].subject === 'Italian, 1:00 PM, ' + prettyDate_(TOM) + ', 4 guests without a guide' &&
+  (_sent[0].body === '' || _sent[0].body == null), _sent[0] && _sent[0].subject);
+// Idempotent: a second run (e.g. a manual re-run) does not re-send the same alarm.
+const alertN2 = alertUnstaffedToursTomorrow();
+check('a re-run does not double-send (fire-once per tour)', alertN2 === 0 && _sent.length === 1, [alertN2, _sent.length]);
+MailApp.sendEmail = _realSend;
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
