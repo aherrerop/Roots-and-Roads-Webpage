@@ -844,11 +844,9 @@ function privateAvailability_(availIndex, dateText, time) {
   return (best && bestDiff <= ASSIGN_CFG.PRIVATE_AVAIL_TOLERANCE_MIN) ? best : [];
 }
 
-/**
- * Value per regular shift = sum over its non-private bookings of the guide's
- * expected earnings (paid: 10/guest, free: ~14/guest). Private groups are valued
- * separately (flat 75) because they're their own shift.
- */
+// Value per regular shift = sum over its non-private bookings of the guide's expected
+// earnings (paid vs free per-guest rate). SF is valued on its own shift, and private
+// groups are valued separately (they're their own shift). Keyed date|time|language|variant.
 function readShiftValues_() {
   const out = {};
   const ss = SpreadsheetApp.openById(BOOKING_SHEET_ID);
@@ -875,7 +873,7 @@ function readShiftValues_() {
   return out;
 }
 
-/** One entry per private BOOKING (not per slot), with its real time. */
+// One entry per private BOOKING (not per slot), carrying its real time.
 function readPrivateGroups_() {
   const out = [];
   const ss = SpreadsheetApp.openById(BOOKING_SHEET_ID);
