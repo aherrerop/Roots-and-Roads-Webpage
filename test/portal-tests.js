@@ -48,9 +48,13 @@ const staleCk = { tours: [{ dateKey: '2026-09-15', bookings: [{ bookingId: 'GYG1
 CK.applyPendingCheckins(staleCk);
 check('a stale read showing NOT-checked is overridden to checked', staleCk.tours[0].bookings[0].checked === true, staleCk.tours[0].bookings[0]);
 check('the held check-in count is restored on the stale read', staleCk.tours[0].bookings[0].checkedIn === 3, staleCk.tours[0].bookings[0].checkedIn);
-const higherCk = { tours: [{ dateKey: '2026-09-15', bookings: [{ bookingId: 'GYG1', checked: true, checkedIn: 5 }] }], allTours: [] };
-CK.applyPendingCheckins(higherCk);
-check('a higher server count is NOT downgraded by the hold', higherCk.tours[0].bookings[0].checkedIn === 5, higherCk.tours[0].bookings[0].checkedIn);
+// A correction DOWN must stick: after setting the count to 3, a stale read that still
+// shows the OLD higher 5 is held to my 3, so the decrease isn't flipped back up (lets a
+// guide/manager record who actually came). The hold is display-only + TTL'd; the saved
+// ledger/feed value is the real record, so nothing is lost.
+const corrDown = { tours: [{ dateKey: '2026-09-15', bookings: [{ bookingId: 'GYG1', checked: true, checkedIn: 5 }] }], allTours: [] };
+CK.applyPendingCheckins(corrDown);
+check('a correction DOWN is held through the settle window (not flipped back up)', corrDown.tours[0].bookings[0].checkedIn === 3, corrDown.tours[0].bookings[0].checkedIn);
 check('the check-in button records the hold (setPendingCheckin on tap)', /setPendingCheckin\(b\.bookingId, t\.dateKey, n\)/.test(html), null);
 check('a manager undo clears the hold (so undo is not fought)', /delete PENDING_CHECKIN\[b\.bookingId\+"\|"\+t\.dateKey\]/.test(html), null);
 

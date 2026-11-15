@@ -336,6 +336,20 @@ check('the portal shows the feed check-in via the union read', uBk && uBk.checke
 check('the feed keeps the ORIGINAL check-in time (10:03, not reset to 10:09)', uBk && uBk.checkedAt === '10:03', uBk && uBk.checkedAt);
 check('the poll UNIONs the ledger as a cannot-miss safety net (ledger IS read)', rUnion.timings && typeof rUnion.timings.ledger === 'number', rUnion.timings);
 
+console.log('--- Correct a check-in count DOWN: the feed + union read follow the save (a group that was not full) ---');
+// A feed row for a booking we will check in, then correct down (not capped).
+const feedDownRow = feed.getLastRow() + 1;
+feed.getRange(feedDownRow, 2, 1, 1).setNumberFormat('@'); feed.getRange(feedDownRow, 10, 1, 1).setNumberFormat('@');
+feed.getRange(feedDownRow, 1, 1, 14).setValues([[DATE, '10:00 AM', 'English', 'Partial Group', '+1', 4, 0, 'GetYourGuide', 40, 'GYGDOWN1', '', '', '', '']]);
+const saveCount = (n) => apiSave_({ token: token, data: JSON.stringify({ dateKey: DATE, time: '10:00', timeLabel: '10:00 AM', day: '', language: 'English', guide: 'Carlos',
+  bookings: [{ bookingId: 'GYGDOWN1', source: 'GetYourGuide', name: 'Partial Group', phone: '+1', guests: 4, children: 0, income: 40, isPrivate: false, manualNote: '', checked: true, checkedIn: n, guideIndex: 1 }] }) });
+const readDown = () => { const bk = ((apiTours_({ token: token, days: 45 }).allTours || []).find(s => s.dateKey === DATE && s.time === '10:00' && s.language === 'English') || {}).bookings || []; return bk.find(b => b.bookingId === 'GYGDOWN1'); };
+saveCount(4); const upRow = readDown();
+check('checks in at the full count (4)', upRow && upRow.checked === true && upRow.checkedIn === 4, upRow);
+saveCount(2); const downRow = readDown();
+check('a correction DOWN persists through the union read (2, not capped at the earlier 4)', downRow && downRow.checked === true && downRow.checkedIn === 2, downRow);
+check('the feed row itself was lowered to 2 (M column)', Number(feed.getRange(feedDownRow, 13, 1, 1).getValue()) === 2, feed.getRange(feedDownRow, 13, 1, 1).getValue());
+
 console.log('--- Stage 4: the poll builds shifts FROM THE FEED (no schedule-grid read) ---');
 writeFeedGuide_(DATE, '10:00', 'English', false, 'Carlos');       // assign via the feed Guide column
 ensureFeedShiftRow_(DATE, '15:00', 'English', false, 'Albert');   // an EMPTY assignable shift (no weekly rule at 15:00)

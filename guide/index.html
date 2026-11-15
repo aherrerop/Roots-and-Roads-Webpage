@@ -834,16 +834,19 @@ function applyPendingAssigns(r){
    merge guarantees the data itself is safe; this keeps the SCREEN honest until
    the queue drains. */
 function applyPendingCheckins(r){
-  // (1) SUCCESSFUL check-ins held through the replica-settle window — the fix for
-  // the check-in half of the double-refresh. A stale read can no longer flip a
-  // just-checked-in guest back to "Check in". Never DOWNgrades (only marks checked
-  // / raises the count), so a real un-check by the manager is not fought here.
+  // (1) SUCCESSFUL check-ins / count corrections held through the replica-settle window
+  // — the fix for the check-in half of the double-refresh. A stale read can no longer
+  // flip a just-set value back: it re-checks a just-checked guest, and for a booking the
+  // server still shows checked it holds the EXACT count I set (so a correction DOWN — who
+  // actually came — isn't flipped back up). A manager undo clears the hold (so an un-check
+  // is never fought: on undo PENDING_CHECKIN is dropped for that booking).
   const now=Date.now();
   Object.keys(PENDING_CHECKIN).forEach(k=>{ if(PENDING_CHECKIN[k].until<now) delete PENDING_CHECKIN[k]; });
   if(Object.keys(PENDING_CHECKIN).length){
     const hold=list=>(list||[]).forEach(s=>(s.bookings||[]).forEach(b=>{
-      const p=PENDING_CHECKIN[(b.bookingId||"")+"|"+(s.dateKey||"")];
-      if(p && (!b.checked || (+b.checkedIn||0) < p.n)){ b.checked=true; b.checkedIn=p.n; }
+      const p=PENDING_CHECKIN[(b.bookingId||"")+"|"+(s.dateKey||"")]; if(!p) return;
+      if(!b.checked){ b.checked=true; b.checkedIn=p.n; }   // just-checked, server read not caught up yet
+      else{ b.checkedIn=p.n; }                             // already checked -> hold my exact count (incl. a correction down)
     }));
     hold(r.tours); hold(r.allTours);
   }
@@ -1230,8 +1233,8 @@ function bindTours(tours){
   }; });
   document.querySelectorAll(".stepper").forEach(st=>{
     const val=st.querySelector(".val"), max=Number(st.dataset.max);
-    st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); recount(st.dataset.tour); };
-    st.querySelector(".js-inc").onclick=()=>{ val.textContent=Math.min(max,+val.textContent+1); recount(st.dataset.tour); };
+    st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); recount(st.dataset.tour); stepperChanged(st); };
+    st.querySelector(".js-inc").onclick=()=>{ val.textContent=Math.min(max,+val.textContent+1); recount(st.dataset.tour); stepperChanged(st); };
   });
   // Manager assign dropdowns.
   document.querySelectorAll(".asgsel").forEach(sel=>{
@@ -1463,6 +1466,24 @@ function bindTours(tours){
       else { btn.disabled=false; btn.textContent=old; alert(errMsg||"Could not undo"); }
     };
   });
+}
+/* A stepper tap on an ALREADY checked-in booking re-saves the new count, so a guide
+   or manager can correct who actually came (a group that wasn't full), down or up —
+   including to 0. A not-yet-checked booking just stages its number; tapping "Check in"
+   saves it, as before. The new value is held at once (so a poll can't reset the stepper
+   mid-edit) and the write is debounced, so rapid +/- taps become ONE save. */
+let STEP_SAVE_TIMER={};
+function stepperChanged(st){
+  const ref=st.dataset.ref||""; if(ref.indexOf("bk|")!==0) return;
+  const tid=st.dataset.tour, idx=+ref.split("|")[1];
+  const t=TOURS_CACHE.find(x=>x.id===tid); if(!t) return;
+  const b=t.bookings[idx]; if(!b||!b.checked||!b.bookingId) return;   // only re-save a booking that is already checked in
+  const n=+st.querySelector(".val").textContent;
+  b.checkedIn=n;                                       // keep the cache in sync with the stepper
+  setPendingCheckin(b.bookingId, t.dateKey, n);        // hold the EXACT value through the settle window (up or down)
+  LAST_EDIT=Date.now();
+  clearTimeout(STEP_SAVE_TIMER[tid]);
+  STEP_SAVE_TIMER[tid]=setTimeout(()=>{ saveTour(tid); }, 700);
 }
 function recount(tourId){
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]'); let sum=0;

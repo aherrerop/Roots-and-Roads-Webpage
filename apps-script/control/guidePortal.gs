@@ -2691,10 +2691,12 @@ function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
   } catch (e) { return false; }
 }
 
-// Mirror MANY check-ins onto the Portal Feed in ONE read + ONE write (the batch form of
-// writeFeedCheckin_): one read of J..N and one write of M:N for the whole tour. Same
-// rules — never downgrade a count, keep the FIRST recorded time. `updates` =
-// [{ bookingId, checkedIn }]; `at` = HH:mm for new check-ins.
+// Mirror MANY check-ins onto the Portal Feed in ONE read + ONE write: one read of J..N
+// and one write of M:N for the whole tour. The count is AUTHORITATIVE — it matches the
+// save exactly (the ledger upsert already does), so a manager or guide can CORRECT how
+// many actually came, down as well as up (a group that wasn't full). Only bookings this
+// save lists are touched; the first recorded check-in TIME is kept. `updates` =
+// [{ bookingId, checkedIn }]; `at` = HH:mm for a first check-in.
 function writeFeedCheckins_(updates, at) {
   try {
     const want = {};
@@ -2708,7 +2710,7 @@ function writeFeedCheckins_(updates, at) {
     for (let i = 0; i < n; i++) {
       const id = String(rng[i][0] || '').trim();
       if (!(id in want)) continue;
-      const finalCount = Math.max(Number(rng[i][3] || 0), want[id]);
+      const finalCount = want[id];                       // exact: the save is the source of truth (lets a count be corrected down)
       const finalTime = String(rng[i][4] || '').trim() || String(at || '');
       if (finalCount !== Number(rng[i][3] || 0) || finalTime !== String(rng[i][4] || '').trim()) {
         rng[i][3] = finalCount; rng[i][4] = finalTime; changed = true;
