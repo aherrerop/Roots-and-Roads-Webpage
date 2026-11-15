@@ -1853,20 +1853,10 @@ function logCancellationToLedger_(rowVals, language, byName) {
   } catch (e) { return false; }
 }
 
-// Delete a booking's Portal Feed row(s) by id (J = Booking ID). Best-effort.
+// Delete a booking's Portal Feed row(s) by id (J = Booking ID). Best-effort. eachFeedRowById_
+// scans bottom-up, so deleting rows as we go keeps the indexes valid.
 function removeFeedRowById_(bookingId) {
-  try {
-    const id = String(bookingId || '').trim();
-    if (!id) return false;
-    const sh = bookingSS_().getSheetByName('Portal Feed');
-    if (!sh || sh.getLastRow() < 2) return false;
-    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
-    let done = false;
-    for (let i = ids.length - 1; i >= 0; i--) {
-      if (String(ids[i][0] || '').trim() === id) { sh.deleteRow(i + 2); done = true; }
-    }
-    return done;
-  } catch (e) { return false; }
+  return eachFeedRowById_(bookingId, (sh, r) => sh.deleteRow(r));
 }
 
 // Call a whitelisted admin function in the BOOKING project's web app (the same bridge
@@ -2708,11 +2698,11 @@ function writeFeedUncheckin_(bookingId) {
   return done;
 }
 
-// Reflect a booking's NEW TIME on its Portal Feed row (col B) right away, so a manager's
-// move shows on the next poll instead of waiting for the 5-minute feed rebuild. The
-// rebuild rewrites A-L from the Tours tab — which the move also updated — so it re-lands
-// on the same value; no drift. Best-effort, updating every feed row with this id.
-function writeFeedTime_(bookingId, time12h) {
+// The ONE place that finds a booking's Portal Feed row(s) by id. Runs cb(sh, rowNum) for
+// every live feed row whose Booking ID (col J) matches, scanning bottom-up so a callback
+// that deletes rows keeps valid indices. Returns whether any row matched. Best-effort —
+// never throws. The per-column writers below are thin wrappers over this.
+function eachFeedRowById_(bookingId, cb) {
   try {
     const id = String(bookingId || '').trim();
     if (!id) return false;
@@ -2720,77 +2710,40 @@ function writeFeedTime_(bookingId, time12h) {
     if (!sh || sh.getLastRow() < 2) return false;
     const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
     let done = false;
-    for (let i = 0; i < ids.length; i++) {
-      if (String(ids[i][0] || '').trim() === id) {
-        sh.getRange(i + 2, 2, 1, 1).setNumberFormat('@').setValue(String(time12h || ''));   // B = Time
-        done = true;
-      }
+    for (let i = ids.length - 1; i >= 0; i--) {
+      if (String(ids[i][0] || '').trim() === id) { cb(sh, i + 2); done = true; }
     }
     return done;
   } catch (e) { return false; }
 }
 
-// Reflect a booking's NEW DAY on its Portal Feed row (col A) right away, so a manager's
-// day-move shows on the next poll instead of waiting for the 5-min feed rebuild (which
-// re-reads the Tours tab the move also updated). The feed's Date column is the ISO dateKey,
-// stored as text. Best-effort.
+// Reflect a booking's NEW TIME on its Portal Feed row (col B) right away, so a manager's
+// move shows on the next poll instead of waiting for the 5-minute feed rebuild. The rebuild
+// rewrites A-L from the Tours tab — which the move also updated — so it re-lands on the same
+// value; no drift. Best-effort, every feed row with this id.
+function writeFeedTime_(bookingId, time12h) {
+  return eachFeedRowById_(bookingId, (sh, r) => sh.getRange(r, 2, 1, 1).setNumberFormat('@').setValue(String(time12h || '')));   // B = Time
+}
+
+// Reflect a booking's NEW DAY on its Portal Feed row (col A) right away — same reasoning as
+// writeFeedTime_. The feed's Date column is the ISO dateKey, stored as text. Best-effort.
 function writeFeedDate_(bookingId, dateKey) {
-  try {
-    const id = String(bookingId || '').trim();
-    if (!id) return false;
-    const sh = bookingSS_().getSheetByName('Portal Feed');
-    if (!sh || sh.getLastRow() < 2) return false;
-    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
-    let done = false;
-    for (let i = 0; i < ids.length; i++) {
-      if (String(ids[i][0] || '').trim() === id) {
-        sh.getRange(i + 2, 1, 1, 1).setNumberFormat('@').setValue(String(dateKey || ''));   // A = Date
-        done = true;
-      }
-    }
-    return done;
-  } catch (e) { return false; }
+  return eachFeedRowById_(bookingId, (sh, r) => sh.getRange(r, 1, 1, 1).setNumberFormat('@').setValue(String(dateKey || '')));   // A = Date
 }
 
 // Reflect a booking's NEW LANGUAGE on its Portal Feed row (col C) right away — same
 // reasoning as writeFeedTime_. Best-effort.
 function writeFeedLanguage_(bookingId, language) {
-  try {
-    const id = String(bookingId || '').trim();
-    if (!id) return false;
-    const sh = bookingSS_().getSheetByName('Portal Feed');
-    if (!sh || sh.getLastRow() < 2) return false;
-    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
-    let done = false;
-    for (let i = 0; i < ids.length; i++) {
-      if (String(ids[i][0] || '').trim() === id) {
-        sh.getRange(i + 2, 3, 1, 1).setNumberFormat('@').setValue(String(language || ''));   // C = Language
-        done = true;
-      }
-    }
-    return done;
-  } catch (e) { return false; }
+  return eachFeedRowById_(bookingId, (sh, r) => sh.getRange(r, 3, 1, 1).setNumberFormat('@').setValue(String(language || '')));   // C = Language
 }
 
-// Clear the Guide (col O) on a booking's Portal Feed row(s). Called on a MOVE so the
-// booking doesn't drag its old tour's guide into the new slot: a tour's guide is read
-// from its bookings' Guide column (buildScheduleFromFeed_), so a moved booking that kept
-// its old guide would wrongly show that guide on the new tour. Cleared, the moved booking
-// lands in an UNASSIGNED tour unless the target tour already has its own guide from its
-// other bookings. Best-effort.
+// Clear the Guide (col O) on a booking's Portal Feed row(s). Called on a MOVE so the booking
+// doesn't drag its old tour's guide into the new slot: a tour's guide is read from its
+// bookings' Guide column (buildScheduleFromFeed_), so a moved booking that kept its old guide
+// would wrongly show that guide on the new tour. Cleared, the moved booking lands in an
+// UNASSIGNED tour unless the target tour already has a guide from its other bookings.
 function clearFeedGuide_(bookingId) {
-  try {
-    const id = String(bookingId || '').trim();
-    if (!id) return false;
-    const sh = bookingSS_().getSheetByName('Portal Feed');
-    if (!sh || sh.getLastRow() < 2) return false;
-    const ids = sh.getRange(2, 10, sh.getLastRow() - 1, 1).getValues();   // J = Booking ID
-    let done = false;
-    for (let i = 0; i < ids.length; i++) {
-      if (String(ids[i][0] || '').trim() === id) { sh.getRange(i + 2, 15, 1, 1).setValue(''); done = true; }   // O = Guide
-    }
-    return done;
-  } catch (e) { return false; }
+  return eachFeedRowById_(bookingId, (sh, r) => sh.getRange(r, 15, 1, 1).setValue(''));   // O = Guide
 }
 
 // Delete a booking's check-in row(s) from EVERY guide ledger tab (so the money record
