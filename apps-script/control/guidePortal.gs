@@ -3778,14 +3778,30 @@ function seedRatesTab_(ss) {
 // Manual snapshot — run anytime from the editor. Returns the copy's URL.
 function backupLedgerNow() { return snapshotLedger_('manual'); }
 
-// Scheduled snapshots (installLedgerBackupTriggers). Never throw.
+// Scheduled snapshots (installLedgerBackupTriggers). Never throw. Each backs up the ledger
+// (with its own restore path) AND every other critical spreadsheet (Control, BookingSheet,
+// the two availability files), so a lost/corrupted sheet always has a recent restore point.
 function backupLedgerWeekly() {
   try { snapshotLedger_('weekly'); pruneLedgerBackups_('weekly', PORTAL.LEDGER_BACKUP_KEEP_WEEKLY); }
   catch (e) { console.log('backupLedgerWeekly error (swallowed): ' + e); }
+  try { backupSystemSheets_('weekly', PORTAL.LEDGER_BACKUP_KEEP_WEEKLY); }
+  catch (e) { console.log('backupSystemSheets_ weekly error (swallowed): ' + e); }
 }
 function backupLedgerMonthly() {
   try { snapshotLedger_('monthly'); pruneLedgerBackups_('monthly', PORTAL.LEDGER_BACKUP_KEEP_MONTHLY); }
   catch (e) { console.log('backupLedgerMonthly error (swallowed): ' + e); }
+  try { backupSystemSheets_('monthly', PORTAL.LEDGER_BACKUP_KEEP_MONTHLY); }
+  catch (e) { console.log('backupSystemSheets_ monthly error (swallowed): ' + e); }
+}
+
+// Manual: back up EVERYTHING now (ledger + every critical spreadsheet). Run from the editor
+// before a risky change. Returns a short summary.
+function backupEverythingNow() {
+  let led = ''; try { led = snapshotLedger_('manual'); } catch (e) { led = 'ledger FAILED: ' + e; }
+  let n = 0; try { n = backupSystemSheets_('manual', PORTAL.LEDGER_BACKUP_KEEP_WEEKLY); } catch (e) {}
+  const msg = 'Backed up the ledger + ' + n + ' other critical sheet(s) into "' + PORTAL.LEDGER_BACKUP_FOLDER + '". Ledger copy: ' + led;
+  console.log(msg);
+  return msg;
 }
 
 // Copy the whole live ledger file into the Backups folder, dated + tagged.
@@ -3826,6 +3842,45 @@ function listLedgerBackups() {
   out.forEach(b => console.log(
     Utilities.formatDate(b.created, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') + '  ' + b.id + '  ' + b.name));
   return out;
+}
+
+// Every spreadsheet whose loss would hurt, backed up alongside the ledger. The ledger has
+// its own snapshot+restore above; these are the config/data sheets that would be painful to
+// rebuild from scratch. {id, label}; a bad id is skipped, never fatal.
+function systemBackupTargets_() {
+  const out = [];
+  try { out.push({ id: control_().getId(), label: 'Control_v1' }); } catch (e) {}
+  out.push({ id: PORTAL.BOOKING_SHEET_ID, label: 'BookingSheet' });
+  try { if (typeof GUIDE_FILE_ID !== 'undefined' && GUIDE_FILE_ID) out.push({ id: GUIDE_FILE_ID, label: 'Guide_3h_Availability' }); } catch (e) {}
+  try { if (typeof SF_GUIDE_FILE_ID !== 'undefined' && SF_GUIDE_FILE_ID) out.push({ id: SF_GUIDE_FILE_ID, label: 'Guide_SF_Availability' }); } catch (e) {}
+  return out;
+}
+
+// Copy each critical spreadsheet into the Backups folder, dated + tagged, then prune to the
+// newest `keep`. Best-effort PER FILE so one failure never blocks the others. Reuses the
+// ledger backup folder. Returns how many copies were made.
+function backupSystemSheets_(tag, keep) {
+  const folder = ledgerBackupFolder_();
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd_HHmm');
+  const targets = systemBackupTargets_();
+  let n = 0;
+  targets.forEach(t => {
+    try { DriveApp.getFileById(t.id).makeCopy(t.label + ' — backup — ' + tag + ' — ' + stamp, folder); n++; }
+    catch (e) { console.log('backupSystemSheets_ ' + t.label + ': ' + e); }
+  });
+  targets.forEach(t => { try { pruneSystemBackups_(t.label, tag, keep); } catch (e) {} });
+  return n;
+}
+
+// Keep only the newest `keep` backups of one sheet+tag; trash the rest. Matches files whose
+// name STARTS with "<label> — backup — <tag> —", so it never touches another sheet's copies.
+function pruneSystemBackups_(label, tag, keep) {
+  const marker = label + ' — backup — ' + tag + ' —';
+  const files = [];
+  const it = ledgerBackupFolder_().getFiles();
+  while (it.hasNext()) { const f = it.next(); if (f.getName().indexOf(marker) === 0) files.push(f); }
+  files.sort((a, b) => b.getDateCreated().getTime() - a.getDateCreated().getTime());
+  files.slice(Math.max(0, Number(keep) || 0)).forEach(f => { try { f.setTrashed(true); } catch (e) {} });
 }
 
 // Roll the live ledger back to a chosen backup — NON-DESTRUCTIVE. Makes a fresh working
@@ -5989,6 +6044,155 @@ function updateControlHealth_() {
     sh.setColumnWidth(1, 300);
     sh.setColumnWidth(2, 150);
   } catch (e) { console.log('updateControlHealth_: ' + e); }
+}
+
+
+/******************************************************
+ * 10B. PRE-FLIGHT HEALTH CHECK  (watchdog: catch "about to break" before it does)
+ ******************************************************/
+
+// Where a critical-failure alarm goes (same inbox as the other alerts).
+const SYSTEM_ALERT_TO = UNSTAFFED_ALERT_TO;
+
+// The watchdog's checklist — the things whose failure actually takes the system down. Each
+// is READ-ONLY + best-effort and returns {name, critical, ok, detail}. A `critical` failure
+// is one the system cannot self-heal and that needs a human now; non-critical ones show on
+// the health dashboard but never email. This is the single source of truth for "what to
+// check before things break" — add a check here when you learn a new failure mode.
+function preflightCheck_() {
+  const BOOKING_STALE_MIN = 180;   // booking system polls often; a 3h gap = it stalled
+  const BACKUP_STALE_DAYS = 8;     // weekly backup -> something within ~8 days must exist
+  const MAX_ERRORS_48H = 50;       // a spike above this is worth a look (warn, not critical)
+  const checks = [];
+  const add = (name, critical, test) => {
+    try { const r = test() || {}; checks.push({ name: name, critical: critical, ok: !!r.ok, detail: r.detail || '' }); }
+    catch (e) { checks.push({ name: name, critical: critical, ok: false, detail: 'check threw: ' + e }); }
+  };
+
+  // Dates/cutoffs silently break if the project timezone drifts.
+  add('timezone is Europe/Madrid', true, function () {
+    const tz = Session.getScriptTimeZone();
+    return { ok: tz === 'Europe/Madrid' || sameUtcOffset_(tz, 'Europe/Madrid'), detail: 'tz=' + tz };
+  });
+
+  // The booking system writes a heartbeat to its Status tab each run; a stale one = emails
+  // stopped processing (quota, a throw, a missing trigger).
+  add('booking system heartbeat fresh', true, function () {
+    const st = bookingSS_().getSheetByName('Status');
+    if (!st) return { ok: false, detail: 'no Status tab on the BookingSheet' };
+    const stamp = readStampCell_(st.getRange(1, 2).getValue());
+    if (!stamp.date) return { ok: false, detail: 'Status timestamp unreadable' };
+    const ageMin = Math.round((Date.now() - stamp.date.getTime()) / 60000);
+    return { ok: ageMin <= BOOKING_STALE_MIN, detail: 'last run ' + ageMin + ' min ago (limit ' + BOOKING_STALE_MIN + ')' };
+  });
+
+  // The money record must be reachable and shaped like a ledger.
+  add('ledger reachable with guide tabs', true, function () {
+    const ss = ledgerSS_();
+    const guideTabs = ss.getSheets().filter(isLedgerGuideTabForHistory_).length;
+    return { ok: guideTabs > 0, detail: guideTabs + ' guide ledger tab(s)' };
+  });
+
+  // The portal reads bookings from the Portal Feed; if it's gone the portal shows nothing.
+  add('Portal Feed reachable', true, function () {
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh) return { ok: false, detail: 'no Portal Feed tab' };
+    const head = sh.getRange(1, 1, 1, 3).getDisplayValues()[0];
+    return { ok: String(head[0]).toLowerCase() === 'date', detail: 'rows=' + Math.max(0, sh.getLastRow() - 1) };
+  });
+
+  // A recent backup must exist — the whole point of fail-proofing is the restore point.
+  add('a backup exists in the last ' + BACKUP_STALE_DAYS + ' days', true, function () {
+    const cutoff = Date.now() - BACKUP_STALE_DAYS * 86400000;
+    let newest = 0;
+    const it = ledgerBackupFolder_().getFiles();
+    while (it.hasNext()) { const t = it.next().getDateCreated().getTime(); if (t > newest) newest = t; }
+    return { ok: newest > cutoff, detail: newest ? ('newest ' + Math.round((Date.now() - newest) / 86400000) + ' days old') : 'no backups found' };
+  });
+
+  // Each booking id must appear on at most one active Portal Feed row — a duplicate is data
+  // corruption that double-counts a tour.
+  add('no duplicate active booking ids', true, function () {
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return { ok: true, detail: 'empty' };
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, 16).getValues();
+    const seen = {}, dups = [];
+    v.forEach(function (r) {
+      if (String(r[15] || '').trim().toLowerCase() === 'shift') return;   // P = Type: placeholder, not a booking
+      const id = String(r[9] || '').trim();                               // J = Booking ID
+      if (!id) return;
+      if (seen[id]) { if (dups.indexOf(id) === -1) dups.push(id); } else seen[id] = true;
+    });
+    return { ok: dups.length === 0, detail: dups.length ? ('duplicates: ' + dups.slice(0, 10).join(', ')) : 'none' };
+  });
+
+  // An error spike is informative, not fatal — surfaced, never emailed.
+  add('errors in last 48h under ' + MAX_ERRORS_48H, false, function () {
+    const errSh = control_().getSheetByName('Errors');
+    if (!errSh || errSh.getLastRow() < 2) return { ok: true, detail: '0' };
+    const n = Math.min(200, errSh.getLastRow() - 1);
+    const cutoff = Date.now() - 48 * 3600000;
+    let count = 0;
+    errSh.getRange(errSh.getLastRow() - n + 1, 1, n, 1).getValues()
+      .forEach(function (r) { if (r[0] instanceof Date && r[0].getTime() > cutoff) count++; });
+    return { ok: count < MAX_ERRORS_48H, detail: count + ' in 48h' };
+  });
+
+  // The portal goes stale if its 5-minute feed rebuild trigger is gone (informative).
+  add('portal feed-rebuild trigger installed', false, function () {
+    const has = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'rebuildNearFuturePortalFeed_'; });
+    return { ok: has, detail: has ? 'yes' : 'MISSING — run installNearFutureFeedTrigger' };
+  });
+
+  const criticalFails = checks.filter(function (c) { return c.critical && !c.ok; });
+  return { ok: criticalFails.length === 0, checks: checks, criticalFails: criticalFails };
+}
+
+// Daily watchdog (scheduled). Runs the pre-flight, refreshes the health dashboard, and emails
+// management ONLY when the set of CRITICAL failures changes to a new non-empty set — so a new
+// break alerts once, a persisting one doesn't re-spam, and a cleared one re-arms. Best-effort.
+function dailyHealthCheck() {
+  __RRX = {};
+  let r; try { r = preflightCheck_(); } catch (e) { r = { ok: false, checks: [], criticalFails: [{ name: 'preflight', detail: String(e) }] }; }
+  try { updateControlHealth_(); } catch (e) { /* dashboard is best-effort */ }
+  markHealthEvent_('HB_PREFLIGHT');
+
+  const props = PropertiesService.getScriptProperties();
+  const sig = r.criticalFails.map(function (c) { return c.name; }).sort().join(',');
+  const prev = props.getProperty('PREFLIGHT_ALERT_SIG') || '';
+  try {
+    if (sig && sig !== prev) {
+      MailApp.sendEmail({
+        to: SYSTEM_ALERT_TO,
+        subject: '⚠️ R&R system health: ' + r.criticalFails.length + ' critical check(s) failing',
+        body: r.criticalFails.map(function (c) { return '• ' + c.name + ' — ' + c.detail; }).join('\n') +
+              '\n\nFull detail: run fullSystemTest() (Control editor) or systemStatus() (BookingSheet editor).'
+      });
+      props.setProperty('PREFLIGHT_ALERT_SIG', sig);
+    } else if (!sig) {
+      props.setProperty('PREFLIGHT_ALERT_SIG', '');   // all clear -> re-arm
+    }
+  } catch (e) { console.log('dailyHealthCheck alert: ' + e); }
+  return r;
+}
+
+// Run the pre-flight now and print a PASS/FAIL report (no email). Use before/after a change.
+function runPreflightNow() {
+  const r = preflightCheck_();
+  console.log('PRE-FLIGHT: ' + (r.ok ? 'ALL CRITICAL CHECKS PASS' : r.criticalFails.length + ' CRITICAL FAILURE(S)'));
+  r.checks.forEach(function (c) {
+    console.log((c.ok ? 'PASS ' : (c.critical ? 'FAIL ' : 'WARN ')) + c.name + '  —  ' + c.detail);
+  });
+  return r;
+}
+
+// Install the daily watchdog (~07:00, so a problem is in the inbox first thing). Run ONCE.
+function installHealthCheckTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'dailyHealthCheck') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('dailyHealthCheck').timeBased().everyDays(1).atHour(7).create();
+  return 'Daily system health check installed (~07:00). It emails ' + SYSTEM_ALERT_TO + ' only when a critical check newly fails.';
 }
 
 

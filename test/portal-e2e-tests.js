@@ -579,6 +579,22 @@ const alertN2 = alertUnstaffedToursTomorrow();
 check('a re-run does not double-send (fire-once per tour)', alertN2 === 0 && _sent.length === 1, [alertN2, _sent.length]);
 MailApp.sendEmail = _realSend;
 
+console.log('--- Pre-flight watchdog: detects a duplicate active booking id (data corruption) ---');
+const pf1 = preflightCheck_();
+const dupCheck = (r) => (r.checks || []).find(c => c.name === 'no duplicate active booking ids');
+check('pre-flight runs and returns a checks list + criticalFails', pf1 && Array.isArray(pf1.checks) && Array.isArray(pf1.criticalFails), pf1 && Object.keys(pf1));
+check('with clean data the duplicate-id check passes', dupCheck(pf1) && dupCheck(pf1).ok === true, dupCheck(pf1));
+// Inject a duplicate of an existing feed booking id (GYGE2E001 lives at DATE 10:00 English).
+const dupRow = feed.getLastRow() + 1;
+feed.getRange(dupRow, 2, 1, 1).setNumberFormat('@'); feed.getRange(dupRow, 10, 1, 1).setNumberFormat('@');
+feed.getRange(dupRow, 1, 1, 14).setValues([[DATE, '10:00 AM', 'English', 'Dana Ortiz (dupe)', '+34600111222', 2, 0, 'GetYourGuide', 30, 'GYGE2E001', '', '', '', '']]);
+const pf2 = preflightCheck_();
+check('the watchdog flags the duplicate booking id as a CRITICAL failure',
+  dupCheck(pf2) && dupCheck(pf2).ok === false && dupCheck(pf2).critical === true && pf2.criticalFails.some(c => c.name === 'no duplicate active booking ids'),
+  dupCheck(pf2));
+feed.deleteRow(dupRow);   // clean up so later state is unaffected
+check('removing the duplicate clears the flag', dupCheck(preflightCheck_()).ok === true, null);
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
