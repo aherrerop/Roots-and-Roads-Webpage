@@ -58,6 +58,20 @@ check('a correction DOWN is held through the settle window (not flipped back up)
 check('the check-in button records the hold (setPendingCheckin on tap)', /setPendingCheckin\(b\.bookingId, t\.dateKey, n\)/.test(html), null);
 check('a manager undo clears the hold (so undo is not fought)', /delete PENDING_CHECKIN\[b\.bookingId\+"\|"\+t\.dateKey\]/.test(html), null);
 
+console.log('--- A count edit is PERSISTED (survives a hard reload), deduped per tour, dropped on confirm ---');
+const qBlock = html.slice(html.indexOf('function ckQueueLoad()'), html.indexOf('function ckPending()'));
+const Q = (new Function(qBlock + '\n;return { ckQueueLoad, ckEnqueueTour, ckDequeueTour };'))();
+LS['rr_ckqueue'] = '[]';
+const d1 = { dateKey: '2026-09-15', time: '10:00', language: 'English', bookings: [{ bookingId: 'B1', checked: true, checkedIn: 4 }] };
+Q.ckEnqueueTour(d1);
+Q.ckEnqueueTour(Object.assign({}, d1, { bookings: [{ bookingId: 'B1', checked: true, checkedIn: 2 }] }));   // a later tap on the SAME tour
+const q1 = Q.ckQueueLoad();
+check('rapid edits keep ONE queued entry per tour (the latest wins)', q1.length === 1 && q1[0].data.bookings[0].checkedIn === 2, q1.map(x => x.data.bookings[0].checkedIn));
+check('the staged edit is persisted to localStorage (survives a hard reload)', JSON.parse(LS['rr_ckqueue']).length === 1, LS['rr_ckqueue']);
+Q.ckDequeueTour(d1);   // server confirmed -> drop the safety copy for this tour
+check("a confirmed save drops exactly that tour's queued copy", Q.ckQueueLoad().length === 0, Q.ckQueueLoad());
+LS['rr_ckqueue'] = '[]';
+
 console.log('--- Freshness indicator + manager window controls exist ---');
 check('freshness element is in the page', /id="fresh"/.test(html), null);
 check('setFresh runs on load (loading/ok/stale states)', /setFresh\("loading"\)/.test(html) && /setFresh\("ok"/.test(html) && /setFresh\("stale"\)/.test(html), null);

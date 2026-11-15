@@ -672,12 +672,13 @@ function startAutoRefresh(){
   window._rrReschedulePoll = scheduleNextPoll;   // loadTours calls this when pollHint changes
   // Check for a newer deployed build every 2 min and when the tab regains focus.
   window._rrVerCheck = setInterval(checkForUpdate, 120000);
-  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden){ checkForUpdate(); ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("focus"); } });
+  document.addEventListener("visibilitychange", ()=>{ if(document.hidden){ flushStepperSavesNow(); } else { checkForUpdate(); ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("focus"); } });
   window.addEventListener("focus", ()=>{ checkForUpdate(); ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("focus"); });
   window.addEventListener("online", ()=>{ ckFlush(); asgFlush(); });   // signal came back -> push queued check-ins + assignments
   // Reloaded/closed the page mid-load? Tell the analytics it was cut short (not a
-  // slow server) — this is the "sometimes I reload before it finishes" case.
-  window.addEventListener("pagehide", ()=>{ if(LOADING) beacon("abort", Date.now()-LOAD_START, LOAD_NAV); });
+  // slow server) — this is the "sometimes I reload before it finishes" case. Also push
+  // any staged count edit immediately (it's already queued, so a hard reload can't lose it).
+  window.addEventListener("pagehide", ()=>{ flushStepperSavesNow(); if(LOADING) beacon("abort", Date.now()-LOAD_START, LOAD_NAV); });
 }
 // A monotonic id per load. Only the NEWEST request may render — a slow, stale
 // response (e.g. an auto-refresh that read the grid before a manager's assign)
@@ -1470,8 +1471,11 @@ function bindTours(tours){
 /* A stepper tap on an ALREADY checked-in booking re-saves the new count, so a guide
    or manager can correct who actually came (a group that wasn't full), down or up —
    including to 0. A not-yet-checked booking just stages its number; tapping "Check in"
-   saves it, as before. The new value is held at once (so a poll can't reset the stepper
-   mid-edit) and the write is debounced, so rapid +/- taps become ONE save. */
+   saves it, as before. The new value is (1) held at once so a poll can't reset the
+   stepper mid-edit, (2) PERSISTED to the offline queue at once so even a hard reload
+   can't lose it (boot's ckFlush re-sends it, self-correcting), and (3) sent quickly via
+   a short debounce — so rapid +/- taps become one fast save, dropped from the queue once
+   the server confirms it. */
 let STEP_SAVE_TIMER={};
 function stepperChanged(st){
   const ref=st.dataset.ref||""; if(ref.indexOf("bk|")!==0) return;
@@ -1482,9 +1486,19 @@ function stepperChanged(st){
   b.checkedIn=n;                                       // keep the cache in sync with the stepper
   setPendingCheckin(b.bookingId, t.dateKey, n);        // hold the EXACT value through the settle window (up or down)
   LAST_EDIT=Date.now();
+  ckEnqueueTour(buildTourData(tid));                   // persist NOW (survives a hard reload / closed app)
   clearTimeout(STEP_SAVE_TIMER[tid]);
-  STEP_SAVE_TIMER[tid]=setTimeout(()=>{ saveTour(tid); }, 700);
+  STEP_SAVE_TIMER[tid]=setTimeout(()=>flushStepperSave(tid), 300);
 }
+// Send a tour's staged count edit now (debounce fired, or the app is backgrounding) and,
+// once the server confirms, drop its safety copy from the offline queue. A failed save
+// stays queued and ckFlush retries it on the next boot / poll / focus / reconnect.
+function flushStepperSave(tid){
+  if(STEP_SAVE_TIMER[tid]){ clearTimeout(STEP_SAVE_TIMER[tid]); delete STEP_SAVE_TIMER[tid]; }
+  const data=buildTourData(tid); if(!data) return;
+  saveTour(tid).then(ok=>{ if(ok) ckDequeueTour(data); }).catch(()=>{});
+}
+function flushStepperSavesNow(){ Object.keys(STEP_SAVE_TIMER).forEach(tid=>{ try{ flushStepperSave(tid); }catch(e){} }); }
 function recount(tourId){
   const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]'); let sum=0;
   const t=TOURS_CACHE.find(x=>x.id===tourId);
@@ -1511,6 +1525,14 @@ function buildTourData(tourId){
 function ckQueueLoad(){ try{ return JSON.parse(localStorage.getItem("rr_ckqueue")||"[]"); }catch(e){ return []; } }
 function ckQueueSave(q){ try{ localStorage.setItem("rr_ckqueue", JSON.stringify(q||[])); }catch(e){} }
 function ckEnqueue(data){ if(!data) return; const q=ckQueueLoad(); q.push({data:data, ts:Date.now()}); ckQueueSave(q); }
+/* Queue a save keyed by its TOUR, so rapid count edits keep ONE entry (the latest) instead
+   of stacking — and a confirmed save can drop exactly that tour's copy. The stored payload
+   carries every booking's current count, so one flush re-applies the whole tour correctly. */
+function ckTourKey_(d){ return ((d&&d.dateKey)||"")+"|"+((d&&d.time)||"")+"|"+((d&&d.language)||""); }
+function ckEnqueueTour(data){ if(!data) return; const k=ckTourKey_(data);
+  const q=ckQueueLoad().filter(it=>ckTourKey_(it.data)!==k); q.push({data:data, ts:Date.now()}); ckQueueSave(q); }
+function ckDequeueTour(data){ if(!data) return; const k=ckTourKey_(data);
+  ckQueueSave(ckQueueLoad().filter(it=>ckTourKey_(it.data)!==k)); }
 function ckPending(){ return ckQueueLoad().length; }
 let CK_FLUSHING=false;
 async function ckFlush(){
