@@ -1999,13 +1999,10 @@ function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guid
   return { ok: true, assigned: guide || '' };
 }
 
-/**
- * Give a Schedule_<language> grid the same clean look makeSchedule produces, no
- * matter how its rows/columns were added — so a row the PORTAL inserts is styled
- * exactly like one the weekly scheduler wrote. Idempotent and cheap (a handful
- * of range ops over a small grid). Only touches background/alignment/borders,
- * never the guide-name font, so a bold "lock" stays bold.
- */
+// Give a Schedule_<language> grid the same clean look makeSchedule produces, however its
+// rows/columns were added — so a row the PORTAL inserts is styled like one the weekly
+// scheduler wrote. Idempotent and cheap. Only touches background/alignment/borders, never
+// the guide-name font, so a bold "lock" stays bold.
 function styleScheduleGrid_(sh) {
   try {
     const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
@@ -2033,7 +2030,7 @@ function styleScheduleGrid_(sh) {
   } catch (e) { /* styling is cosmetic — never fail an assignment over it */ }
 }
 
-/** Rewrite the grid title to span the actual first..last dated row. */
+// Rewrite the grid title to span the actual first..last dated row.
 function refreshGridTitle_(sh, language, anchor) {
   const last = sh.getLastRow();
   if (last < 3) return;
@@ -2227,7 +2224,7 @@ function readGuidesRaw_() {
   return (__RRX.guidesRaw = raw);
 }
 
-/** Language-agnostic: language columns are those between "Seniority" and "Email". */
+// Language-agnostic: language columns are those between "Seniority" and "Email".
 function guideColumns_(header) {
   const idx = name => header.findIndex(h => h.toLowerCase() === name.toLowerCase());
   const seniority = idx('Seniority');
@@ -2254,15 +2251,11 @@ function guideColumns_(header) {
            tourTypeCol: tour, languages };
 }
 
-/**
- * TOUR TYPE(S) a guide runs, from the Guides-tab "Tour" column.
- *   "3h"       -> the 3-hour tour (the default)
- *   "SF"       -> the Sagrada Família exterior tour only
- *   "3h/SF", "Both", "3h, SF" -> both
- * BLANK defaults to 3h (so existing guides keep working with no sheet edit — only
- * SF guides need marking). An unrecognised value also falls back to 3h so a guide
- * is never hidden from everything by a typo.
- */
+// Tour type(s) a guide runs, from the Guides-tab "Tour" column:
+//   "3h" -> the 3-hour tour (default); "SF" -> the Sagrada-exterior tour only;
+//   "3h/SF" / "Both" / "3h, SF" -> both.
+// Blank defaults to 3h (existing guides keep working with no edit — only SF guides need
+// marking), and an unrecognised value also falls back to 3h so a typo never hides a guide.
 function parseTourTypes_(cell) {
   const s = String(cell == null ? '' : cell).trim().toLowerCase();
   if (!s) return { threeH: true, sf: false };
@@ -2317,15 +2310,11 @@ function findGuideByEmail_(email) {
   return guidesParsed_().byEmail[e] || null;
 }
 
-/**
- * VACATION / blocked dates for a guide, entered in the Guides tab's "Vacation
- * dates" column. Accepts single days AND ranges, European day/month, comma or
- * newline separated, e.g.  "3/9, 4/9, 3/10 - 10/10, 21/12 - 26/12 pending".
- * Trailing words (e.g. "pending") are ignored. The YEAR is inferred: this year,
- * or next year if the day/month already passed more than ~40 days ago. Returns
- * inclusive ranges as { from, to } yyyy-MM-dd date keys. Shared by the portal
- * (weeklyDefaultGuide_, the assign dots) and the scheduler (makeSchedule).
- */
+// Vacation / blocked dates for a guide, from the Guides tab's "Vacation dates" column.
+// Accepts single days AND ranges, European day/month, comma or newline separated, e.g.
+// "3/9, 4/9, 3/10 - 10/10, 21/12 - 26/12 pending" — trailing words are ignored. The year is
+// inferred (this year, or next year if the day/month passed more than ~40 days ago).
+// Returns inclusive { from, to } yyyy-MM-dd ranges. Shared by the portal and the scheduler.
 function parseVacationRanges_(cell) {
   const s = String(cell || '').trim();
   if (!s) return [];
@@ -2363,22 +2352,17 @@ function findGuideByName_(guideName) {
   return guidesParsed_().byName[normName_(guideName)] || null;
 }
 
-/**
- * The assigning-grid tab name for a language + tour type. The 3-hour tour lives in
- * `Schedule_<Language>`; the Sagrada exterior (SF) tour has its OWN per-language
- * grid `Schedule_SF_<Language>`, so SF assignments never mix into the 3h grid.
- * SHARED across the control project (portal writers + batch scheduler).
- */
+// The assigning-grid tab name for a language + tour type. The 3-hour tour lives in
+// Schedule_<Language>; the Sagrada-exterior (SF) tour has its OWN per-language grid
+// Schedule_SF_<Language>, so SF assignments never mix into the 3h grid. Shared across the
+// project (portal writers + batch scheduler).
 function scheduleTabName_(language, isSf) {
   return (isSf ? 'Schedule_SF_' : 'Schedule_') + language;
 }
 
-/**
- * Parse a `Schedule_*` tab name into { language, isSf }, or null if it is not a
- * grid tab. Checks the SF prefix FIRST so `Schedule_SF_English` reads as
- * {English, SF}, not a phantom language "SF_English". SHARED across the project;
- * every reader that derives a language from a grid tab name must use this.
- */
+// Parse a Schedule_* tab name into { language, isSf }, or null if it is not a grid tab.
+// Checks the SF prefix FIRST so Schedule_SF_English reads as {English, SF}, not a phantom
+// language "SF_English". Every reader that derives a language from a grid tab name uses this.
 function parseScheduleTabName_(name) {
   const n = String(name || '');
   if (n.indexOf('Schedule_SF_') === 0) return { language: n.substring('Schedule_SF_'.length).trim(), isSf: true };
@@ -2386,21 +2370,18 @@ function parseScheduleTabName_(name) {
   return null;
 }
 
-/**
- * Reads the per-language grids (Schedule_English, Schedule_German, ...) into
- * upcoming shift objects. These grids are the SOURCE OF TRUTH: makeSchedule
- * generates them, but a manager can hand-edit a cell and the portal follows.
- *
- * Grid layout (makeOneLanguageScheduleTab_):
- *   row 1  merged title "<Lang> schedule (2026-07-16 to 2026-07-24)"  (has the year)
- *   row 2  ["Date", "10:00", "11:00", "17:00", ...]
- *   row 3+ ["Thu Jul 16", <cell>, <cell>, ...]
- * A cell may stack a regular block and private blocks, separated by newlines:
- *   "Carlos, Albert"                 regular, assigned
- *   "Carlos\nNot assigned"           regular, partially/means unassigned
- *   "🔒 Bob (private)"               private group
- *   "Carlos\n🔒 Bob (private)"       regular + private in one cell
- */
+// Read the per-language grids (Schedule_English, Schedule_German, …) into upcoming shift
+// objects. These grids are the SOURCE OF TRUTH: makeSchedule generates them, but a manager
+// can hand-edit a cell and the portal follows.
+// Grid layout (makeOneLanguageScheduleTab_):
+//   row 1  merged title "<Lang> schedule (2026-07-16 to 2026-07-24)"  (carries the year)
+//   row 2  ["Date", "10:00", "11:00", "17:00", …]
+//   row 3+ ["Thu Jul 16", <cell>, <cell>, …]
+// A cell may stack a regular block and private blocks, newline-separated:
+//   "Carlos, Albert"           regular, assigned
+//   "Carlos\nNot assigned"     regular, partly unassigned
+//   "🔒 Bob (private)"         private group
+//   "Carlos\n🔒 Bob (private)" regular + private in one cell
 function readSchedule_(opts) {
   const includePast = !!(opts && opts.includePast);
   // Memoise per-run (__RRX): the hourly queue build reads the schedule grids a few
@@ -2606,7 +2587,7 @@ function readPast2DaysFeed_() {
   return parseFeedSheet_(sh);
 }
 
-/** Parse a feed-shaped sheet (Portal Feed or Past2Days) into { shiftKey -> rows[] }. */
+// Parse a feed-shaped sheet (Portal Feed or Past2Days) into { shiftKey -> rows[] }.
 function parseFeedSheet_(sh) {
   if (!sh || sh.getLastRow() < 2) return null;
   // Read up to 16 cols (adds O=Guide, P=Type). Older 14-col rows read short and
@@ -2749,10 +2730,10 @@ function writeFeedTime_(bookingId, time12h) {
   } catch (e) { return false; }
 }
 
-/** Reflect a booking's NEW DAY on its Portal Feed row (col A) right away, so a
- *  manager's day-move shows on the next poll instead of waiting for the 5-min feed
- *  rebuild (which re-reads the Tours tab the move also updated). Best-effort. The
- *  feed's Date column is the ISO dateKey ("yyyy-MM-dd"), stored as text. */
+// Reflect a booking's NEW DAY on its Portal Feed row (col A) right away, so a manager's
+// day-move shows on the next poll instead of waiting for the 5-min feed rebuild (which
+// re-reads the Tours tab the move also updated). The feed's Date column is the ISO dateKey,
+// stored as text. Best-effort.
 function writeFeedDate_(bookingId, dateKey) {
   try {
     const id = String(bookingId || '').trim();
@@ -2771,8 +2752,8 @@ function writeFeedDate_(bookingId, dateKey) {
   } catch (e) { return false; }
 }
 
-/** Reflect a booking's NEW LANGUAGE on its Portal Feed row (col C) right away —
- *  same reasoning as writeFeedTime_. Best-effort. */
+// Reflect a booking's NEW LANGUAGE on its Portal Feed row (col C) right away — same
+// reasoning as writeFeedTime_. Best-effort.
 function writeFeedLanguage_(bookingId, language) {
   try {
     const id = String(bookingId || '').trim();
@@ -3125,7 +3106,7 @@ function ensureFeedShiftRow_(dateKey, time, language, isPrivate, guide, isSf) {
   } catch (e) { return false; }
 }
 
-/** Delete a shift's 0-person placeholder row(s) from the feed (on delete/reopen). */
+// Delete a shift's 0-person placeholder row(s) from the feed (on delete/reopen).
 function removeFeedShiftRow_(dateKey, time, language, isPrivate, isSf) {
   try {
     const sh = bookingSS_().getSheetByName('Portal Feed');
@@ -3223,7 +3204,7 @@ function reconcilePortalFeed_() {
   } catch (e) { portalLog_('reconcilePortalFeed_', 0, false, String(e).slice(0, 200)); }
 }
 
-/** Index all active bookings by "dateKey|minutes|Language". */
+// Index all active bookings by "dateKey|minutes|Language".
 function readBookingsIndex_() {
   const ss = bookingSS_();
   const index = {};
@@ -3484,7 +3465,7 @@ function setNoShow_(key, guide) {
     if (typeof __RRX !== 'undefined' && __RRX) __RRX.noShow = o;
   } catch (e) { /* best-effort; the ledger line is the pay record either way */ }
 }
-/** Mark each tour a manager/guide flagged as a full no-show, so the card shows it. */
+// Mark each tour a manager/guide flagged as a full no-show, so the card shows it.
 function applyNoShowOverlay_(schedule) {
   const map = noShowMap_();
   if (!map || !Object.keys(map).length) return;
@@ -3843,10 +3824,10 @@ function seedRatesTab_(ss) {
  * ROLL BACK: run  restoreLedgerFromBackup('<id from the list>')  — non-destructive.
  ******************************************************/
 
-/** Manual snapshot — run anytime from the editor. Returns the copy's URL. */
+// Manual snapshot — run anytime from the editor. Returns the copy's URL.
 function backupLedgerNow() { return snapshotLedger_('manual'); }
 
-/** Scheduled snapshots (installLedgerBackupTriggers). Never throw. */
+// Scheduled snapshots (installLedgerBackupTriggers). Never throw.
 function backupLedgerWeekly() {
   try { snapshotLedger_('weekly'); pruneLedgerBackups_('weekly', PORTAL.LEDGER_BACKUP_KEEP_WEEKLY); }
   catch (e) { console.log('backupLedgerWeekly error (swallowed): ' + e); }
@@ -3856,7 +3837,7 @@ function backupLedgerMonthly() {
   catch (e) { console.log('backupLedgerMonthly error (swallowed): ' + e); }
 }
 
-/** Copy the whole live ledger file into the Backups folder, dated + tagged. */
+// Copy the whole live ledger file into the Backups folder, dated + tagged.
 function snapshotLedger_(tag) {
   const id = PropertiesService.getScriptProperties().getProperty('LEDGER_ID');
   if (!id) throw new Error('No LEDGER_ID yet — run setupLedger first.');
@@ -3867,7 +3848,7 @@ function snapshotLedger_(tag) {
   return copy.getUrl();
 }
 
-/** The "Ledger Backups" subfolder inside the Guide Management folder (made once). */
+// The "Ledger Backups" subfolder inside the Guide Management folder (made once).
 function ledgerBackupFolder_() {
   const parent = DriveApp.getFolderById(PORTAL.LEDGER_FOLDER_ID);
   const it = parent.getFoldersByName(PORTAL.LEDGER_BACKUP_FOLDER);
@@ -3885,7 +3866,7 @@ function pruneLedgerBackups_(tag, keep) {
   files.slice(Math.max(0, Number(keep) || 0)).forEach(f => { try { f.setTrashed(true); } catch (e) {} });
 }
 
-/** List restore points (newest first): logs date / id / name, and returns them. */
+// List restore points (newest first): logs date / id / name, and returns them.
 function listLedgerBackups() {
   const out = [];
   const it = ledgerBackupFolder_().getFiles();
@@ -4114,7 +4095,7 @@ function guideTab_(ss, name) {
   return sh;
 }
 
-/** Read prior check-ins for a guide, keyed "shiftKey|bookingId" -> checkedIn. */
+// Read prior check-ins for a guide, keyed "shiftKey|bookingId" -> checkedIn.
 function readGuideCheckins_(name) {
   const ss = ledgerSS_();
   const sh = ss.getSheetByName(name.substring(0, 90));
@@ -4138,7 +4119,7 @@ function readGuideCheckins_(name) {
   return out;
 }
 
-/** "2026-08-04 10:03" (or a Date) -> "10:03"; '' if no time is present. */
+// "2026-08-04 10:03" (or a Date) -> "10:03"; '' if no time is present.
 function hhmmFromStamp_(v) {
   if (v instanceof Date && !isNaN(v)) {
     return Utilities.formatDate(v, Session.getScriptTimeZone(), 'HH:mm');
@@ -4849,7 +4830,7 @@ function isPaidSource_(source) {
   return list.some(s => s.toLowerCase() === String(source || '').trim().toLowerCase());
 }
 
-/** Is this the Sagrada Família exterior product on any platform (GYG-SF / Viator-SF)? */
+// Is this the Sagrada Família exterior product on any platform (GYG-SF / Viator-SF)?
 function isSfExtSource_(source) {
   const s = String(source || '').trim().toLowerCase();
   return PORTAL.SF_EXT_SOURCES.some(x => x.toLowerCase() === s);
@@ -4942,7 +4923,7 @@ function overloadedShiftKeys_(schedule, bookingsByKey) {
   return out;
 }
 
-/** Accepts a Date or a string, returns "yyyy-MM-dd" (local tz) or ''. */
+// Accepts a Date or a string, returns "yyyy-MM-dd" (local tz) or ''.
 function toDateKey_(v) {
   if (v instanceof Date && !isNaN(v)) {
     return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
@@ -5026,7 +5007,7 @@ function readStampCell_(v) {
   return { date: isNaN(d2) ? null : d2, text: s };
 }
 
-/** True when two timezone names are currently at the same UTC offset. */
+// True when two timezone names are currently at the same UTC offset.
 function sameUtcOffset_(tzA, tzB) {
   try {
     const now = new Date();
@@ -5034,14 +5015,14 @@ function sameUtcOffset_(tzA, tzB) {
   } catch (e) { return false; }
 }
 
-/** Epoch ms of a shift's start. */
+// Epoch ms of a shift's start.
 function shiftStartMs_(dateKey, minutes) {
   const d = new Date(dateKey + 'T00:00:00');
   if (isNaN(d)) return 0;
   return d.getTime() + Math.max(0, Number(minutes) || 0) * 60000;
 }
 
-/** Unique key of a shift incl. its private index. */
+// Unique key of a shift incl. its private index.
 function shiftKeyFull_(s) {
   return s.dateKey + '|' + s.minutes + '|' + String(s.language || '').toLowerCase() +
          '|' + variantKey_(s.sfExt, s.private, s.privIndex);
@@ -5138,7 +5119,7 @@ function eligibleGuidesForShift_(shift, guidesByLanguage) {
   return (guidesByLanguage[shift.language] || []).filter(n => guideDoesTourType_(n, shift.sfExt));
 }
 
-/** Does this guide run this tour type? (Guides tab "Tour" column; blank -> 3h.) */
+// Does this guide run this tour type? (Guides tab "Tour" column; blank -> 3h.)
 function guideDoesTourType_(name, isSf) {
   const g = findGuideByName_(name);
   const t = (g && g.tourTypes) || { threeH: true, sf: false };
@@ -5245,7 +5226,7 @@ function guideStatusesForShift_(shift, guidesByLanguage, busyMap) {
   });
 }
 
-/** yyyy-MM-dd of the Sunday ending the current week (today..Sunday window). */
+// yyyy-MM-dd of the Sunday ending the current week (today..Sunday window).
 function weekEndKey_() {
   const now = new Date();
   const dow = (now.getDay() + 6) % 7;          // 0=Mon..6=Sun
@@ -5460,7 +5441,7 @@ function eraseClientData(bookingId) {
   return removed;
 }
 
-/** Run once from the editor to create the ledger + Rates tab + one tab per guide. */
+// Run once from the editor to create the ledger + Rates tab + one tab per guide.
 function setupLedger() {
   const ss = ledgerSS_();
   migrateLedgerChildrenColumn_();
@@ -5485,7 +5466,7 @@ function ensureGuideTabs_(ss) {
   });
 }
 
-/** Quick self-test you can run from the editor. */
+// Quick self-test you can run from the editor.
 function debugPortal() {
   Logger.log('Schedule (upcoming): ' + JSON.stringify(readSchedule_().slice(0, 3), null, 2));
   const idx = readBookingsIndex_();
@@ -5541,7 +5522,7 @@ const GURUWALK_HEADERS = [
 const GW_BOOKINGID = 3, GW_BOOKED = 5, GW_CHECKEDIN = 6, GW_ATTEND = 7,
       GW_CHILDREN = 8, GW_GUIDE = 9, GW_DEADLINE = 11, GW_REPORTED = 12;
 
-/** All (everyone came), Some (N of M), or None (no-show) for a guru booking. */
+// All (everyone came), Some (N of M), or None (no-show) for a guru booking.
 function attendanceLabel_(booked, checkedIn) {
   booked = Number(booked || 0); checkedIn = Number(checkedIn || 0);
   if (checkedIn <= 0) return 'None';
@@ -5560,7 +5541,7 @@ function lastDataRow_(sh) {
   return 0;
 }
 
-/** Last data row of a QUEUE tab (never less than the header row). */
+// Last data row of a QUEUE tab (never less than the header row).
 function lastQueueRow_(sh) {
   const last = lastDataRow_(sh);
   return Math.max(last, QUEUE_HEADER_ROW);
@@ -5675,7 +5656,7 @@ function setupLedgerControls() {
   Logger.log('Ledger queue controls ready: ' + ss.getUrl());
 }
 
-/** Installable on-edit handler for the ledger's queue-tab CLEAR buttons. */
+// Installable on-edit handler for the ledger's queue-tab CLEAR buttons.
 function handleLedgerEdit(e) {
   try {
     if (!e || !e.range) return;
@@ -5713,7 +5694,7 @@ function handleLedgerEdit(e) {
   }
 }
 
-/** Main entry point — run on a time trigger (hourly). */
+// Main entry point — run on a time trigger (hourly).
 function updateManagementQueues() {
   safeTriggerRun_('updateManagementQueues', updateManagementQueuesCore_);
 }
@@ -5821,7 +5802,7 @@ function readCompletedLog_() {
   return out;
 }
 
-/** Which guide was assigned to a given completed booking's shift. */
+// Which guide was assigned to a given completed booking's shift.
 function guideForShift_(schedule, dateKey, time, language, isPrivate, isSf) {
   const minutes = timeToMinutes_(normTime24_(time));
   const hit = schedule.find(s =>
@@ -5957,7 +5938,7 @@ function updateGuruwalkCheckinQueue_() {
   }
 }
 
-/** Tour start + 48 h, formatted for managers. */
+// Tour start + 48 h, formatted for managers.
 function guruwalkDeadline_(dateKey, timeLabel) {
   const minutes = timeToMinutes_(normTime24_(timeLabel));
   const d = new Date(dateKey + 'T12:00:00');
