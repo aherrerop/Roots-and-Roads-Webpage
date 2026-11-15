@@ -2687,10 +2687,10 @@ function writeFeedCheckins_(updates, at) {
   } catch (e) { return false; }
 }
 
-/** Clear a booking's check-in (M/N -> blank) on the live Portal Feed AND on the
- *  Past2Days snapshot. Used by undo — clearing BOTH is what makes a manager's undo
- *  of a PAST tour's check-in show as un-checked in the History view right away (the
- *  snapshot is that view's source), not just on the live feed. Best-effort each. */
+// Clear a booking's check-in (M/N -> blank) on the live Portal Feed AND the Past2Days
+// snapshot. Used by undo — clearing BOTH is what makes a manager's undo of a PAST tour's
+// check-in show as un-checked in the History view right away (the snapshot is that view's
+// source), not just on the live feed. Best-effort each.
 function writeFeedUncheckin_(bookingId) {
   const id = String(bookingId || '').trim();
   if (!id) return false;
@@ -3071,12 +3071,10 @@ function writeFeedGuide_(dateKey, time, language, isPrivate, guide, isSf) {
   } catch (e) { return false; }
 }
 
-/**
- * Ensure the feed has a row for a shift that has NO booking — a 0-person
- * placeholder (Type='shift') carrying the assigned guide — so a bare assignment
- * still appears in the feed-only portal. No-op if the shift already has any row
- * of that private/regular kind. Best-effort.
- */
+// Ensure the feed has a row for a shift that has NO booking — a 0-person placeholder
+// (Type='shift') carrying the assigned guide — so a bare assignment still appears in the
+// feed-only portal. No-op if the shift already has any row of that private/regular kind.
+// Best-effort.
 function ensureFeedShiftRow_(dateKey, time, language, isPrivate, guide, isSf) {
   try {
     const sh = bookingSS_().getSheetByName('Portal Feed');
@@ -3351,8 +3349,8 @@ function setClearedSlot_(key, cleared) {
     if (typeof __RRX !== 'undefined' && __RRX) __RRX.clearedSet = o;
   } catch (e) { /* best-effort; a missed write only means the clear may re-fill until re-cleared */ }
 }
-/** Mark every shift the manager explicitly cleared so applyWeeklyDefaults_ leaves
- *  it "Not assigned" instead of re-filling it with the Weekly_Schedule default. */
+// Mark every shift the manager explicitly cleared so applyWeeklyDefaults_ leaves it
+// "Not assigned" instead of re-filling it with the Weekly_Schedule default.
 function applyClearedOverlay_(schedule) {
   const set = clearedSlotsSet_();
   if (!set || !Object.keys(set).length) return;
@@ -3390,9 +3388,9 @@ function setSecondGuide_(key, guide) {
     if (typeof __RRX !== 'undefined' && __RRX) __RRX.secondGuides = o;
   } catch (e) { /* best-effort; a missed write only means the 2nd guide must be re-picked */ }
 }
-/** Append the manager-chosen second guide to each matching GROUP shift. Runs AFTER
- *  applyWeeklyDefaults_ so guide 1 is already in place; guide 2 becomes `secondGuide`
- *  and (if not already present) assigned[1], so the co-guide sees the tour too. */
+// Append the manager-chosen second guide to each matching GROUP shift. Runs AFTER
+// applyWeeklyDefaults_ so guide 1 is already in place; guide 2 becomes `secondGuide` and
+// (if not already present) assigned[1], so the co-guide sees the tour too.
 function applySecondGuideOverlay_(schedule) {
   const map = secondGuidesMap_();
   if (!map || !Object.keys(map).length) return;
@@ -3855,8 +3853,8 @@ function ledgerBackupFolder_() {
   return it.hasNext() ? it.next() : parent.createFolder(PORTAL.LEDGER_BACKUP_FOLDER);
 }
 
-/** Keep only the newest `keep` backups of a given tag; trash the rest. (Drive
- *  trash is itself recoverable for ~30 days, so pruning is doubly safe.) */
+// Keep only the newest `keep` backups of a given tag; trash the rest. (Drive trash is
+// itself recoverable for ~30 days, so pruning is doubly safe.)
 function pruneLedgerBackups_(tag, keep) {
   const marker = '— backup — ' + tag + ' —';
   const files = [];
@@ -3896,11 +3894,9 @@ function restoreLedgerFromBackup(backupId) {
   return msg;
 }
 
-/**
- * Install the backup schedule — run ONCE from the editor. Weekly (Sun ~03:00) +
- * monthly (1st ~03:00, BEFORE the ~04:00 data-retention purge, so a monthly
- * snapshot always captures the pre-purge history). Takes one snapshot right now.
- */
+// Install the backup schedule — run ONCE from the editor. Weekly (Sun ~03:00) + monthly
+// (1st ~03:00, BEFORE the ~04:00 data-retention purge, so a monthly snapshot always
+// captures the pre-purge history). Takes one snapshot right now.
 function installLedgerBackupTriggers() {
   ScriptApp.getProjectTriggers().forEach(t => {
     const f = t.getHandlerFunction();
@@ -4039,13 +4035,11 @@ function readRates_() {
   return { paid, free, privatePay, sfPay, freeCommissions, paidSources };
 }
 
-/**
- * ONE-OFF (run once from the Control editor): write the two Freetour.com platform
- * commissions onto the Ledger's Rates tab — account #1 ("free tour") = 2.5 and
- * account #2 ("free-tour") = 3.5 €/checked-in person — updating each row in place
- * or appending it if missing. The live Rates tab is the source of truth, so this
- * makes the new commissions actually take effect. Idempotent; safe to re-run.
- */
+// One-off (run once from the Control editor): write the two Freetour.com platform
+// commissions onto the Ledger's Rates tab — account #1 ("free tour") = 2.5 and account #2
+// ("free-tour") = 3.5 €/checked-in person — updating each row in place or appending it if
+// missing. The live Rates tab is the source of truth, so this makes the new commissions
+// take effect. Idempotent; safe to re-run.
 function setFreeTourCommissions() {
   const ss = ledgerSS_();
   let sh = ss.getSheetByName('Rates');
@@ -4071,9 +4065,8 @@ function setFreeTourCommissions() {
   return 'Free tour commissions set: #1 (free tour) = 2.5, #2 (free-tour) = 3.5.';
 }
 
-/** Free-tour platform commission (€ per checked-in person) for a booking's
- *  source. Matches the Source against the Rates platform keys; falls back to
- *  the '' (other) commission. */
+// Free-tour platform commission (€ per checked-in person) for a booking's source. Matches
+// the Source against the Rates platform keys; falls back to the '' (other) commission.
 function freeCommissionFor_(source, rates) {
   const s = String(source || '').toLowerCase();
   const map = (rates && rates.freeCommissions) || {};
@@ -4421,9 +4414,9 @@ function ledgerHistoryRows_(schedule, bookingsByKey, today) {
   return out;
 }
 
-/** Sweep today's (and recent) tours from the feed into the Ledger History tab —
- *  one read + one write. Idempotent (upsert by historyKey_); keeps past rows. Driven
- *  by bookings, so it captures tours with no check-in and unassigned tours. */
+// Sweep today's (and recent) tours from the feed into the Ledger History tab — one read +
+// one write. Idempotent (upsert by historyKey_) and keeps past rows. Booking-driven, so it
+// captures tours with no check-in and unassigned tours.
 function syncLedgerHistory_() {
   try {
     const feed = readPortalFeed_();
@@ -4443,8 +4436,8 @@ function syncLedgerHistory_() {
   } catch (e) { console.log('syncLedgerHistory_ ' + e); return 0; }
 }
 
-/** Run from the Apps Script editor to create the History tab AND populate it now.
- *  Idempotent; safe to re-run. */
+// Run from the Apps Script editor to create the History tab AND populate it now.
+// Idempotent; safe to re-run.
 function setupLedgerHistoryTab() {
   historyTab_(ledgerSS_());
   try { PropertiesService.getScriptProperties().setProperty('HISTORY_TAB_READY', '1'); } catch (e) {}
@@ -4836,8 +4829,8 @@ function isSfExtSource_(source) {
   return PORTAL.SF_EXT_SOURCES.some(x => x.toLowerCase() === s);
 }
 
-/** The guide pay (€/checked-in person) for an SF exterior booking's platform.
- *  Uses the per-platform Rates value, else the default. */
+// The guide pay (€/checked-in person) for an SF-exterior booking's platform. Uses the
+// per-platform Rates value, else the default.
 function sfExtPayFor_(source, rates) {
   const map = (rates && rates.sfPay) || {};
   const key = PORTAL.SF_EXT_SOURCES.find(x => x.toLowerCase() === String(source || '').trim().toLowerCase()) || source;
@@ -4972,9 +4965,9 @@ function timeToMinutes_(t24) {
   return m ? Number(m[1]) * 60 + Number(m[2]) : -1;
 }
 
-/** True once a shift's tour is over (start + 2h — same rule as the booking
- *  system's Done migration; keeps guides from editing check-ins later without
- *  talking to management). */
+// True once a shift's tour is over, using the evening cutoff of its own day
+// (TOUR_VISIBLE_UNTIL_HOUR) — so the tour stays on the portal all day for management to
+// review prepaid-vs-free after it ran, then drops off.
 function shiftIsOver_(dateKey, minutes) {
   const d = new Date(dateKey + 'T00:00:00');
   if (isNaN(d)) return false;
@@ -4986,11 +4979,9 @@ function shiftIsOver_(dateKey, minutes) {
   return Date.now() > cutoff;
 }
 
-/**
- * Read a timestamp cell that may be EITHER a text stamp ("2026-07-20 11:57")
- * or a Date (Sheets silently coerces such strings). Returns {date, text} with
- * date=null when unreadable. Used by the health checks.
- */
+// Read a timestamp cell that may be EITHER a text stamp ("2026-07-20 11:57") or a Date
+// (Sheets silently coerces such strings). Returns {date, text}, date=null when unreadable.
+// Used by the health checks.
 function readStampCell_(v) {
   if (v instanceof Date && !isNaN(v)) {
     return { date: v, text: Utilities.formatDate(v, 'Europe/Madrid', 'yyyy-MM-dd HH:mm') };
@@ -5053,8 +5044,8 @@ function bookingsForShift_(bookingsByKey, shift) {
     });
 }
 
-/** Private bookings at a shift's slot, ordered deterministically by booking id so a
- *  given booking always maps to the same privIndex / card across loads. */
+// Private bookings at a shift's slot, ordered deterministically by booking id so a given
+// booking always maps to the same privIndex / card across loads.
 function privateBookingsAtSlot_(bookingsByKey, shift) {
   const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
   return (bookingsByKey[key] || [])
@@ -5062,16 +5053,13 @@ function privateBookingsAtSlot_(bookingsByKey, shift) {
     .sort((a, b) => String(a.bookingId || '').localeCompare(String(b.bookingId || '')));
 }
 
-/**
- * Split a slot's SINGLE private shift into ONE card PER private booking, so two
- * private tours at the same date/time/language render as separate cards — each
- * with its own guest list and check-in. PER-REQUEST (needs the bookings): the
- * pre-built feed carries one private shell per slot (privIndex 1). Each resulting
- * card is tagged privBookingId (bookingsForShift_ then gives it only its booking),
- * and privIndex 1..N drives the distinct P1/P2 card ids. Each card shows its own
- * booking's guide (feedGuide); the first keeps the weekly-default guide if it has
- * none of its own. 0 or 1 private bookings at a slot -> unchanged.
- */
+// Split a slot's SINGLE private shift into ONE card PER private booking, so two private
+// tours at the same date/time/language render as separate cards, each with its own guest
+// list and check-in. Per-request (needs the bookings): the pre-built feed carries one
+// private shell per slot (privIndex 1). Each resulting card is tagged privBookingId
+// (bookingsForShift_ then gives it only its booking), and privIndex 1..N drives the distinct
+// P1/P2 card ids. Each card shows its own booking's guide (feedGuide); the first keeps the
+// weekly-default guide if it has none of its own. 0 or 1 private bookings at a slot -> unchanged.
 function expandPrivateCards_(schedule, bookingsByKey) {
   const out = [];
   (schedule || []).forEach(s => {
@@ -5126,32 +5114,24 @@ function guideDoesTourType_(name, isSf) {
   return isSf ? !!t.sf : !!t.threeH;
 }
 
-/**
- * The availability BUCKET a shift falls in. Guides mark MORNING or AFTERNOON
- * availability, not an exact time — the schedule is split in two half-days and a
- * morning tick covers 10:00 / 10:30 / 11:00 while an afternoon tick covers
- * 15:30 / 16:00. So a guide available at 15:30 is available for the 16:00 Italian
- * tour, and a 10:30 tick covers a 10:00 tour. 14:00 (840 min) splits the two. SF is
- * a stackable add-on run back-to-back, so ANY SF tick that day counts for every SF
- * slot. Both the availability index and the per-shift lookup use this, so they agree.
- */
+// The availability BUCKET a shift falls in. Guides mark MORNING or AFTERNOON availability,
+// not an exact time: a morning tick covers 10:00/10:30/11:00 and an afternoon tick covers
+// 15:30/16:00, with 14:00 (840 min) splitting the two. SF is a stackable add-on run
+// back-to-back, so ANY SF tick that day counts for every SF slot. Both the availability
+// index and the per-shift lookup use this, so they always agree.
 function availSlotKey_(dateKey, minutes, sfExt) {
   if (sfExt) return dateKey + '|SF';
   return dateKey + '|' + (Number(minutes) < 840 ? 'AM' : 'PM');
 }
 
-/**
- * Availability for the assign dropdown's dots: which guides TICKED availability for
- * each date + HALF-DAY (morning/afternoon, or SF), read FRESH from the availability
- * files (the 3h guide file + the SF file) so a grey "not available" dot reflects what
- * guides actually marked, not the last schedule generation. Only the MANAGER path
- * builds guideOptions, so only manager loads pay this, and it is cached (CONFIG_TTL)
- * so a manager's poll reads the files at most once per cache window. Fail-open: any
- * read problem -> empty -> no grey (unchanged behaviour).
- * Returns { bySlot: { availSlotKey_: { lowerGuideName: true } }, fromKey, toKey }.
- * fromKey..toKey is the date range we actually read, so a shift outside it keeps the
- * clash-based dot instead of a false grey.
- */
+// Availability for the assign dropdown's dots: which guides TICKED availability for each
+// date + HALF-DAY (morning/afternoon, or SF), read FRESH from the availability files (the
+// 3h guide file + the SF file) so a grey "not available" dot reflects what guides actually
+// marked, not the last schedule generation. Only the manager path builds this, and it is
+// cached (CONFIG_TTL) so a manager's poll reads the files at most once per window.
+// Fail-open: any read problem -> empty -> no grey. Returns
+// { bySlot: { availSlotKey_: { lowerGuideName: true } }, fromKey, toKey }; fromKey..toKey is
+// the range actually read, so a shift outside it keeps the clash-based dot, not a false grey.
 function availBySlot_() {
   if (__RRX.availBySlot) return __RRX.availBySlot;
   const built = cachedReadConfig_('availslots', PORTAL.CONFIG_TTL, function () {
@@ -5394,8 +5374,8 @@ function minutesToTime_(minutes) {
  * Email lives in Brevo + Gmail, not the sheets, so erase those separately.
  * -------------------------------------------------------------------------- */
 
-/** ACCESS request: log every row across the Booking sheet + Ledger that mentions
- *  the query (a booking id, name, phone or email fragment). Read-only. */
+// ACCESS request: log every row across the Booking sheet + Ledger that mentions the query
+// (a booking id, name, phone or email fragment). Read-only.
 function exportClientData(query) {
   const q = String(query || '').trim().toLowerCase();
   if (!q) throw new Error('Pass a booking id, name, phone or email fragment.');
@@ -5417,9 +5397,9 @@ function exportClientData(query) {
   return hits;
 }
 
-/** ERASURE request: delete EVERY row whose cells contain the EXACT booking id,
- *  across the Booking sheet + Ledger. Requires the exact id (never mass-deletes
- *  by name). Returns rows removed. Run exportClientData first to review. */
+// ERASURE request: delete EVERY row whose cells contain the EXACT booking id, across the
+// Booking sheet + Ledger. Requires the exact id (never mass-deletes by name). Returns rows
+// removed. Run exportClientData first to review.
 function eraseClientData(bookingId) {
   const id = String(bookingId || '').trim().toUpperCase().replace(/\s+/g, '');
   if (id.length < 3) throw new Error('Pass the exact Booking ID to erase (run exportClientData first).');
@@ -5530,9 +5510,8 @@ function attendanceLabel_(booked, checkedIn) {
   return 'Some (' + checkedIn + ' of ' + booked + ')';
 }
 
-/** Last row that actually holds DATA in column A (ignores stray checkboxes).
- *  For queue tabs, data starts at QUEUE_FIRST_DATA_ROW; anything above is the
- *  clear button + header. */
+// Last row that actually holds DATA in column A (ignores stray checkboxes). On a queue tab
+// data starts at QUEUE_FIRST_DATA_ROW; anything above is the clear button + header.
 function lastDataRow_(sh) {
   const vals = sh.getRange(1, 1, sh.getMaxRows(), 1).getValues();
   for (let i = vals.length - 1; i >= 0; i--) {
