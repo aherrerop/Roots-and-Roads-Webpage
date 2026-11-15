@@ -485,7 +485,7 @@ function cachedReadConfig_(name, ttlSeconds, fn) {
  * never a surprise. User actions are never throttled; only the passive refresh.
  ******************************************************/
 
-/** Pure: smoothed load time -> {level, pollSec}. */
+// Pure: a smoothed load time -> {level, pollSec} (normal / busy / overloaded).
 function contentionLevelFor_(ewmaMs) {
   const m = Number(ewmaMs || 0);
   if (m >= PORTAL.CONTENTION_OVER_MS) return { level: 'overloaded', pollSec: PORTAL.POLL_OVER_SEC };
@@ -493,7 +493,7 @@ function contentionLevelFor_(ewmaMs) {
   return { level: 'normal', pollSec: PORTAL.POLL_NORMAL_SEC };
 }
 
-/** Read the current signal WITHOUT updating it (for health / timings views). */
+// Read the current contention signal WITHOUT updating it (for health / timings views).
 function readContention_() {
   try {
     const raw = CacheService.getScriptCache().get('portal:ewma');
@@ -508,11 +508,9 @@ function readContention_() {
   return { level: d.level, pollSec: d.pollSec, ewmaMs: 0 };
 }
 
-/**
- * Fold this request's total time into the EWMA, decide the level, and — when the
- * level CHANGES — log it to the Portal Log so a forming/clearing queue is visible.
- * Returns {level, pollSec}. Best-effort; a cache miss just treats this load alone.
- */
+// Fold this request's total time into the EWMA, decide the contention level, and — only
+// when the level CHANGES — log it to the Portal Log so a forming/clearing queue is visible.
+// Returns {level, pollSec}. Best-effort; a cache miss just treats this load on its own.
 function recordLoadSignal_(ms) {
   const now = Math.max(0, Number(ms) || 0);
   let ewma = now, prevLevel = '';
@@ -549,18 +547,16 @@ function recordLoadSignal_(ms) {
  *   installDataRetentionTrigger_() / removeDataRetentionTrigger_()
  ******************************************************/
 
-/** "yyyy-MM-dd" this many months ago (records strictly older than this are cleared). */
+// "yyyy-MM-dd" this many months ago — records strictly older than this get cleared.
 function dataRetentionCutoffKey_(months) {
   const m = Number(months || PORTAL.DATA_RETENTION_MONTHS) || 12;
   const d = new Date(); d.setMonth(d.getMonth() - m);
   return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
-/**
- * Blank the given PII columns on rows whose date is older than the cutoff, keeping
- * the row. Batched: one read + one write per PII column (only on a real purge).
- * Returns how many rows had PII cleared (or would be, on a dry run).
- */
+// Blank the given PII columns on rows whose date is older than the cutoff, keeping the row
+// (counts/money/dates stay). Batched: one read + one write per PII column, and only on a
+// real purge. Returns how many rows had PII cleared (or would be, on a dry run).
 function purgeSheetPII_(sh, dateCol0, piiCols0, cutoffKey, dryRun) {
   if (!sh || sh.getLastRow() < 2) return 0;
   const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
@@ -624,7 +620,7 @@ function dataRetentionRun_(dryRun) {
   return { ok: true, dryRun: dryRun, cutoffDate: cutoff, records: total, byTab: report };
 }
 
-/** Human-readable report on the control sheet's "Data Retention" tab. */
+// Write a human-readable summary of the run onto the control sheet's "Data Retention" tab.
 function writeDataRetentionReport_(dryRun, cutoff, total, report) {
   try {
     const ss = control_();
@@ -650,7 +646,7 @@ function writeDataRetentionReport_(dryRun, cutoff, total, report) {
   } catch (e) { console.log('writeDataRetentionReport_: ' + e); }
 }
 
-/** Enable the monthly auto-purge (a manager runs this ONCE; nothing auto-runs otherwise). */
+// Enable the monthly auto-purge (a manager runs this ONCE; nothing auto-runs otherwise).
 function installDataRetentionTrigger_() {
   removeDataRetentionTrigger_();
   ScriptApp.newTrigger('runDataRetentionPurge').timeBased().onMonthDay(1).atHour(4).create();
@@ -664,7 +660,7 @@ function removeDataRetentionTrigger_() {
   return 'Removed ' + n + ' data-retention trigger(s).';
 }
 
-/** The p-th percentile (0-100) of a numeric array. Nearest-rank, no interpolation. */
+// The p-th percentile (0-100) of a numeric array. Nearest-rank, no interpolation.
 function percentile_(arr, p) {
   const a = (arr || []).filter(x => typeof x === 'number' && !isNaN(x)).slice().sort((x, y) => x - y);
   if (!a.length) return 0;
@@ -672,7 +668,8 @@ function percentile_(arr, p) {
   return a[Math.min(a.length - 1, Math.max(0, rank - 1))];
 }
 
-/** Aggregate the raw Portal Log rows into per-action timing stats. Pure, testable. */
+// Aggregate the raw Portal Log rows into per-action timing stats (count/p50/p95/max/
+// errors/status). Pure and testable.
 function summarisePortalTimings_(rows, slowMs) {
   const slow = Number(slowMs || 6000);
   const by = {};
@@ -694,12 +691,10 @@ function summarisePortalTimings_(rows, slowMs) {
   });
 }
 
-/**
- * TIMING REPORT: read the Portal Log and print (and write to a "Portal Timing"
- * tab) how long each portal action really takes — count, p50, p95, max, and a
- * REVIEW flag for anything slower than PORTAL.SLOW_MS or with errors. Run it
- * from the editor to see, from real usage, whether the portal is fast enough.
- */
+// Timing report: read the Portal Log and print it (and write a "Portal Timing" tab)
+// showing how long each portal action really takes — count, p50, p95, max, and a REVIEW
+// flag for anything slower than PORTAL.SLOW_MS or erroring. Run from the editor to judge,
+// from real usage, whether the portal is fast enough.
 function portalTimingReport() {
   const ss = control_();
   const log = ss.getSheetByName('Portal Log');
@@ -723,13 +718,11 @@ function portalTimingReport() {
   return stats;
 }
 
-/**
- * action=timings -> read-only diagnostic. Returns the per-action aggregate
- * (count/p50/p95/max/status) AND the newest raw Portal Log rows, so the portal's
- * real speed can be checked on demand without opening the Apps Script editor.
- * `n` (default 40, max 200) = how many newest raw rows to return. No PII: the
- * detail column holds only phase timings and a tour's date/time/language.
- */
+// action=timings -> read-only diagnostic. Returns the per-action aggregate
+// (count/p50/p95/max/status) AND the newest raw Portal Log rows, so the portal's real
+// speed can be checked on demand without opening the editor. `n` (default 40, max 200) =
+// how many newest raw rows to return. No PII: the detail column holds only phase timings
+// and a tour's date/time/language.
 function apiTimings_(p) {
   const ss = control_();
   const log = ss.getSheetByName('Portal Log');
@@ -1721,13 +1714,10 @@ function moveBookingTimeInTab_(bookingId, language, t24) {
   return { ok: true, moved: true, to: to12h_(t24) };
 }
 
-/**
- * Manager: move a booking to a DIFFERENT DAY (same language tab). We only rewrite
- * the booking's Tour date cell; the feed rebuild then regroups the booking under
- * the new date, CREATING that day's tour if none existed (the feed is
- * booking-driven) — the mirror of moveBookingTimeInTab_. Manager-only, locked and
- * cache-bumped by apiMoveBooking_. dateKey is "yyyy-MM-dd".
- */
+// Manager: move a booking to a DIFFERENT DAY (same language tab). Only the booking's Tour
+// date cell is rewritten; the feed rebuild then regroups it under the new date, creating
+// that day's tour if none existed (the feed is booking-driven) — the mirror of
+// moveBookingTimeInTab_. Manager-only, locked + cache-bumped by apiMoveBooking_.
 function moveBookingDateInTab_(bookingId, language, dateKey) {
   const ss = bookingSS_();
   const sh = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
@@ -1756,18 +1746,15 @@ function moveBookingDateInTab_(bookingId, language, dateKey) {
   return { ok: true, moved: true, to: dateKey };
 }
 
-/**
- * Manager REMOVES a single booking from the portal — a cancellation that never
- * arrived as an OTA/email cancellation (the guest told the guide, a no-show the
- * manager wants off the list, a duplicate). Unlike a move, the booking is GONE:
- *   1. its row is deleted from the language Tours tab (so it stops counting),
- *   2. its Portal Feed row is dropped (so the portal updates on the next poll),
- *   3. its source CONFIRMATION email is trashed on the BOOKING side (that project
- *      owns Gmail) — otherwise the booking system's reconcile floor re-adds this
- *      still-confirmed booking within minutes.
- * It is NOT logged to Done/Completed, so the cancelled guest is never counted as
- * having attended. Manager-only, locked, cache-bumped.
- */
+// Manager REMOVES a single booking — a cancellation that never arrived as an OTA/email
+// cancellation (the guest told the guide, a no-show to clear, a duplicate). Unlike a move,
+// the booking is GONE:
+//   1. its row is deleted from the language Tours tab (so it stops counting),
+//   2. its Portal Feed row is dropped (so the portal updates on the next poll),
+//   3. its source confirmation email is trashed on the BOOKING side (that project owns
+//      Gmail) — otherwise the reconcile floor re-adds this still-confirmed booking.
+// It is NOT logged to Done/Completed, so the cancelled guest is never counted as attended.
+// Manager-only, locked, cache-bumped.
 function apiRemoveBooking_(p) {
   __RRX = {};
   const name = requireToken_(p.token);
@@ -1810,7 +1797,8 @@ function apiRemoveBooking_(p) {
   }
 }
 
-/** Delete a booking's row(s) from one language Tours tab (col H = Booking ID). */
+// Delete a booking's row(s) from one language Tours tab (col H = Booking ID), returning
+// the deleted row's values so the caller can log the cancellation.
 function deleteBookingRowFromTab_(bookingId, language) {
   const ss = bookingSS_();
   const sh = ss.getSheetByName(language + PORTAL.BOOKING_TAB_SUFFIX);
@@ -1833,13 +1821,11 @@ function deleteBookingRowFromTab_(bookingId, language) {
   return { ok: true, row: captured };
 }
 
-/**
- * Record a removed booking in the ledger's "Cancellations" tab (created on first
- * use) so a manual removal is kept as an auditable record — the active row and its
- * confirmation email are both gone, so this tab is the only remaining trace. Full
- * info is kept: who cancelled it + when, plus the tour date/time/language and the
- * guest's name, phone, guests, source, income, booking id and notes. Best-effort.
- */
+// Record a removed booking in the ledger's "Cancellations" tab (created on first use) so a
+// manual removal stays auditable — the active row and its confirmation email are both gone,
+// so this is the only remaining trace. Keeps who cancelled it + when, plus the tour
+// date/time/language and the guest's name, phone, guests, source, income, id and notes.
+// Best-effort.
 function logCancellationToLedger_(rowVals, language, byName) {
   try {
     const ss = ledgerSS_();
@@ -1867,7 +1853,7 @@ function logCancellationToLedger_(rowVals, language, byName) {
   } catch (e) { return false; }
 }
 
-/** Delete a booking's Portal Feed row(s) by id (J = Booking ID). Best-effort. */
+// Delete a booking's Portal Feed row(s) by id (J = Booking ID). Best-effort.
 function removeFeedRowById_(bookingId) {
   try {
     const id = String(bookingId || '').trim();
@@ -1883,11 +1869,9 @@ function removeFeedRowById_(bookingId) {
   } catch (e) { return false; }
 }
 
-/**
- * Call a whitelisted admin function in the BOOKING project's web app (same bridge
- * Mobile Controls uses: BOOKING_WEBAPP_URL + ADMIN_KEY script properties), passing
- * extra query params. Returns the parsed JSON, or { ok:false } on any failure.
- */
+// Call a whitelisted admin function in the BOOKING project's web app (the same bridge
+// Mobile Controls uses: BOOKING_WEBAPP_URL + ADMIN_KEY script properties), passing extra
+// query params. Returns the parsed JSON, or { ok:false } on any failure.
 function callBookingAdmin_(fn, extra) {
   try {
     const props = PropertiesService.getScriptProperties();
@@ -1906,12 +1890,10 @@ function callBookingAdmin_(fn, extra) {
   }
 }
 
-/**
- * Write a manager assignment into Schedule_<language>, CREATING the tab, the
- * time column and/or the date row if they are missing. Management can always
- * assign a booked tour even when it was never in the pre-written offer ("there
- * are people signed up, it must be assignable"). A blank guide clears the cell.
- */
+// Write a manager assignment into Schedule_<language>, CREATING the tab, the time column
+// and/or the date row if missing — management can always assign a booked tour even when it
+// was never in the pre-written offer ("people are signed up, so it must be assignable").
+// A blank guide clears the cell.
 function writeAssignmentToGrid_(language, dateKey, time, isPriv, privIndex, guide, isSf) {
   const ss = control_();
   const tabName = scheduleTabName_(language, isSf);   // SF -> its own Schedule_SF_<lang> grid
