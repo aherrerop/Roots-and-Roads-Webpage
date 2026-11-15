@@ -1707,16 +1707,12 @@ function reconcileConfirmationsToBookingList_(includeDone) {
   return ctx.recovered;
 }
 
-/**
- * Sources the reconcile safety-net sweeps: the OTA list PLUS the Website source.
- * Website reservations are authored by the webhook (doPost), not by an OTA email,
- * so they never pass through the OTA confirmation passes — and Website was the one
- * source the reconcile could NOT recover if a row was ever lost. That blind spot
- * dropped a real upcoming booking (Matt Brown, 2026-09-15 11:00) with no recovery.
- * Website has no cancel/modify emails, so a confirm + done label is all reconcile
- * needs. Kept separate from sourceConfigs_() so the 14 OTA-only call sites (cancel,
- * modify, completion sweeps) are untouched — only the safety-net gains coverage.
- */
+// Sources the reconcile safety-net sweeps: the OTA list PLUS the Website source.
+// Website reservations are authored by the webhook (doPost), not an OTA email, so they
+// never pass through the OTA confirmation passes — without this the reconcile could not
+// recover a lost Website row. Website has no cancel/modify emails, so a confirm + done
+// label is all reconcile needs. Kept separate from sourceConfigs_() so the OTA-only call
+// sites (cancel, modify, completion sweeps) are untouched — only the safety-net gains it.
 function reconcileSourceConfigs_() {
   return sourceConfigs_().concat([{
     source: RNR.SOURCE.WEBSITE,
@@ -1725,7 +1721,8 @@ function reconcileSourceConfigs_() {
   }]);
 }
 
-/** Recover any missing, valid, UPCOMING booking from ONE confirmation/Done thread. */
+// Recover any missing, valid, UPCOMING booking from ONE confirmation/Done thread. Skips
+// a thread whose booking is already present, cancelled, or already completed.
 function reconcileOneThread_(thread, cfg, ctx, labelName) {
   if (!runHasTimeLeft_()) return;
   try {
@@ -1748,8 +1745,8 @@ function reconcileOneThread_(thread, cfg, ctx, labelName) {
   }
 }
 
-/** True at most once per ~20h (Script Property throttle) — gates the heavier Done
- *  deep-sweep so the audit runs it about once a day without doing it every run. */
+// True at most once per ~20h (Script-Property throttle) — gates the heavier Done
+// deep-sweep so the audit runs it about once a day, not every run.
 function deepReconcileDue_() {
   try {
     const p = PropertiesService.getScriptProperties();
@@ -1760,17 +1757,13 @@ function deepReconcileDue_() {
   } catch (e) { return false; }
 }
 
-/**
- * Booking codes a MODIFICATION has SUPERSEDED. Guruwalk issues a NEW code when a
- * walker moves their booking and references the OLD code as the "previous
- * booking". That old confirmation email still sits in Gmail, so the reconcile
- * would re-add the stale booking and UNDO the move — that is the Sara Dervishi
- * duplicate. We collect the superseded (previous) codes from the modification
- * emails so the reconcile skips them. Bounded scans of the Guruwalk Modifications
- * label AND recent Done (a Guruwalk modification often threads into the original,
- * now-completed, booking's conversation). GYG/Viator keep the SAME code on a
- * modification, so they never appear here.
- */
+// Booking codes a MODIFICATION has SUPERSEDED. Guruwalk issues a NEW code when a walker
+// moves their booking and references the OLD code as the "previous booking". That old
+// confirmation email still sits in Gmail, so the reconcile would re-add the stale booking
+// and UNDO the move. We collect the superseded (previous) codes from the modification
+// emails so the reconcile skips them — bounded scans of the Guruwalk Modifications label
+// AND recent Done (a Guruwalk move often threads into the original, now-completed
+// conversation). GYG/Viator keep the SAME code on a modification, so they never appear here.
 function supersededBookingIds_() {
   const superseded = {};
   const scan = (labelName, source, limit) => {
@@ -1793,11 +1786,9 @@ function supersededBookingIds_() {
   return superseded;
 }
 
-/**
- * Remove any ACTIVE row whose booking id a modification has superseded. The move
- * itself removes the old code, but the still-in-Gmail old confirmation can have
- * re-added it before this fix (Sara Dervishi). Idempotent, audit-only.
- */
+// Remove any ACTIVE row whose booking id a modification has superseded. The move itself
+// removes the old code, but the still-in-Gmail old confirmation can re-add it. Idempotent,
+// audit-only.
 function removeSupersededActiveBookings_() {
   const superseded = getSupersededIds_();
   if (!Object.keys(superseded).length) return 0;
@@ -1815,16 +1806,13 @@ function removeSupersededActiveBookings_() {
   return removed;
 }
 
-/**
- * Apply modifications that landed under the DONE label instead of Modifications.
- * A Guruwalk/FreeTour move threads into the ORIGINAL booking's conversation; once
- * that tour date passes the thread is archived to Done, so the normal modification
- * pass (which reads only the Modifications label) never sees it and the move is
- * lost (Anna Erb: rebooked to a FUTURE date but the system still had the old/past
- * one). Re-run the modification handler over Done. processModificationThread_ is a
- * no-op on a thread carrying no modification, and idempotent on one that does, so
- * this is safe to run every audit. Audit-only (bounded).
- */
+// Apply modifications that landed under the DONE label instead of Modifications. A
+// Guruwalk/Free Tour move threads into the ORIGINAL booking's conversation; once that tour
+// date passes the thread is archived to Done, so the normal modification pass (which reads
+// only the Modifications label) never sees it and the move is lost (the booking keeps its
+// old past date). Re-running the modification handler over Done fixes it.
+// processModificationThread_ is a no-op on a thread with no modification and idempotent on
+// one that has it, so this is safe every audit. Audit-only (bounded).
 function processStrayModifications_() {
   [RNR.SOURCE.GURUWALK, RNR.SOURCE.FREETOUR].forEach(source => {
     const cfg = sourceConfigs_().find(c => c.source === source);
@@ -1840,18 +1828,10 @@ function processStrayModifications_() {
   });
 }
 
-/**
- * RUN THIS NOW (from the editor) to recover any confirmed booking that is
- * missing from the list, without waiting for the twice-daily audit. Reports how
- * many it recovered; details land in the Errors tab as "RECOVERED …".
- */
-/**
- * RUN THIS NOW (from the editor) to clean up modification aftermath WITHOUT the
- * heavy confirmation re-read (so it never runs out of time): removes any active
- * row a modification superseded (the resurrected old Guruwalk code — Sara
- * Dervishi) and applies any modification stuck under the Done label (a move that
- * threaded into the original booking — Anna Erb). Idempotent; safe to re-run.
- */
+// Manual entry point: clean up modification aftermath WITHOUT the heavy confirmation
+// re-read (so it never runs out of time). Removes any active row a modification superseded
+// (a resurrected old Guruwalk code) and applies any modification stuck under the Done label
+// (a move that threaded into the original booking). Idempotent; safe to re-run.
 function fixModificationsNow() {
   RNR_RUN_STARTED_AT_ = Date.now();
   resetRunCaches_();
@@ -1863,14 +1843,11 @@ function fixModificationsNow() {
   return msg;
 }
 
-/**
- * ONE-CLICK FULL RECOVERY. Run from the editor to bring the whole sheet back in
- * line with Gmail: re-inserts EVERY upcoming confirmed booking currently in the
- * inbox that is missing from the language tabs, then dedupes, sorts and rebuilds
- * the Portal Feed so the guide portal reflects it immediately. Uses the full time
- * budget (only the reconcile runs, not the other audit phases), so a large backlog
- * is cleared in one pass. Safe + idempotent: an already-present booking is skipped.
- */
+// One-click full recovery. Run from the editor to bring the sheet back in line with Gmail:
+// re-inserts EVERY upcoming confirmed booking in the inbox that is missing from the language
+// tabs, then dedupes, sorts and rebuilds the Portal Feed so the portal reflects it at once.
+// Uses the full time budget (only the reconcile runs, not the other audit phases), so a
+// large backlog clears in one pass. Safe + idempotent: an already-present booking is skipped.
 function recoverMissingBookings() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) { const m = 'Another run is active — wait a moment and run again.'; console.log(m); return m; }
