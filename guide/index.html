@@ -55,6 +55,8 @@
   .histbtn:hover{background:#e2e9f8}
   /* HISTORY overlay: the last 2 days of tours, for marking no-shows + undoing check-ins. */
   .histview{position:fixed;inset:0;z-index:50;background:var(--bg,#f4f6fa);overflow:auto;-webkit-overflow-scrolling:touch}
+  /* While the overlay is open, lock the page behind it so there is ONE scrollbar (the overlay's), not two. */
+  html.histopen,body.histopen{overflow:hidden}
   .histview .histwrap{max-width:720px;margin:0 auto;padding:14px 14px 40px}
   .histhdr{display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--bg,#f4f6fa);padding:8px 2px 12px;margin-bottom:6px;border-bottom:1px solid #e2e6ee}
   .histhdr h2{font-size:22px;font-weight:800;margin:0}
@@ -1632,13 +1634,16 @@ function renderSchedule(rows){
 async function openHistory(){
   HISTORY_OPEN=true;
   HISTORY_MONTH="";                        // default to the current month each time it opens
+  document.documentElement.classList.add("histopen"); document.body.classList.add("histopen");   // lock the page scroll behind the overlay
   $("historyView").classList.remove("hidden");
+  $("historyView").scrollTop=0;            // always open at the top (most recent day)
   $("historyPane").innerHTML='<div class="spin">Loading…</div>';
   await historyRefresh();
 }
 function closeHistory(){
   HISTORY_OPEN=false;
   $("historyView").classList.add("hidden");
+  document.documentElement.classList.remove("histopen"); document.body.classList.remove("histopen");
   $("historyPane").innerHTML="";          // drop the cards so a live poll never touches them
   HISTORY_CACHE=[]; HISTORY_OPEN_CARDS.clear();   // reopen History with everything collapsed
 }
@@ -1678,7 +1683,8 @@ function renderHistory(tours){
   HISTORY_RENDER=true;
   let html="";
   try{
-    groupByDay(tours).forEach(day=>{
+    // Most RECENT day first (then older below), so the useful info is at the top.
+    groupByDay(tours).reverse().forEach(day=>{
       html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
       const dayTimes=[];
       day.items.forEach(t=>{ if(!dayTimes.some(x=>x.time===t.time)) dayTimes.push({time:t.time,timeLabel:t.timeLabel||t.time}); });
