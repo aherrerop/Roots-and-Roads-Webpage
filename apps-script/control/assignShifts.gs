@@ -50,8 +50,21 @@
  *    edge (a tiebreaker), to reward giving us more hours.
  ******************************************************/
 
+// The external spreadsheets (BookingSheet, the two availability files) are referenced by
+// id. These constants are the LIVE (production) ids and the default. A STAGING copy of this
+// project overrides any of them with a Script Property of the same name pointing at a COPY
+// sheet, so staging never reads or writes live data — with no code fork (prod uses the
+// constants when no property is set). Read at CALL time (not load) so file load order and a
+// cold Properties service can never break startup. See STAGING.md.
 const GUIDE_FILE_ID = "1ZkF0yDVE5Q7V2XUO5051ojJdTXtsvb8FA2sh15rqf-0";
 const BOOKING_SHEET_ID = "1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw";
+function extSheetId_(key, dflt) {
+  try { return PropertiesService.getScriptProperties().getProperty(key) || dflt; }
+  catch (e) { return dflt; }
+}
+function bookingSheetId_() { return extSheetId_('BOOKING_SHEET_ID', BOOKING_SHEET_ID); }
+function guideFileId_()    { return extSheetId_('GUIDE_FILE_ID', GUIDE_FILE_ID); }
+function sfGuideFileId_()  { return extSheetId_('SF_GUIDE_FILE_ID', SF_GUIDE_FILE_ID); }
 
 const LANGUAGES = ["English", "German", "Spanish", "French", "Italian"];
 const AVAILABILITY_FIRST_ROW = 5;
@@ -174,7 +187,7 @@ function pickAutoEligible_(shift, autoOn, guides, byName, assignedByGuide) {
 // every lock and every manager clear. Writes the grids and logs any lock conflict.
 function makeSchedule() {
   const controlSS = SpreadsheetApp.getActiveSpreadsheet();
-  const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
+  const guideSS = SpreadsheetApp.openById(guideFileId_());
 
   const guides = readGuides_(controlSS);
   const weeklySchedule = readWeeklySchedule_(controlSS);
@@ -803,7 +816,7 @@ function expandOrphanShifts_(shifts, availIndex, startDate, endDate) {
 function readActiveBookingSlots_() {
   const seen = new Set();
   const out = [];
-  const ss = SpreadsheetApp.openById(BOOKING_SHEET_ID);
+  const ss = SpreadsheetApp.openById(bookingSheetId_());
   ss.getSheets().forEach(sh => {
     const tab = sh.getName();
     if (tab.indexOf(" Tours") === -1) return;
@@ -849,7 +862,7 @@ function privateAvailability_(availIndex, dateText, time) {
 // groups are valued separately (they're their own shift). Keyed date|time|language|variant.
 function readShiftValues_() {
   const out = {};
-  const ss = SpreadsheetApp.openById(BOOKING_SHEET_ID);
+  const ss = SpreadsheetApp.openById(bookingSheetId_());
   ss.getSheets().forEach(sh => {
     const tab = sh.getName();
     if (tab.indexOf(" Tours") === -1) return;
@@ -876,7 +889,7 @@ function readShiftValues_() {
 // One entry per private BOOKING (not per slot), carrying its real time.
 function readPrivateGroups_() {
   const out = [];
-  const ss = SpreadsheetApp.openById(BOOKING_SHEET_ID);
+  const ss = SpreadsheetApp.openById(bookingSheetId_());
   ss.getSheets().forEach(sh => {
     const tab = sh.getName();
     if (tab.indexOf(" Tours") === -1) return;
@@ -914,7 +927,7 @@ function readPrivateGroups_() {
 // so a Drive rename never breaks it. Empty = SF availability disabled.
 var SF_GUIDE_FILE_ID = '1XJXz3tR1aDupSbtsmWKqUd-W6Zepv-VJiAZfGw-649o';
 
-function availabilityFileId_(isSf) { return isSf ? SF_GUIDE_FILE_ID : GUIDE_FILE_ID; }
+function availabilityFileId_(isSf) { return isSf ? sfGuideFileId_() : guideFileId_(); }
 
 // Open the availability spreadsheet for a tour type, or null if not configured/reachable.
 function availabilityFile_(isSf) {
@@ -932,7 +945,7 @@ function isAvailWeekTab_(name) {
 // Remove legacy "SF Week <N>" tabs from the 3h file — SF lives in its own file.
 function cleanupStraySfTabs_() {
   try {
-    const g = SpreadsheetApp.openById(GUIDE_FILE_ID);
+    const g = SpreadsheetApp.openById(guideFileId_());
     g.getSheets().forEach(sh => { if (String(sh.getName()).indexOf('SF Week ') === 0) g.deleteSheet(sh); });
   } catch (e) { /* best-effort cleanup */ }
 }

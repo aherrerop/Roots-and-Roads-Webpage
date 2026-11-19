@@ -2649,7 +2649,7 @@ function gridLabelToKey_(label, anchor) {
  * 5. BOOKINGSHEET READER  (guests + contacts per shift)
  ******************************************************/
 
-function bookingSS_() { return __RRX.bookingSS || (__RRX.bookingSS = SpreadsheetApp.openById(PORTAL.BOOKING_SHEET_ID)); }
+function bookingSS_() { return __RRX.bookingSS || (__RRX.bookingSS = SpreadsheetApp.openById(bookingSheetId_())); }
 
 // Read the BookingSheet "Portal Feed" tab in ONE read, into the same
 // "dateKey|minutes|Language" -> [bookings] index that readBookingsIndex_ builds by
@@ -4005,9 +4005,9 @@ function listLedgerBackups() {
 function systemBackupTargets_() {
   const out = [];
   try { out.push({ id: control_().getId(), label: 'Control_v1' }); } catch (e) {}
-  out.push({ id: PORTAL.BOOKING_SHEET_ID, label: 'BookingSheet' });
-  try { if (typeof GUIDE_FILE_ID !== 'undefined' && GUIDE_FILE_ID) out.push({ id: GUIDE_FILE_ID, label: 'Guide_3h_Availability' }); } catch (e) {}
-  try { if (typeof SF_GUIDE_FILE_ID !== 'undefined' && SF_GUIDE_FILE_ID) out.push({ id: SF_GUIDE_FILE_ID, label: 'Guide_SF_Availability' }); } catch (e) {}
+  out.push({ id: bookingSheetId_(), label: 'BookingSheet' });
+  try { const g = guideFileId_(); if (g) out.push({ id: g, label: 'Guide_3h_Availability' }); } catch (e) {}
+  try { const sf = sfGuideFileId_(); if (sf) out.push({ id: sf, label: 'Guide_SF_Availability' }); } catch (e) {}
   return out;
 }
 
@@ -5301,7 +5301,7 @@ function availBySlot_() {
     const out = { bySlot: {}, fromKey: '', toKey: '' };
     try {
       const tz = Session.getScriptTimeZone();
-      const guideSS = SpreadsheetApp.openById(GUIDE_FILE_ID);
+      const guideSS = SpreadsheetApp.openById(guideFileId_());
       const sfSS = availabilityFile_(true);
       const weeks = weekTabsToSchedule_(guideSS) || [];
       const add = function (ss, week, isSf) {
