@@ -897,10 +897,17 @@ function apiTours_(p) {
         // full horizon, so slice it to this load's window. This is what makes a normal
         // load and "Load more" fast — no cold assembly.
         const pre = _t('nfpf', function () { return readNearFuturePortalFeed_(); });
-        if (pre && pre.ver === String(cacheVersion_()) && pre.schedule.length) {
+        if (pre && pre.schedule.length) {
           const maxKey = addDaysKey_(today, offerHorizonDays);
-          return pre.schedule.filter(s =>
-            s.dateKey >= today && s.dateKey <= maxKey && !shiftIsOver_(s.dateKey, s.minutes));
+          const s = pre.schedule.filter(x =>
+            x.dateKey >= today && x.dateKey <= maxKey && !shiftIsOver_(x.dateKey, x.minutes));
+          // Reuse the snapshot's STRUCTURE but recompute assignments + overlays from the
+          // FRESH feed, so a just-made assign/move/clear/2nd-guide/no-show shows at once
+          // (no ~5-min stale window) without a cold assemble. reapply returns false when a
+          // brand-new slot appeared that the snapshot lacks -> fall through to the cold build.
+          if (s.length && _t('nfpf.reapply', function () { return reapplySnapshotMutations_(s, bookingsByKey, today, maxKey); })) {
+            return s;
+          }
         }
         // Fallback (tab absent / unreadable / stale right after a change): build the
         // window live. Each overlay is timed on its own so a cold load shows its cost.
@@ -3622,6 +3629,66 @@ function assembleSchedule_(feed, horizonDays) {
   applyNoShowOverlay_(s);
   sortSchedule_(s);
   return s;
+}
+
+// Make a pre-built snapshot (the "near-future Portal feed", up to ~5 min old) reflect any
+// mutation made SINCE it was built, using the SAME authoritative sources a cold build uses
+// (the FRESH feed Guide column + the overlay Script Properties). This is what lets a
+// manager's just-made assign / move / clear / 2nd-guide / no-show show on the very NEXT
+// load — instead of waiting for the next rebuild — WITHOUT paying for a full cold assemble
+// (which re-derives the whole shift structure). It keeps only the snapshot's STRUCTURE
+// (which tours exist) and recomputes assignments + overlays, so the slow part is reused and
+// the fast-changing part is always current.
+//
+// Returns FALSE when the fresh feed holds an in-window tour (a real booking) the snapshot's
+// structure does NOT contain — i.e. a brand-new slot appeared since the rebuild — so the
+// caller falls back to a cold build and the new booking can never be hidden. Maxim: cannot
+// miss a booking.
+function reapplySnapshotMutations_(schedule, bookingsByKey, today, maxKey) {
+  // 1. Re-derive each shift's REAL (slot-1) assignment from the fresh feed Guide column,
+  //    exactly as buildScheduleFromFeed_ does (first feed row carrying a guide wins),
+  //    discarding whatever the snapshot baked in. The overlays below re-add the weekly
+  //    default / 2nd guide / no-show / cleared state fresh, in the same order as a cold build.
+  schedule.forEach(s => {
+    delete s.cleared; delete s.weeklyDefault; delete s.secondGuide; delete s.noShow; delete s.noShowGuide;
+    // Match ALL feed rows for this slot+variant, INCLUDING a 0-person 'shift' placeholder
+    // (a bare assigned slot carries its guide there) — exactly as buildScheduleFromFeed_
+    // does: first row carrying a guide wins. Using bookingsForShift_ here would wrongly
+    // drop a bare assignment, because it filters placeholder rows out.
+    const rows = bookingsByKey[shiftKey_(s.dateKey, s.minutes, s.language)] || [];
+    let g = '';
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const bSf = isSfExtSource_(r.source);
+      const bPriv = !bSf && /privat/i.test(r.note || '');
+      if (!!bSf === !!s.sfExt && !!bPriv === !!s.private && r.feedGuide) { g = r.feedGuide; break; }
+    }
+    s.assigned = g ? [g] : [];
+    s.status = g ? 'OK' : 'Not assigned';
+  });
+  applyClearedOverlay_(schedule);
+  applyWeeklyDefaults_(schedule);
+  applySecondGuideOverlay_(schedule);
+  applyNoShowOverlay_(schedule);
+  sortSchedule_(schedule);
+  // 2. Safety net: a brand-new booking on a slot the snapshot lacks must force a cold build.
+  const have = {};
+  schedule.forEach(s => { have[shiftKey_(s.dateKey, s.minutes, s.language) + '|' + variantKey_(s.sfExt, s.private, s.privIndex)] = true; });
+  const keys = Object.keys(bookingsByKey);
+  for (let i = 0; i < keys.length; i++) {
+    const parts = keys[i].split('|');
+    const dk = parts[0], min = Number(parts[1]);
+    if (!dk || dk < today || dk > maxKey || !Number.isFinite(min) || shiftIsOver_(dk, min)) continue;
+    const rows = bookingsByKey[keys[i]] || [];
+    for (let j = 0; j < rows.length; j++) {
+      const r = rows[j];
+      if ((r.rowType || 'booking') === 'shift') continue;   // a bare placeholder is not a booking
+      const isSf = isSfExtSource_(r.source);
+      const isPriv = !isSf && /privat/i.test(r.note || '');
+      if (!have[keys[i] + '|' + variantKey_(isSf, isPriv, 1)]) return false;   // new BOOKING slot -> cold build
+    }
+  }
+  return true;
 }
 
 // --- Near-future Portal feed (pre-built shift structure) --------------------

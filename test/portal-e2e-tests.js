@@ -548,12 +548,14 @@ const nfTours = apiTours_({ token: token, days: 10 });
 const nfShift = (nfTours.allTours || []).find(s => s.dateKey === DATE && s.time === '10:00' && s.language === 'English' && (s.bookings || []).some(b => b.bookingId === 'GYGE2E001'));
 check('apiTours_ surfaces the booking via the pre-built tab', !!nfShift, nfShift && nfShift.bookings.map(b => b.bookingId));
 check('the FAST path was used (nfpf timing set, no cold asm.build)', nfTours.timings && typeof nfTours.timings.nfpf === 'number' && nfTours.timings['asm.build'] === undefined, nfTours.timings);
-// A change bumps the global version -> the tab is stale -> live build (still correct).
+// A change bumps the global version. The snapshot is NOT discarded now: its STRUCTURE is
+// reused and assignments are re-derived from the fresh feed (reapplySnapshotMutations_), so
+// the change shows at once WITHOUT a cold assemble. The tour still returns correct.
 bumpCacheVersion_();
 const nfTours2 = apiTours_({ token: token, days: 10 });
 const nfShift2 = (nfTours2.allTours || []).find(s => s.dateKey === DATE && s.time === '10:00' && s.language === 'English' && (s.bookings || []).some(b => b.bookingId === 'GYGE2E001'));
-check('after a change the stale tab is bypassed; live build still returns the tour', !!nfShift2, nfShift2 && nfShift2.bookings.map(b => b.bookingId));
-check('the fallback did a live build (asm.build timing set)', nfTours2.timings && typeof nfTours2.timings['asm.build'] === 'number', nfTours2.timings);
+check('after a change the snapshot is self-corrected (not discarded); the tour still returns', !!nfShift2, nfShift2 && nfShift2.bookings.map(b => b.bookingId));
+check('a change is reflected via reapply on the fast path, with NO cold rebuild', nfTours2.timings && typeof nfTours2.timings['nfpf.reapply'] === 'number' && nfTours2.timings['asm.build'] === undefined, nfTours2.timings);
 
 console.log('--- Unstaffed-tour alarm: a tour tomorrow with guests but NO guide emails management (subject only) ---');
 const TOM = dayKey(1);

@@ -101,6 +101,49 @@ check('readContention_ reflects the live level', readContention_().level === 'ov
 for (let i = 0; i < 8; i++) lvl = recordLoadSignal_(500);
 check('when load falls the level returns to normal (auto-recovery)', lvl.level === 'normal' && lvl.pollSec === 30, lvl);
 
+console.log('--- Snapshot self-correction: a just-made assignment shows at once (no cold rebuild, no 5-min stale window) ---');
+// reapplySnapshotMutations_ re-derives each shift's guide from the FRESH feed over the
+// snapshot's structure, so a manager's assign/move/clear shows on the very next load.
+__RRX = {};
+const SK = (d, m, l) => d + '|' + m + '|' + String(l).toLowerCase();
+const mkShift = (over) => ({ dateKey: '2027-06-15', minutes: 930, time: '15:30', timeLabel: '3:30 PM',
+  language: 'Italian', day: 'Tuesday', dateText: 'Jun 15', private: false, sfExt: false, privIndex: 1,
+  assigned: over ? [over] : [], status: over ? 'OK' : 'Not assigned' });
+
+// 1. The snapshot still shows the OLD guide; the fresh feed now names a NEW guide -> reapply flips it.
+let sched = [mkShift('OldGuide')];
+let feed = { [SK('2027-06-15', 930, 'Italian')]: [{ source: 'Website', note: '', feedGuide: 'Francesca', rowType: 'booking', bookingId: 'B1' }] };
+let ok = reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18');
+check('a stale snapshot assignment is replaced by the fresh feed guide', ok === true && sched[0].assigned.join() === 'Francesca', sched[0].assigned);
+
+// 2. A BARE assigned slot carries its guide on a 0-person 'shift' placeholder row -> still picked up.
+sched = [mkShift('')];
+feed = { [SK('2027-06-15', 930, 'Italian')]: [{ source: '', note: '', feedGuide: 'Carlos', rowType: 'shift' }] };
+reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18');
+check('a bare assignment (placeholder row) is reflected, not dropped', sched[0].assigned.join() === 'Carlos', sched[0].assigned);
+
+// 3. Unassign: the feed no longer names a guide -> the shift clears.
+sched = [mkShift('OldGuide')];
+feed = { [SK('2027-06-15', 930, 'Italian')]: [{ source: 'Website', note: '', feedGuide: '', rowType: 'booking', bookingId: 'B1' }] };
+reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18');
+check('an unassigned shift (no feed guide) clears to Not assigned', sched[0].assigned.length === 0 && sched[0].status === 'Not assigned', sched[0]);
+
+// 4. Safety net: a NEW BOOKING on a slot the snapshot lacks -> reapply returns false (caller cold-builds, booking never hidden).
+sched = [mkShift('Francesca')];
+feed = {
+  [SK('2027-06-15', 930, 'Italian')]: [{ source: 'Website', note: '', feedGuide: 'Francesca', rowType: 'booking', bookingId: 'B1' }],
+  [SK('2027-06-15', 660, 'English')]: [{ source: 'Website', note: '', feedGuide: '', rowType: 'booking', bookingId: 'B2' }]
+};
+check('a brand-new booking slot the snapshot lacks forces a cold build (false)', reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18') === false, null);
+
+// 5. ...but a bare placeholder on a missing slot is NOT a booking, so it does not force a cold build.
+sched = [mkShift('Francesca')];
+feed = {
+  [SK('2027-06-15', 930, 'Italian')]: [{ source: 'Website', note: '', feedGuide: 'Francesca', rowType: 'booking', bookingId: 'B1' }],
+  [SK('2027-06-15', 660, 'English')]: [{ source: '', note: '', feedGuide: 'Hans', rowType: 'shift' }]
+};
+check('a bare placeholder on a missing slot does NOT force a cold build (true)', reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18') === true, null);
+
 __mock.removeRealCache();
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
