@@ -20,22 +20,23 @@ bumpCacheVersion_();
 const c = cachedRead_('x', 60, fn);
 check('bumpCacheVersion_ -> fn runs again, fresh value', calls === 2 && c.v === 2, [calls, c]);
 
-console.log('--- the ledger backstop is keyed on the guide set, NOT feedCacheVersion_ ---');
+console.log('--- the ledger backstop (cachedReadStable_) survives BOTH an assign burst and a check-in burst ---');
 // The feed is the PRIMARY check-in source; the ledger is only a backstop, and a
-// displayed booking always has a feed row. So a check-in must NOT re-open the
-// ledger file + re-read every guide tab on the next poll (the moment a guide is
-// tapping check-ins). The ledger stays keyed on the guide set + the GLOBAL version
-// (an assign/move, added by cachedRead_) and refreshes on the TTL.
+// displayed booking always has a feed row. The backstop is keyed on the guide set + TTL
+// alone (cachedReadStable_), independent of BOTH versions: a future assign/move can't
+// change a PAST/today check-in, and a check-in already shows from the feed, so NEITHER an
+// assign burst nor a check-in burst must re-open the ledger + re-read every guide tab (3-9s
+// of I/O) on the next poll and starve guide loads. It refreshes on the TTL + hourly reconcile.
 let lc = 0; const lfn = () => { lc++; return { n: lc }; };
 const lkey = () => 'led:carlos';
-cachedRead_(lkey(), 60, lfn); cachedRead_(lkey(), 60, lfn);
+cachedReadStable_(lkey(), 60, lfn); cachedReadStable_(lkey(), 60, lfn);
 check('repeat poll with no change hits the cache (ledger read skipped)', lc === 1, lc);
 bumpFeedCacheVersion_();                                  // a check-in / undo
-cachedRead_(lkey(), 60, lfn);
+cachedReadStable_(lkey(), 60, lfn);
 check('a check-in does NOT re-open the ledger (feed carries the check-in)', lc === 1, lc);
-bumpCacheVersion_();                                     // an assign/move DOES refresh it
-cachedRead_(lkey(), 60, lfn);
-check('an assign/move refreshes the ledger backstop (global version)', lc === 2, lc);
+bumpCacheVersion_();                                     // an assign/move burst
+cachedReadStable_(lkey(), 60, lfn);
+check('an assign/move does NOT re-open the ledger (past check-ins are unaffected)', lc === 1, lc);
 
 console.log('--- an oversized value is never cached (stays a live read) ---');
 let big = 0; const bigfn = () => { big++; return { s: 'x'.repeat(96000) }; };
@@ -44,8 +45,8 @@ check('a >95KB value reads live every time (never cached)', big === 2, big);
 
 console.log('--- a DIFFERENT guide set is a different key (reassignment safety) ---');
 let g2 = 0; const g2fn = () => { g2++; return { n: g2 }; };
-cachedRead_('led:setA', 60, g2fn);
-cachedRead_('led:setB', 60, g2fn);
+cachedReadStable_('led:setA', 60, g2fn);
+cachedReadStable_('led:setB', 60, g2fn);
 check('a changed guide set misses (reads fresh, not another set\'s check-ins)', g2 === 2, g2);
 
 console.log('--- the ASSEMBLE cache (asm:<horizon>) skips the rebuild on a warm poll AND across check-ins ---');

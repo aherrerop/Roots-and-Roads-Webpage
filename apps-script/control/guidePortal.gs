@@ -473,6 +473,33 @@ function cachedReadConfig_(name, ttlSeconds, fn) {
   return val;
 }
 
+// Same idea as cachedRead_, but keyed on NEITHER version — only on `name` (which carries
+// the guide set) + the TTL. For the manager's cross-guide LEDGER backstop, which is about
+// PAST/today check-ins: a future ASSIGN/MOVE can't change a past check-in (so re-reading
+// every guide ledger after each assign was pure waste — the worst offender when a manager
+// assigns in a burst and every following poll then cold-reads every guide ledger, starving
+// guides' loads behind it), and a CHECK-IN already lands on the FEED (the portal's union
+// read shows it at once), so the backstop needn't re-open the ledger the instant guides are
+// tapping check-ins either. It only has to CATCH a feed-less check-in eventually, which the
+// TTL (and the hourly reconcile) cover. Version-independent = warm through both bursts.
+function cachedReadStable_(name, ttlSeconds, fn) {
+  let cache = null, key = '';
+  try {
+    cache = CacheService.getScriptCache();
+    key = 'rds:' + name;                 // no version — survives assign AND check-in bursts
+    const hit = cache.get(key);
+    if (hit) return JSON.parse(hit);
+  } catch (e) { cache = null; }
+  const val = fn();
+  try {
+    if (cache) {
+      const s = JSON.stringify(val);
+      if (s.length < 95000) cache.put(key, s, ttlSeconds || PORTAL.CACHE_TTL);
+    }
+  } catch (e) { /* value not cacheable this time; live read already returned */ }
+  return val;
+}
+
 /******************************************************
  * ADAPTIVE BACKPRESSURE — detect a forming execution queue and drain it.
  *
@@ -919,12 +946,16 @@ function apiTours_(p) {
     if (!isManager) return { checkins: {}, reservations: {} };
     try {
       const guides = guidesForLedger();
-      // Backstop only, so it is NOT keyed on feedCacheVersion_ (a check-in must not
-      // force a ledger re-open on the next poll). Keyed on the guide set + the global
-      // version, refreshed on the TTL — enough to catch the one case it exists for:
-      // a ledger check-in with no feed row yet.
-      return cachedRead_('led:' + guides.slice().sort().join(','),
-                         PORTAL.CACHE_TTL, function () { return readLedgerForGuides_(guides); });
+      // Backstop only — it exists to catch the rare ledger check-in with no feed row yet.
+      // Keyed on the guide set + the TTL alone (cachedReadStable_), independent of BOTH
+      // versions: a future assign/move cannot change a past/today check-in, and a check-in
+      // already shows from the FEED, so neither an assign BURST nor a check-in BURST should
+      // force a cold re-read of every guide ledger (3-9s each) and starve the guides' own
+      // loads behind it. It refreshes on the TTL (and the hourly reconcile), which is
+      // ample for a backstop. This is the single biggest cut to the manager poll cost that
+      // was serializing against — and timing out — guide loads during an assign burst.
+      return cachedReadStable_('led:' + guides.slice().sort().join(','),
+                               PORTAL.CACHE_TTL, function () { return readLedgerForGuides_(guides); });
     } catch (e) {
       // A transient ledger error must not crash the poll — degrade to feed-only.
       return { checkins: {}, reservations: {} };
