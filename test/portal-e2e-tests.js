@@ -597,6 +597,22 @@ check('the watchdog flags the duplicate booking id as a CRITICAL failure',
 feed.deleteRow(dupRow);   // clean up so later state is unaffected
 check('removing the duplicate clears the flag', dupCheck(preflightCheck_()).ok === true, null);
 
+console.log('--- Whole-response cache: an unchanged repeat poll is served from cache, any change rebuilds ---');
+__mock.installRealCache();
+bumpCacheVersion_(); bumpFeedCacheVersion_();                 // clean slate -> first call is a miss
+const rc1 = apiTours_({ token: token, days: 10 });
+check('first load builds (not a cache hit)', rc1.timings && rc1.timings.cache === undefined, rc1.timings);
+const rc2 = apiTours_({ token: token, days: 10 });
+check('an identical repeat poll is served from the whole-response cache', rc2.timings && rc2.timings.cache === 1, rc2.timings);
+check('the cached response returns the SAME tours (correct data)', JSON.stringify(rc2.allTours) === JSON.stringify(rc1.allTours), null);
+check('the cached response re-stamps a fresh now (freshness stays honest)', typeof rc2.now === 'string' && rc2.now.length > 0, rc2.now);
+bumpFeedCacheVersion_();                                      // a check-in
+check('a check-in (feed version bump) invalidates it -> rebuild', apiTours_({ token: token, days: 10 }).timings.cache === undefined, null);
+bumpCacheVersion_();                                          // an assign
+apiTours_({ token: token, days: 10 });                        // miss (rebuild)
+check('an assign (global version bump) also invalidates it', apiTours_({ token: token, days: 10 }).timings.cache === 1, null);
+__mock.removeRealCache();
+
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

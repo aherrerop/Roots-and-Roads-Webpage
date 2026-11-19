@@ -843,6 +843,26 @@ function apiLogin_(p) {
 
 // action=tours -> { ok, guide, tours:[...], schedule:[...] } : the whole portal view
 // for one logged-in user. A manager sees everyone; a guide sees only their own tours.
+// WHOLE-RESPONSE cache for the tours load. A guide (or the manager) polling every ~30s
+// with nothing changed is the common case; without this each such poll still re-opens the
+// sheets and re-assembles. Here the entire prior response is served from CacheService,
+// keyed on WHO is asking + the window + BOTH the global and feed versions — so an assign
+// (global bump) or a check-in (feed bump) misses and rebuilds, and a stale assignment or
+// check-in can never be served. A short TTL bounds the rare ledger-backstop edge. Fail-open
+// and size-guarded (a big manager payload just isn't cached, so it falls back to a live
+// build). This is the step that takes a routine poll fully OFF the sheets.
+var RESP_CACHE_TTL = 25;            // seconds; correctness comes from the version keys, not this
+function toursResponseCacheGet_(key) {
+  try { const h = CacheService.getScriptCache().get(key); return h ? JSON.parse(h) : null; }
+  catch (e) { return null; }
+}
+function toursResponseCachePut_(key, val) {
+  try {
+    const s = JSON.stringify(val);
+    if (s.length < 95000) CacheService.getScriptCache().put(key, s, RESP_CACHE_TTL);
+  } catch (e) { /* not cacheable this time; the live response already returned */ }
+}
+
 function apiTours_(p) {
   __RRX = {};                       // request boundary: fresh per-load memo (see doGet)
 
@@ -857,13 +877,26 @@ function apiTours_(p) {
   if (!name) return { ok: false, error: 'Session expired, please log in again' };
 
   const today = todayKey_();
+  const windowDays = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(p.days) || PORTAL.MANAGER_WINDOW_DAYS));
+
+  // Whole-response cache: a repeated poll with nothing changed returns the prior response
+  // instantly — before `me`, the feed read, or any assembly — so it does ZERO sheet work and
+  // frees the serialized runtime for loads that actually have changes. `now` is re-stamped
+  // so the phone's "Updated" time stays truthful. (We read both versions ONCE here; this
+  // execution is read-only and the runtime is serialized, so they can't change under us.)
+  const respKey = 'resp:' + normName_(name) + ':' + windowDays + ':' + cacheVersion_() + ':' + feedCacheVersion_();
+  const respHit = toursResponseCacheGet_(respKey);
+  if (respHit) {
+    respHit.now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss');
+    respHit.timings = { cache: 1 };
+    return respHit;
+  }
 
   // Work out who is asking and how many days to load. Both roles load a small near
   // window by default and widen it with "Load more"; UPCOMING_DAYS is only the
   // ceiling. Computed BEFORE the build, so we expand only the days actually shown.
   const me = _t('me', function () { return findGuideByName_(name); });
   const isManager = !!(me && me.manager);
-  const windowDays = Math.min(PORTAL.UPCOMING_DAYS, Math.max(1, Number(p.days) || PORTAL.MANAGER_WINDOW_DAYS));
   const offerHorizonDays = windowDays;
 
   // Read the bookings. Reservations, check-ins and the assigned guide all come from
@@ -1221,13 +1254,18 @@ function apiTours_(p) {
     return 0;
   });
 
-  return { ok: true, guide: name, manager: isManager, tours,
+  const resp = { ok: true, guide: name, manager: isManager, tours,
            schedule: scheduleView, allTours, guidesByLanguage, guideTourTypes,
            hasMore: hasMore, windowDays: windowDays,
            timings: T,   // per-phase ms (tok/sched/book/assemble/me/backfill/closed/mine/mgrGuides/mgrTours)
            // Freshness: the server's own clock at the moment this data was built,
            // so the phone can show "Updated HH:mm:ss" truthfully (not its own clock).
            now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };
+  // Cache the whole response so the NEXT identical poll (same guide/window, no assign or
+  // check-in since) is served from CacheService with no sheet work. Invalidated by the
+  // version keys in respKey, so it can never serve a stale assignment or check-in.
+  toursResponseCachePut_(respKey, resp);
+  return resp;
 }
 
 
