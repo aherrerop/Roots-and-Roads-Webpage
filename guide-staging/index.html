@@ -1,0 +1,1754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<!-- The portal must never be served stale from the phone's cache, or a fix
+     never reaches the guide. These stop future caching; the version check in
+     the script reloads the page the moment a new build is deployed. -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>Guide Portal — Roots &amp; Roads</title>
+<link rel="icon" type="image/png" href="/images/blackWhite_Logo_v2.png?v=1">
+<style>
+  :root{
+    --bg:#eef0f3; --card:#ffffff; --ink:#1a2b49; --muted:#8b90a0;
+    --line:#eceef1; --blue:#0071eb; --green:#25d366; --amber:#f59e0b;
+    --paid:#0071eb; --free:#f59e0b; --danger:#dc2626; --ok:#16a34a;
+    --radius:16px; --shadow:0 1px 2px rgba(16,24,40,.06),0 4px 14px rgba(16,24,40,.06);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;font-size:15px;line-height:1.4}
+  .wrap{max-width:600px;margin:0 auto;padding:14px 16px 72px}
+  .hidden{display:none!important}
+  .lbadge{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;color:#fff;font-size:10px;font-weight:800;letter-spacing:.3px;vertical-align:middle;flex:none}
+.flagmini{display:inline-flex;width:15px;height:11px;border-radius:2px;overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,.65)}.flagmini svg{width:100%;height:100%;display:block}
+.bnotebtn{background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:2px 5px;margin-left:6px;cursor:pointer;display:inline-flex;align-items:center;line-height:0;vertical-align:middle}.bnotebtn.has{background:#fde047;box-shadow:0 0 0 2px rgba(202,138,4,.3)}
+.bnotepanel{background:#fffbeb;border:1px solid #fde047;border-radius:12px;padding:12px;margin:2px 2px 10px}
+.bnoteta{width:100%;min-height:56px;border:1px solid #e7e1d8;border-radius:8px;padding:8px;font:inherit;resize:vertical;box-sizing:border-box}
+.noteread{white-space:pre-wrap;padding:2px}
+.noterow{display:flex;gap:8px;align-items:center;margin-top:8px}
+.bnotesave{background:#111;color:#fff;border:none;border-radius:999px;padding:7px 14px;font-weight:700;cursor:pointer}
+.bnoteclose{background:#fff;border:1px solid #ccc;border-radius:999px;padding:7px 12px;cursor:pointer}
+.notemsg{font-size:.85rem;color:#555}
+.closebtn{position:absolute;top:8px;right:8px;z-index:5;width:22px;height:22px;padding:0;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid #e6c3c3;color:#c0392b;border-radius:50%;cursor:pointer;font-size:12px;font-weight:800;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.12)}.closebtn:hover{background:#fdecec;border-color:#e08a8a}
+.openform{background:#f4f7ff;border:1px solid #cdd9f5;border-radius:14px;padding:10px 14px;margin:0 0 14px}
+.openform>summary{cursor:pointer;font-weight:800;color:#2547a0;list-style:none}
+.openform .ofrow{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:10px}
+.openform label{display:flex;flex-direction:column;font-size:.8rem;font-weight:700;color:#42506b;gap:4px;flex:1;min-width:120px}
+.openform input,.openform select{padding:7px 9px;border:1px solid #cdd9f5;border-radius:9px;font:inherit;font-weight:600}
+.of-open{background:#2547a0;color:#fff;border:none;border-radius:999px;padding:8px 16px;font-weight:800;cursor:pointer}
+.of-msg{font-size:.85rem;color:#42506b;align-self:center}
+  .avatar{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;font-weight:800;text-transform:uppercase;margin-right:5px;flex:none}
+
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin:8px 4px 16px}
+  .topbar h1{font-size:30px;font-weight:800;margin:0;letter-spacing:-.6px}
+  .topbar .who{font-size:13px;color:var(--muted);margin-top:2px}
+  .iconbtn{background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:6px 8px;border-radius:8px}
+  .iconbtn:hover{background:#e4e7ec}
+  .topbar .actions{display:flex;align-items:center;gap:2px}
+  .histbtn{background:#eef2fb;border:1px solid #d3ddf2;color:#2547a0;font-weight:800;font-size:13px;cursor:pointer;padding:7px 12px;border-radius:9px}
+  .histbtn:hover{background:#e2e9f8}
+  /* HISTORY overlay: the last 2 days of tours, for marking no-shows + undoing check-ins. */
+  .histview{position:fixed;inset:0;z-index:50;background:var(--bg,#f4f6fa);overflow:auto;-webkit-overflow-scrolling:touch}
+  /* While the overlay is open, lock the page behind it so there is ONE scrollbar (the overlay's), not two. */
+  html.histopen,body.histopen{overflow:hidden}
+  .histview .histwrap{max-width:720px;margin:0 auto;padding:14px 14px 40px}
+  .histhdr{display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--bg,#f4f6fa);padding:8px 2px 12px;margin-bottom:6px;border-bottom:1px solid #e2e6ee}
+  .histhdr h2{font-size:22px;font-weight:800;margin:0}
+  .histhdr .sub{font-size:12px;color:var(--muted);margin-top:2px}
+  .histclose{background:var(--ink);color:#fff;border:none;border-radius:999px;padding:8px 16px;font-weight:800;cursor:pointer}
+  /* History month picker + read-only badge. */
+  .histctrls{display:flex;align-items:center;gap:8px}
+  .histmonth{font-size:13px;font-weight:700;color:#2547a0;background:#eef2fb;border:1px solid #d3ddf2;border-radius:9px;padding:7px 10px;cursor:pointer}
+  .histro{display:inline-block;margin-left:6px;font-size:11px;font-weight:800;color:var(--muted);background:#eceff5;border-radius:999px;padding:2px 8px;vertical-align:middle}
+
+  .tabs{display:flex;gap:8px;margin:0 2px 18px}
+  .tab{flex:1;text-align:center;padding:11px;border-radius:12px;background:#e2e5ea;color:var(--muted);font-weight:700;cursor:pointer;border:none;font-size:14px}
+  .tab.active{background:var(--ink);color:#fff}
+
+  .login{max-width:380px;margin:9vh auto 0;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:28px 24px}
+  .login h2{margin:0 0 4px;font-size:23px}
+  .login p{margin:0 0 20px;color:var(--muted);font-size:14px}
+  .field{margin-bottom:13px}
+  .field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px}
+  .field input{width:100%;padding:13px;border:1px solid #dfe3e8;border-radius:11px;font-size:16px}
+  .btn{width:100%;padding:14px;border:none;border-radius:11px;background:var(--ink);color:#fff;font-weight:800;font-size:15px;cursor:pointer}
+  .btn:disabled{opacity:.6;cursor:default}
+  .btn.green{background:var(--green)}
+  .err{color:var(--danger);font-size:13px;margin-top:12px;min-height:16px}
+
+  .dayhdr{display:flex;align-items:flex-start;justify-content:space-between;margin:26px 6px 10px}
+  .dayhdr .d{font-size:20px;font-weight:800;letter-spacing:-.3px}
+  .dayhdr .m{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:1.2px;margin-top:2px}
+  .dayhdr .badge{font-size:11px;font-weight:800;letter-spacing:.6px}
+  .badge.today{color:var(--ok)} .badge.tom{color:var(--blue)}
+
+  .tour{position:relative;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
+  /* Guide view only: a tour with guests reads GREEN, an empty one RED — a
+     colored left stripe plus a faint tint so it's obvious at a glance. */
+  .tour.has-people{border-left:6px solid #16a34a;background:linear-gradient(90deg,rgba(22,163,74,.08),var(--card) 140px)}
+  .tour.no-people{border-left:6px solid #dc2626;background:linear-gradient(90deg,rgba(220,38,38,.09),var(--card) 140px)}
+  .tour.full{outline:2px solid var(--danger);outline-offset:-2px}  /* FULL (20+): red outline around the WHOLE card (open or closed), add a 2nd guide */
+  .head{display:flex;align-items:center;gap:10px;padding:15px 16px;cursor:pointer}
+  .tour .head{padding-right:38px}
+  .tour.static .head{cursor:default}
+  .head .time{font-weight:800;font-size:16px;min-width:50px}
+  .pill{display:inline-flex;align-items:center;gap:6px;background:#eef2f7;color:#334155;font-weight:700;font-size:12px;padding:5px 10px;border-radius:20px}
+  .pill.priv{background:#fff7ed;color:#b45309}
+  .pill.sf{background:#eef2ff;color:#4338ca}     /* Sagrada exterior add-on */
+  .pill.h3{background:#f1f5f9;color:#64748b;font-size:11px;padding:4px 8px}   /* full 3h tour */
+  .spacer{flex:1}
+  .count{text-align:right;line-height:1.1}
+  .count .big{font-weight:800;font-size:16px}
+  .count .big .ck{color:var(--ok)}
+  .count .sub{font-size:11px;color:var(--amber);font-weight:700}
+  .count .sub.done{color:var(--muted)}
+  .guides{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;max-width:210px;font-size:13px;font-weight:700;color:#475569}
+  .guides.miss{color:#94a3b8;font-style:italic;font-weight:600}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px 66px;margin-top:-6px}
+  .chip{display:inline-flex;align-items:center;background:#eef2f7;color:#475569;font-size:11px;font-weight:700;padding:3px 9px 3px 3px;border-radius:14px}
+
+  .bookings{border-top:1px solid var(--line);padding:6px 14px 8px;background:#fcfcfd}
+  .bk{display:flex;align-items:center;gap:10px;padding:11px 2px;border-bottom:1px solid #f1f2f4}
+  .bk:last-child{border-bottom:none}
+  .bk .nm{flex:1;min-width:0}
+  .bk .nm b{display:block;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .src{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;color:#fff;margin-top:3px;text-transform:uppercase;letter-spacing:.3px}
+  .src.paid{background:var(--paid)} .src.free{background:var(--free)} .src.priv{background:#b45309}
+  .wa{display:inline-flex;align-items:center;vertical-align:middle;line-height:0;text-decoration:none;margin-left:8px;flex:none}
+  /* Guide History: a clear checked-in / not-checked-in pill (read-only). */
+  .ckst{font-size:12px;font-weight:800;padding:4px 10px;border-radius:999px;white-space:nowrap;flex:none}
+  .ckst.in{background:#e7f6ec;color:#1a7f3c;border:1px solid #bfe6cc}
+  .ckst.out{background:#fdecec;color:#c0392b;border:1px solid #f3c2c2}
+  .ph{color:var(--muted);font-size:12px;text-decoration:none;margin-left:6px}
+
+  .stepper{display:flex;align-items:center;gap:7px}
+  .stepper button{width:32px;height:32px;border-radius:9px;border:1px solid #e2e6ea;background:#fff;font-size:19px;line-height:1;cursor:pointer;color:var(--ink)}
+  .stepper .val{min-width:20px;text-align:center;font-weight:800}
+  .stepper .of{color:var(--muted);font-weight:700;font-size:12px}
+  .stepper button:disabled{opacity:.4;cursor:default}
+  .ckin{border:1px solid var(--ink);background:var(--ink);color:#fff;font-weight:800;font-size:12px;padding:8px 12px;border-radius:9px;cursor:pointer;white-space:nowrap;margin-left:2px}
+  .ckin.done{background:#e2e6ea;border-color:#e2e6ea;color:#9aa1ac;cursor:default}
+  .ckin.g1,.ckin.g2{padding:8px 9px;min-width:42px;text-align:center}  /* the 1/2 buttons on a 2-guide tour */
+  .ckin.lockedother{opacity:.4}  /* this guest is on the OTHER guide; undo first to move them */
+  .noshowbar{display:flex;align-items:center;gap:10px;padding:12px 2px 4px;flex-wrap:wrap}
+  .noshowbtn{border:1px solid #f0b4b4;background:#fff7f7;color:#c0392b;font-weight:800;font-size:12px;padding:8px 12px;border-radius:9px;cursor:pointer}
+  .noshowbar.on .noshowtag{color:#c0392b;font-weight:800;font-size:13px}
+  .noshowundo{border:1px solid #e2e6ea;background:#fff;color:var(--muted);font-weight:700;font-size:12px;padding:6px 10px;border-radius:8px;cursor:pointer}
+
+  .walkins{padding:8px 2px 2px;border-top:1px dashed var(--line);margin-top:2px}
+  .walkins .wl{display:flex;align-items:center;gap:8px;padding:7px 2px}
+  .walkins .wl .lbl{flex:1;font-size:13px;color:var(--muted);font-weight:600}
+
+  .savebar{display:flex;gap:10px;align-items:center;padding:12px 2px 8px}
+  .savebar .msg{flex:1;font-size:12px;font-weight:700}
+  .savebar .btn{width:auto;padding:11px 22px;border-radius:11px}
+
+  .empty{text-align:center;color:var(--muted);padding:50px 10px}
+  .spin{text-align:center;color:var(--muted);padding:50px}
+  /* children: shown as "2+3" — adults normal, +children slightly smaller */
+  .kids{font-size:.72em;font-weight:800;color:var(--muted);margin-left:1px}
+  .count .kids{font-size:.7em}
+  .loaderr{text-align:center;color:var(--muted);padding:40px 16px}
+  .loaderr b{display:block;color:var(--danger);font-size:14px;margin-bottom:6px}
+  .loaderr .retry{margin-top:14px;padding:11px 26px;border:none;border-radius:11px;background:var(--ink);color:#fff;font-weight:800;font-size:14px;cursor:pointer}
+  .testlink{display:inline-block;margin-top:12px;color:var(--blue);font-weight:700;font-size:13px}
+  .asgsel{margin-left:6px;padding:6px 8px;border:1px solid #dfe3e8;border-radius:9px;font-size:13px;font-weight:700;color:var(--ink);background:#fff;max-width:150px}
+  .asglbl{font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  /* 2-guide tour: each pick on its own labelled row (Guide 1 above Guide 2). */
+  .asgrow{display:flex;align-items:center;gap:8px;width:100%;margin-top:4px}
+  .asgrow .asglbl{min-width:52px;flex:none}
+  .asgrow .asgsel{margin-left:0;flex:1;max-width:220px}
+  .chip.miss{background:#fff7ed;color:#b45309;font-style:italic}
+  .chip.needs{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4}
+  .chip.fullbadge{background:#fdecec;color:#c0392b;font-weight:800;border:1px solid #f0b4b4;padding:3px 9px}
+  .chip.noshowchip{background:#fff7f7;color:#c0392b;font-weight:800;border:1px solid #f0b4b4;padding:3px 9px}
+  .bnote{font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
+  /* A manager's per-booking note, shown inline (amber) so it reads as a message. */
+  .bnote.mnote{color:#92610a;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:3px 7px;white-space:pre-wrap;display:inline-block}
+  .mvsel{padding:4px 7px;border:1px solid #e2e6ea;border-radius:7px;font-size:12px;color:var(--ink);background:#fff}
+  .mvbox{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0}
+  .mv-go{padding:4px 12px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer}
+  .mv-go[hidden]{display:none}
+  /* ⇄ move toggle (collapsed by default) + the panel it opens below the row. */
+  .bmovebtn{background:#eef2fb;border:1px solid #d3ddf2;border-radius:6px;padding:2px 7px;margin-left:6px;cursor:pointer;font-size:13px;line-height:1.2;color:#2547a0;vertical-align:middle;flex:none}
+  .bmovebtn:hover{background:#e2e9fa}
+  .bmovepanel{background:#f6f9ff;border:1px solid #dbe6fb;border-radius:12px;padding:10px 12px;margin:0 2px 10px}
+  .bmovepanel[hidden]{display:none}
+  .bmovepanel .mvlbl{font-size:11px;font-weight:800;color:#2547a0;text-transform:uppercase;letter-spacing:.3px;margin-bottom:7px}
+  .bmvsep{height:1px;background:#dbe6fb;margin:10px 0 8px}
+  .bmvremove{display:inline-flex;align-items:center;gap:5px;background:#fff5f5;border:1px solid #f0b4b4;color:#c0392b;font-weight:800;font-size:12px;padding:6px 11px;border-radius:9px;cursor:pointer}
+  .bmvremove:hover{background:#fdecec}
+  .bmvremove:disabled{opacity:.6;cursor:default}
+  .ver{text-align:center;color:var(--muted);font-size:11px;padding:14px 0 22px;opacity:.7}
+  .fresh{font-size:11px;font-weight:700;color:var(--muted);margin:0 4px 10px;display:flex;align-items:center;gap:6px}
+  .fresh::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+  .fresh.loading::before{background:var(--amber)}
+  .fresh.stale{color:var(--danger)} .fresh.stale::before{background:var(--danger)}
+  .fresh.busy{color:var(--amber)} .fresh.busy::before{background:var(--amber)}
+  .loadmore{display:block;width:100%;padding:12px;margin:6px 0 20px;border:1px dashed #c3ccdb;border-radius:12px;background:#f4f7ff;color:#2547a0;font-weight:800;font-size:14px;cursor:pointer}
+  .loadmore:disabled{opacity:.6;cursor:default}
+</style>
+</head>
+<body>
+<div style="position:sticky;top:0;z-index:9999;background:#b45309;color:#fff;font:600 13px/1.4 system-ui,sans-serif;text-align:center;padding:7px 12px;letter-spacing:.02em">⚠ STAGING — test copy, writes to copy sheets only. NOT the live portal.</div>
+<div class="wrap">
+
+  <div id="loginView" class="login">
+    <h2>Guide Portal</h2>
+    <p>Roots &amp; Roads — sign in to see your tours.</p>
+    <div class="field"><label>Email</label><input id="email" type="email" autocomplete="username" inputmode="email"></div>
+    <div class="field"><label>Password</label><input id="password" type="password" autocomplete="current-password"></div>
+    <button id="loginBtn" class="btn">Sign in</button>
+    <div id="loginErr" class="err"></div>
+  </div>
+
+  <div id="dashView" class="hidden">
+    <div class="topbar">
+      <div><h1>Tours</h1><div id="who" class="who"></div></div>
+      <div class="actions">
+        <button id="historyBtn" class="histbtn hidden" title="Past tours by month (managers see all; pick a month inside)">History</button>
+        <button id="logoutBtn" class="iconbtn">Log out</button>
+      </div>
+    </div>
+    <div class="tabs">
+      <button id="tabTours" class="tab active">My tours</button>
+      <button id="tabSched" class="tab">All guides</button>
+      <button id="tabSf" class="tab hidden">SF tours</button>
+    </div>
+    <div id="fresh" class="fresh"></div>
+    <div id="toursPane"><div class="spin">Loading…</div></div>
+    <div id="schedPane" class="hidden"></div>
+    <div id="sfPane" class="hidden"></div>
+    <div id="ver" class="ver"></div>
+  </div>
+
+  <!-- MANAGER history overlay: past tours by month (month picker inside). The current
+       month is live (mark Guruwalk/Freetour no-shows, undo check-ins); a past month is
+       read-only. Opened by the History button. -->
+  <div id="historyView" class="histview hidden">
+    <div class="histwrap">
+      <div class="histhdr">
+        <div><h2>History</h2><div class="sub" id="histSub">Loading…</div></div>
+        <div class="histctrls">
+          <select id="histMonth" class="histmonth" title="Choose a month"></select>
+          <button id="histCloseBtn" class="histclose">Done</button>
+        </div>
+      </div>
+      <div id="historyPane"><div class="spin">Loading…</div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================================
+   GUIDE PORTAL — maintainer's map & damage-control guide
+   ----------------------------------------------------------------------------
+   WHAT: one static page (served by GitHub Pages) that guides + managers open on
+   their phones. It talks to the Apps Script web app (PORTAL_URL) for all data.
+   NO build step — edit this file, bump PORTAL_VERSION, git push (Pages deploys).
+
+   THE FLOW: login -> showDash() -> loadTours() -> renderAll(r) -> renderTours()
+   then bindTours(). A poll re-loads periodically; checkForUpdate() hard-reloads
+   the phone onto a newer build when one is deployed.
+
+   HARD-WON RULES (each one cost a real outage — do not break):
+   1. esc() MUST escape the single quote '. Guest names are placed into
+      SINGLE-quoted data-* attributes (data-mv carries the name); an apostrophe
+      (O'Brien) broke JSON.parse in bindTours and silently killed check-in binding.
+   2. In showDash(), NOTHING that can throw may run before loadTours("initial").
+      A throw there aborts the whole load = blank screen, no "Updating". The
+      restoreTab() call there is wrapped in try/catch for exactly this reason.
+   3. In bindTours(), handlers bind top-to-bottom; a throw in one binder skips ALL
+      later ones (check-in included). Guard every JSON.parse of a data-* attribute.
+   4. Bump PORTAL_VERSION on EVERY deploy (drives auto-update + the footer). After
+      deploying, confirm the LIVE footer shows the new version.
+   5. Replica-lag holds: a change you just made must survive the NEXT (possibly
+      stale) server read for the 90s settle window, or it "flips back" on refresh.
+        assigns   -> PENDING_ASSIGN  + applyPendingAssigns()
+        check-ins -> PENDING_CHECKIN + applyPendingCheckins()  (never downgrades)
+      Keep BOTH applied in renderAll() whenever you touch the render.
+   6. A check-in must never be lost: a failed save is QUEUED (ckEnqueue) and
+      retried by ckFlush() on every poll/focus/reconnect; saveTour() returns ok
+      only after the server (ledger) write confirms.
+
+   WHERE THINGS LIVE (search the section markers below):
+     CONFIG          PORTAL_URL, PORTAL_VERSION, checkForUpdate
+     API             api() — fetch-first with JSONP fallback + timeouts
+     STATE/HELPERS   store (localStorage), esc/cssq, setFresh, the PENDING_* holds
+     LOGIN           doLogin
+     TABS            switchTab / restoreTab (remembered tab)
+     LOAD            showDash, loadTours, startAutoRefresh (the poll), onLoadFailed,
+                     applyPendingAssigns/applyPendingCheckins, renderAll
+     TOUR CARDS      renderTours, tourCard, assignSelect, bindTours (every button
+                     handler: check-in, assign, move, note, close)
+     BOOT            if(store.token) showDash()
+
+   DAMAGE CONTROL (symptom -> where to look):
+     nothing loads / no "Updating"      -> a throw in showDash before loadTours (rule 2)
+     click check-in, no reaction        -> a throw in bindTours before the .ckin
+                                           binding (rules 1/3); check the browser
+                                           console for "Unterminated string in JSON"
+     change flips back on 1st refresh   -> a PENDING_* hold is missing or its key
+                                           doesn't match the server shift (rule 5)
+     stuck on an old build              -> PORTAL_VERSION not bumped, or edge cache
+                                           (hard-reload / incognito) (rule 4)
+     server slow / loads time out       -> owner-serialized Apps Script contention;
+                                           the poll backs off via pollHint. Not a bug
+                                           in THIS file — see the control project.
+   ============================================================================ */
+
+/* ================== CONFIG ================== */
+const PORTAL_URL = "https://script.google.com/macros/s/AKfycbyBAQzL_elHr6NNbQII4vPAhKmid8v4haXXJKtXbnqyfxvkY5svoKnq2hNj2EOO6sR7MA/exec";
+/* Bump this string on every portal deploy. It is shown at the bottom of the
+   page AND used to auto-reload the phone when a newer build is live, so a fix
+   can never be stuck behind a stale cached page again. */
+const PORTAL_VERSION = "2026-10-24-near-tour-poll";
+
+/* Fetch our own page fresh (bypassing cache) and, if a newer version is
+   deployed, reload once so the phone is always on the latest build. */
+async function checkForUpdate(){
+  try{
+    const res = await fetch(location.pathname + "?_v=" + Date.now(), { cache: "no-store" });
+    const txt = await res.text();
+    const m = txt.match(/PORTAL_VERSION\s*=\s*"([^"]+)"/);
+    if(m && m[1] && m[1] !== PORTAL_VERSION){
+      // Never hard-reload out from under someone mid-action — a half-typed new
+      // tour, an open form, or an in-flight write. It reloads on the next check.
+      if(MUTATING>0 || document.querySelector("details.openform[open]") || Date.now()-LAST_EDIT<8000) return;
+      location.reload();
+    }
+  }catch(e){ /* offline / transient — try again next time */ }
+}
+
+/* ================== API (fetch first, JSONP fallback) ==================
+   fetch gives REAL error information (HTTP status, login redirects), which
+   JSONP cannot. If fetch itself is blocked (old browser, extension), we fall
+   back to the classic JSONP script tag. */
+console.log("R&R guide portal front-end v3");
+function buildUrl(action, params){
+  // _ = cache-buster: forces a fresh response so the portal never shows a
+  // browser-cached copy of the BookingSheet/schedule data.
+  const q = Object.assign({action, _: Date.now()}, params||{});
+  return PORTAL_URL + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
+}
+function mkErr(kind,msg){ const e=new Error(msg); e.kind=kind; return e; }
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+/* One quiet retry on any NON-auth failure. A freshly-created deployment can 404
+   for a minute while Google propagates it, and requests occasionally drop. Every
+   portal call either reads, or sets a target state (move / assign / check-in),
+   so re-sending is safe and can never double-apply. Auth errors are real config
+   problems, so those are surfaced immediately, not retried. */
+async function api(action, params){
+  try{ return await apiCall(action, params); }
+  catch(err){
+    // Retry ONCE for a genuine transient drop (a freshly-created deployment 404s
+    // for a minute; a request occasionally drops). Do NOT retry an auth error (a
+    // real config problem) or a TIMEOUT: a timeout means the server is overloaded,
+    // and an immediate retry just piles another heavy execution onto it. The next
+    // scheduled poll retries instead, giving the server room to drain.
+    if(err && (err.kind==="auth" || err.kind==="timeout")) throw err;
+    await sleep(1000);
+    return await apiCall(action, params);
+  }
+}
+async function apiCall(action, params){
+  const url = buildUrl(action, params);
+  let timedOut = false;
+  try{
+    // Abort a hung request after 60s. NOT 30s: a load can legitimately take ~35s
+    // when the owner-serialized server is CPU-throttled under load, and aborting
+    // early didn't stop that server execution — it just made the client re-hit an
+    // already-overloaded server (see the timeout handling below). 60s lets a
+    // slow-but-alive load finish on the FIRST try instead of multiplying the load.
+    const ctrl = (typeof AbortController!=="undefined") ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(()=>{ timedOut=true; ctrl.abort(); }, 60000) : null;
+    let res, text;
+    try{
+      res = await fetch(url, {method:"GET", redirect:"follow", cache:"no-store", signal: ctrl?ctrl.signal:undefined});
+      text = await res.text();
+    } finally { if(timer) clearTimeout(timer); }
+    try{ return JSON.parse(text); }
+    catch(_){
+      if(/accounts\.google\.com/.test(res.url||"") || /ServiceLogin|Sign in - Google/i.test(text))
+        throw mkErr("auth","The portal deployment is asking for a Google sign-in. A manager must set the web app's \"Who has access\" to Anyone and deploy a new version.");
+      throw mkErr("badresp","The server answered, but not with portal data (HTTP "+res.status+"). The portal URL may point to a wrong or archived deployment.");
+    }
+  }catch(err){
+    if(err && (err.kind==="auth"||err.kind==="badresp")) throw err;
+    // A TIMEOUT means the server is alive but slow (overloaded). Do NOT fall back
+    // to a JSONP attempt — that spawns a SECOND server execution (which keeps
+    // running even though the client gave up on the first), making the overload
+    // worse. Surface it as a timeout; the next poll retries once the server drains.
+    if(timedOut || (err && (err.name==="AbortError" || err.kind==="timeout")))
+      throw mkErr("timeout","TIMEOUT");
+    // A genuine fetch/network/CORS failure (not a timeout): some environments block
+    // cross-origin fetch, so fall back to JSONP once.
+    try{ return await apiJsonp(action, params); }
+    catch(err2){ throw err2; }
+  }
+}
+function apiJsonp(action, params){
+  return new Promise((resolve,reject)=>{
+    const cb = "cb_"+Math.random().toString(36).slice(2);
+    const url = buildUrl(action, Object.assign({callback:cb}, params||{}));
+    const s = document.createElement("script");
+    let done=false;
+    window[cb]=(data)=>{ done=true; cleanup(); resolve(data); };
+    function cleanup(){ delete window[cb]; s.remove(); }
+    s.onerror=()=>{ if(!done){cleanup(); reject(mkErr("network","NETWORK"));} };
+    s.src=url; document.body.appendChild(s);
+    setTimeout(()=>{ if(!done){cleanup(); reject(mkErr("timeout","TIMEOUT"));} }, 60000);   // match the fetch timeout — don't declare a slow-but-alive server dead early
+  });
+}
+function serverTestLink(){
+  return '<br><a class="testlink" target="_blank" rel="noopener" href="'+buildUrl("health",{})+'">Test server connection</a>';
+}
+
+/* Read a time a manager typed for a tour move. Accepts "4:30 PM", "16:30",
+   "4pm", "4:30", "16". A bare afternoon hour (1–7, no am/pm) is read as PM,
+   because tours run in the daytime — "4:30" means 16:30, not 04:30. Returns
+   {t24:"H:MM", label:"4:30 PM"} in unambiguous 24h for the server, or null. */
+function parseTypedTime(raw){
+  const s=String(raw||"").trim(); let h, mm, m;
+  if((m=s.match(/^(\d{1,2}):(\d{2})\s*([ap])m?$/i))){ h=(+m[1])%12; if(/p/i.test(m[3]))h+=12; mm=m[2]; }
+  else if((m=s.match(/^(\d{1,2})\s*([ap])m?$/i))){ h=(+m[1])%12; if(/p/i.test(m[2]))h+=12; mm="00"; }
+  else if((m=s.match(/^(\d{1,2}):(\d{2})$/))){ h=+m[1]; mm=m[2]; if(h>=1&&h<=7)h+=12; }
+  else if((m=s.match(/^(\d{1,2})$/))){ h=+m[1]; mm="00"; if(h>=1&&h<=7)h+=12; }
+  else return null;
+  if(h<0||h>23||(+mm)>59) return null;
+  const h12=((h+11)%12)+1, suf=h>=12?"PM":"AM";
+  return { t24:h+":"+mm, label:h12+":"+mm+" "+suf };
+}
+
+/* ================== STATE / HELPERS ================== */
+/* localStorage (not sessionStorage): survives the phone killing the tab, so
+   guides stay logged in (~30 days, server-enforced) and the last tour list
+   renders instantly while fresh data loads. */
+const store = {
+  get token(){ return localStorage.getItem("rr_token"); },
+  set token(v){ v?localStorage.setItem("rr_token",v):localStorage.removeItem("rr_token"); },
+  get name(){ return localStorage.getItem("rr_name")||""; },
+  set name(v){ localStorage.setItem("rr_name",v||""); },
+  get cache(){ try{ return JSON.parse(localStorage.getItem("rr_tours")||"null"); }catch(e){ return null; } },
+  set cache(v){ try{ v?localStorage.setItem("rr_tours",JSON.stringify(v)):localStorage.removeItem("rr_tours"); }catch(e){} },
+  // Which tab the user was last on ("tours" = My tours, "sched" = All tours /
+  // All guides). Persisted so a reload keeps you where you were — a manager lives
+  // in All tours and shouldn't be bounced back to My tours on every refresh.
+  get tab(){ return localStorage.getItem("rr_tab")||""; },
+  set tab(v){ try{ localStorage.setItem("rr_tab", v||""); }catch(e){} }
+};
+let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={}, GUIDE_TOUR_TYPES={};
+// HISTORY view (manager-only): the last 2 days of tours, rendered read-only except
+// for the no-show + undo-check-in controls. HISTORY_RENDER is true only while the
+// history cards' HTML is being built, so the shared card helpers drop the editing
+// UI (assign/move/close/new check-in). Its own cache + binding keep it isolated
+// from the live poll, which pauses while the overlay is open.
+let HISTORY_RENDER=false, HISTORY_OPEN=false, HISTORY_CACHE=[];
+// The month being viewed ("" = current) and whether it can be edited. Only the current
+// month is editable (no-show / undo mutate the live ledger); a past month is read-only.
+let HISTORY_MONTH="", HISTORY_EDITABLE=true;
+// Which History cards are expanded (by tour id). Default is CLOSED so the list stays
+// scannable (a manager can have dozens of past tours); tapping a card opens it and the
+// choice survives a history refresh. Cleared when the overlay is closed.
+let HISTORY_OPEN_CARDS=new Set();
+// Which tour cards are EXPANDED, by tour id — so an auto-refresh (poll) never
+// collapses a card the manager is watching. Backed by localStorage so a
+// version-reload keeps it open too; self-prunes to cards still on screen.
+let OPEN_CARDS=(function(){ try{ return new Set(JSON.parse(localStorage.getItem("rr_open")||"[]")); }catch(e){ return new Set(); } })();
+function saveOpenCards(){ try{ localStorage.setItem("rr_open", JSON.stringify([...OPEN_CARDS])); }catch(e){} }
+let HAS_MORE=false, WINDOW_DAYS=3, MANAGER_DAYS=0; const MORE_DAYS=3;   // default load window (both roles); "Load 3 more days"
+let LAST_FRESH="";                                                       // last successful refresh time
+let LOAD_FAILS=0;                        // consecutive failed loads — gates the "can't reach" banner
+let RETRY_TIMER=null;                    // pending soft auto-retry after a miss
+const PAGE_T0=Date.now();                // when this page opened (client-perceived timing)
+let LOAD_START=0, LOAD_NAV="initial";    // current load's start time + what triggered it
+/* Tell the server analytics what a load ACTUALLY did on the phone: completed
+   (ok), timed out, errored, or was cut short by an early reload (abort). This is
+   how the timing report can separate a genuinely slow load from one the owner
+   reloaded before it finished. keepalive so it still sends during page-unload.
+   Only fires on the initial load, failures, and aborts — never routine polls. */
+function beacon(ev, ms, nav){
+  try{
+    const u = buildUrl("clientlog", {ev:ev, ms:Math.max(0,Math.round(ms||0)), nav:nav||"", days:MANAGER_DAYS||0});
+    if(window.fetch){ fetch(u,{method:"GET",keepalive:true,cache:"no-store"}).catch(()=>{}); }
+    else { new Image().src=u; }
+  }catch(e){}
+}
+function setFresh(state,t){
+  const el=$("fresh"); if(!el) return;
+  if(state==="loading"){ el.className="fresh loading"; el.textContent=LAST_FRESH?("Updating… (was "+LAST_FRESH+")"):"Updating…"; return; }
+  if(state==="ok"){ if(t) LAST_FRESH=t; el.className="fresh"; el.textContent="Up to date · "+(LAST_FRESH||""); return; }
+  el.className="fresh stale"; el.textContent=LAST_FRESH?("Can't refresh — showing "+LAST_FRESH):"Can't reach the server";
+}
+const POSTIT='<svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 3h16v12l-5 5H4z" fill="#fde047" stroke="#ca8a04" stroke-width="1.2"/><path d="M15 20v-5h5z" fill="#facc15" stroke="#ca8a04" stroke-width="1.2"/></svg>';
+
+const LANG={
+  English:{c:"EN",col:"#2563eb",f:"🇬🇧"}, Spanish:{c:"ES",col:"#dc2626",f:"🇪🇸"},
+  German:{c:"DE",col:"#111827",f:"🇩🇪"},  French:{c:"FR",col:"#7c3aed",f:"🇫🇷"},
+  Italian:{c:"IT",col:"#16a34a",f:"🇮🇹"}, Portuguese:{c:"PT",col:"#0891b2",f:"🇵🇹"},
+  Dutch:{c:"NL",col:"#ea580c",f:"🇳🇱"},   Catalan:{c:"CA",col:"#d97706",f:"🇦🇩"}
+};
+function langMeta(l){
+  if(LANG[l]) return LANG[l];
+  const c=String(l||"?").replace(/[^A-Za-z]/g,"").slice(0,2).toUpperCase()||"?";
+  const cols=["#2563eb","#dc2626","#16a34a","#d97706","#7c3aed","#0891b2","#111827","#ea580c"];
+  let h=0; for(const ch of String(l)) h=(h*31+ch.charCodeAt(0))>>>0;
+  return {c, col:cols[h%cols.length]};
+}
+// Show the country flag emoji inside the language's colour chip. On platforms
+// that don't render flag emoji (e.g. Windows) it falls back to the 2-letter
+// code, and the distinct colour still tells the languages apart.
+/* Real inline-SVG flags render on every device (Windows browsers show flag
+   emoji as "GB/FR/DE" letters, which is why they looked gone). Unknown
+   languages fall back to the coloured 2-letter badge. */
+const FLAGSVG={
+  English:'<svg viewBox="0 0 60 30" preserveAspectRatio="none"><rect width="60" height="30" fill="#012169"/><path d="M0,0 60,30 M60,0 0,30" stroke="#fff" stroke-width="6"/><path d="M0,0 60,30 M60,0 0,30" stroke="#C8102E" stroke-width="4"/><rect x="25" width="10" height="30" fill="#fff"/><rect y="10" width="60" height="10" fill="#fff"/><rect x="27" width="6" height="30" fill="#C8102E"/><rect y="12" width="60" height="6" fill="#C8102E"/></svg>',
+  German:'<svg viewBox="0 0 5 3" preserveAspectRatio="none"><rect width="5" height="3" fill="#FFCE00"/><rect width="5" height="2" fill="#D00"/><rect width="5" height="1" fill="#000"/></svg>',
+  Spanish:'<svg viewBox="0 0 3 2" preserveAspectRatio="none"><rect width="3" height="2" fill="#AA151B"/><rect y="0.5" width="3" height="1" fill="#F1BF00"/></svg>',
+  Italian:'<svg viewBox="0 0 3 2" preserveAspectRatio="none"><rect width="3" height="2" fill="#fff"/><rect width="1" height="2" fill="#009246"/><rect x="2" width="1" height="2" fill="#CE2B37"/></svg>',
+  French:'<svg viewBox="0 0 3 2" preserveAspectRatio="none"><rect width="3" height="2" fill="#fff"/><rect width="1" height="2" fill="#0055A4"/><rect x="2" width="1" height="2" fill="#EF4135"/></svg>'
+};
+/* Colour circle per language with a little flag in the middle (falls back to
+   the 2-letter code for a language without a flag SVG). */
+function flagImg(lang){ const m=langMeta(lang); const s=FLAGSVG[lang]; return '<span class="lbadge" style="background:'+m.col+'" title="'+esc(lang)+'">'+(s?'<span class="flagmini">'+s+'</span>':m.c)+'</span>'; }
+function initials(n){ const p=String(n||"").trim().split(/\s+/); return (((p[0]||"")[0]||"")+((p[1]||"")[0]||"")).toUpperCase()||"?"; }
+const WA_ICON='<svg viewBox="0 0 24 24" width="22" height="22" fill="#25d366" aria-label="WhatsApp"><path d="M.057 24l1.687-6.163a11.867 11.867 0 01-1.587-5.945C.16 5.335 5.495 0 12.05 0a11.82 11.82 0 018.413 3.488 11.82 11.82 0 013.48 8.413c-.003 6.557-5.338 11.892-11.893 11.892a11.9 11.9 0 01-5.688-1.448L.057 24zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884a9.86 9.86 0 001.51 5.26l-.999 3.648 3.678-.985zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/></svg>';
+const $ = id => document.getElementById(id);
+const digits = p => String(p||"").replace(/[^\d]/g,"");
+// Escapes & < > " AND the single quote '. The single quote MATTERS: several data-*
+// attributes hold esc(JSON.stringify(info)) inside SINGLE quotes (e.g. data-mv, which
+// carries the guest name). A name with an apostrophe (O'Brien, D'Angelo) used to break
+// that attribute, so JSON.parse threw in bindTours and every handler after it — including
+// CHECK-IN — silently failed to bind for the manager. &#39; is valid in text and attributes.
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// DISPLAY ONLY: GYG-SF / Viator-SF are internal routing/ledger tags for the SF
+// tour. On the card we show the platform the guest booked through. The booking's
+// real source (b.source) is unchanged and is what gets sent back on check-in, so
+// the ledger still pays the SF rate.
+const srcLabel = s => s==="GYG-SF" ? "GetYourGuide" : (s==="Viator-SF" ? "Viator" : s);
+const cssq = s => String(s).replace(/"/g,'\\"');
+const MONTHS=["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+const DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+function parseKey(dk){ return new Date(dk+"T12:00:00"); }
+function dayTitle(dk){ const d=parseKey(dk); return DAYS[d.getDay()]+" "+d.getDate(); }
+function monthTitle(dk){ const d=parseKey(dk); return MONTHS[d.getMonth()]+" "+d.getFullYear(); }
+function relBadge(dk){
+  const t=new Date(); const today=t.toISOString().slice(0,10);
+  const tom=new Date(t.getTime()+864e5).toISOString().slice(0,10);
+  if(dk===today) return '<span class="badge today">TODAY</span>';
+  if(dk===tom)   return '<span class="badge tom">TOMORROW</span>';
+  return '';
+}
+function to12(t){ const m=String(t).match(/^(\d{1,2}):(\d{2})$/); if(!m) return t; let h=+m[1]; const s=h>=12?'PM':'AM'; h=((h+11)%12)+1; return h+':'+m[2]+' '+s; }
+
+/* ================== LOGIN ================== */
+$("loginBtn").onclick = doLogin;
+$("password").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
+// Send credentials in the POST BODY, not the URL query string (so the password
+// never lands in a request URL / server log). Falls back to the GET api() if a
+// POST response can't be read, so login can never break.
+async function loginRequest_(email, password){
+  try{
+    const body=new URLSearchParams({action:"login", _:Date.now(), email:email, password:password});
+    const res=await fetch(PORTAL_URL, {method:"POST", body:body, redirect:"follow", cache:"no-store"});
+    return JSON.parse(await res.text());
+  }catch(e){
+    return await api("login", {email:email, password:password});
+  }
+}
+async function doLogin(){
+  const email=$("email").value.trim(), password=$("password").value;
+  if(!email||!password){ $("loginErr").textContent="Enter email and password."; return; }
+  $("loginBtn").disabled=true; $("loginErr").textContent="";
+  try{
+    const r=await loginRequest_(email,password);
+    if(!r.ok){ $("loginErr").textContent=r.error||"Login failed"; $("loginBtn").disabled=false; return; }
+    store.token=r.token; store.name=r.guide.name; showDash();
+  }catch(err){
+    const msg = err&&err.kind==="network" ? "Can't reach the server — check your internet connection."
+      : err&&err.kind==="timeout" ? "Server took too long — try again."
+      : err.message;
+    $("loginErr").innerHTML = esc(msg) + serverTestLink();
+    $("loginBtn").disabled=false;
+  }
+}
+$("logoutBtn").onclick=()=>{ store.token=""; location.reload(); };
+$("historyBtn").onclick=()=>{ openHistory(); };
+$("histCloseBtn").onclick=()=>{ closeHistory(); };
+// Pick a month -> reload history for it (keeps the overlay open).
+$("histMonth").onchange=(e)=>{ HISTORY_MONTH=e.target.value||""; HISTORY_OPEN_CARDS.clear(); historyRefresh(); };
+
+/* ================== TABS ================== */
+$("tabTours").onclick=()=>switchTab("tours");
+$("tabSched").onclick=()=>switchTab("sched");
+$("tabSf").onclick=()=>switchTab("sf");
+function switchTab(t, remember){
+  const want = (t==="sched"||t==="sf") ? t : "tours";
+  // Remember the REAL choice (even "sf") across reloads. restoreTab passes
+  // remember=false so it never OVERWRITES the stored tab while re-applying it —
+  // the SF tab is still hidden before the first manager render, and clobbering it
+  // there is exactly what lost the SF tab on reload.
+  if(remember!==false) store.tab = want;
+  // Visual tab: "sf" only exists for managers (its button is hidden otherwise), so
+  // show the schedule tab instead when SF isn't available — WITHOUT forgetting it.
+  let v = (want==="sf" && $("tabSf").classList.contains("hidden")) ? "sched" : want;
+  $("tabTours").classList.toggle("active",v==="tours");
+  $("tabSched").classList.toggle("active",v==="sched");
+  $("tabSf").classList.toggle("active",v==="sf");
+  $("toursPane").classList.toggle("hidden",v!=="tours");
+  $("schedPane").classList.toggle("hidden",v!=="sched");
+  $("sfPane").classList.toggle("hidden",v!=="sf");
+}
+/* Put the user back on the tab they last used. Called after each render so a
+   background refresh never yanks a manager out of All tours. */
+function restoreTab(){ switchTab(store.tab || "tours", false); }   // re-apply WITHOUT clobbering the remembered tab
+
+/* ================== LOAD ================== */
+function showDash(){
+  $("loginView").classList.add("hidden"); $("dashView").classList.remove("hidden");
+  $("who").textContent=store.name;
+  const v=$("ver"); if(v) v.textContent="Portal "+PORTAL_VERSION;
+  // Activate the remembered tab BEFORE first paint so a reload doesn't flash
+  // "My tours" over the tab (e.g. All tours) you were on. WRAPPED in try/catch so
+  // that — no matter what — it can NEVER abort the load below. renderAll() calls
+  // restoreTab() again after every render, so this is purely a head-start.
+  try{ restoreTab(); }catch(e){}
+  const c=store.cache;
+  if(c){ renderAll(c); }                 // instant render from the last load
+  ckFlush(); asgFlush();                  // push any check-ins / assignments queued last time
+  loadTours("initial");                   // then refresh from the server
+  startAutoRefresh();
+  checkForUpdate();                       // jump to the newest build if one is live
+}
+
+/* Keep the portal in sync with the BookingSheet without a manual reload. Polls
+   the server, but never while the user is mid-edit (recent interaction or a
+   focused control), so unsaved check-ins are never clobbered. Also refreshes
+   the moment the tab regains focus. */
+let LAST_EDIT = 0;
+// Only ACTUAL edit controls suppress the refresh — not merely tapping to expand
+// a card. So a manager watching the list keeps polling and sees another guide's
+// check-ins within seconds, while someone mid-edit is still protected.
+// Any touch/type/change on an edit control (a note, the move dropdowns, or the
+// "Open a schedule" form) marks the user as mid-edit so the poll holds off.
+const EDIT_SEL = ".ckin,.js-inc,.js-dec,.asgsel,.mvsel,.mv-lang,.mv-time,.mv-date,.mv-go,.bmovebtn,.bnoteta,.bnotesave,.of-open,.of-date,.of-time,.of-lang,.of-guide,.openform,.noshowbtn,.noshowundo";
+document.addEventListener("input",  e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
+document.addEventListener("change", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
+document.addEventListener("pointerdown", e=>{ if(e.target.closest && e.target.closest(EDIT_SEL)) LAST_EDIT=Date.now(); }, true);
+let MUTATING = 0;   // >0 while a write (assign/save/move/…) is in flight
+function canAutoRefresh(){
+  if(!store.token || document.hidden) return false;
+  if(HISTORY_OPEN) return false;                          // the History overlay is open — don't churn under it
+  if(MUTATING > 0) return false;                          // never poll mid-write
+  // Never re-render while the "Open a schedule" form is open — a poll would wipe
+  // the half-filled new tour before it can be submitted.
+  if(document.querySelector("details.openform[open]")) return false;
+  if(Date.now()-LAST_EDIT < 8000) return false;           // just used a control
+  const a=document.activeElement;
+  if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName||"") && a.closest && a.closest("#toursPane,#schedPane,#sfPane")) return false; // typing/choosing in a field
+  return true;
+}
+function startAutoRefresh(){
+  if(window._rrPollTimer || window._rrVerCheck) return;
+  // ADAPTIVE poll. Base 30s, but the SERVER tells us how often to poll via
+  // r.pollHint (30/60/120s) when it detects an execution queue forming — every
+  // request runs as the owner and Google serializes them, so N guides polling is
+  // what builds the queue. Backing the passive refresh off when it's busy drains
+  // the queue automatically, then it speeds back up. A co-guide's change still
+  // shows within one interval, and the person who MADE a change sees it instantly
+  // (optimistic overlay + post-action reconcile), so the actor loses no freshness.
+  // Self-rescheduling timeout (not setInterval) so the interval can change live;
+  // the inflight guard still drops any poll that would overlap a running load.
+  function scheduleNextPoll(){
+    if(window._rrPollTimer) clearTimeout(window._rrPollTimer);
+    window._rrPollTimer = setTimeout(()=>{ ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("poll"); scheduleNextPoll(); }, pollDelayMs());
+  }
+  scheduleNextPoll();
+  window._rrReschedulePoll = scheduleNextPoll;   // loadTours calls this when pollHint changes
+  // Check for a newer deployed build every 2 min and when the tab regains focus.
+  window._rrVerCheck = setInterval(checkForUpdate, 120000);
+  document.addEventListener("visibilitychange", ()=>{ if(document.hidden){ flushStepperSavesNow(); } else { checkForUpdate(); ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("focus"); } });
+  window.addEventListener("focus", ()=>{ checkForUpdate(); ckFlush(); asgFlush(); if(canAutoRefresh()) loadTours("focus"); });
+  window.addEventListener("online", ()=>{ ckFlush(); asgFlush(); });   // signal came back -> push queued check-ins + assignments
+  // Reloaded/closed the page mid-load? Tell the analytics it was cut short (not a
+  // slow server) — this is the "sometimes I reload before it finishes" case. Also push
+  // any staged count edit immediately (it's already queued, so a hard reload can't lose it).
+  window.addEventListener("pagehide", ()=>{ flushStepperSavesNow(); if(LOADING) beacon("abort", Date.now()-LOAD_START, LOAD_NAV); });
+}
+// A monotonic id per load. Only the NEWEST request may render — a slow, stale
+// response (e.g. an auto-refresh that read the grid before a manager's assign)
+// can never land late and revert the screen. This is what made assignments
+// look like they "didn't stick, then kicked in later".
+let LOAD_SEQ = 0;
+let LOADING = false;   // one tours request at a time — never let polls pile up
+let POLL_MS = 30000;   // passive-refresh interval; the server adjusts it via r.pollHint under load
+// Around a tour's START, last-minute sign-ups are still landing on the BookingSheet,
+// so refresh FASTER — a guide should see everyone who signed up right as the tour
+// begins. From NEAR_BEFORE_MIN before to NEAR_AFTER_MIN after ANY shown tour's start
+// we poll every NEAR_POLL_MS instead of the normal/adaptive POLL_MS. The window is
+// narrow and only the few guides running that tour are in it, so the extra load is
+// small; the rest of the day keeps the usual (quieter) cadence. Still gated by
+// canAutoRefresh(), so it never clobbers a card a guide is mid-check-in on.
+const NEAR_POLL_MS = 15000, NEAR_BEFORE_MIN = 15, NEAR_AFTER_MIN = 10;
+function nearTourNow(){
+  const now = Date.now(), list = (typeof TOURS_CACHE!=="undefined" && TOURS_CACHE) || [];
+  for(const t of list){
+    const tm = String((t&&t.time)||"").match(/^(\d{1,2}):(\d{2})/);
+    if(!t || !t.dateKey || !tm) continue;
+    const start = new Date(t.dateKey+"T"+String(tm[1]).padStart(2,"0")+":"+tm[2]+":00").getTime();
+    if(!isNaN(start) && now >= start - NEAR_BEFORE_MIN*60000 && now <= start + NEAR_AFTER_MIN*60000) return true;
+  }
+  return false;
+}
+function pollDelayMs(){ return nearTourNow() ? Math.min(POLL_MS, NEAR_POLL_MS) : POLL_MS; }
+async function loadTours(nav){
+  // A tours load can take several seconds. The 20s poll (and focus/visibility
+  // events) must NOT start a second one while the first is still running, or
+  // requests stack up, serialize on the server, and each gets slower — which is
+  // exactly what turned ~8s loads into 60-120s ones. Skip if one is in flight.
+  if(LOADING) return;
+  if(RETRY_TIMER){ clearTimeout(RETRY_TIMER); RETRY_TIMER=null; }
+  LOADING = true; LOAD_NAV = nav||"poll"; LOAD_START = Date.now();
+  setFresh("loading");
+  const seq = ++LOAD_SEQ;
+  if(!store.cache) $("toursPane").innerHTML='<div class="spin">Loading…</div>';
+  const params={token:store.token}; if(MANAGER_DAYS>0) params.days=MANAGER_DAYS;
+  let r; try{ r=await api("tours",params); }
+  catch(err){ LOADING=false; if(seq!==LOAD_SEQ) return; onLoadFailed(err); return; }
+  LOADING = false;
+  if(seq!==LOAD_SEQ) return;                 // a newer load has superseded this one
+  if(!r.ok){ if(/expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
+    onLoadFailed(mkErr("server", r.error||"Server error")); return; }
+  const took = Date.now()-LOAD_START;
+  // Report first-paint time and any recovery-after-failure, so the analytics can
+  // see real completed-load times (vs the aborts/timeouts reported below).
+  if(LOAD_FAILS>0 || LOAD_NAV==="initial") beacon("ok", took, LOAD_NAV);
+  LOAD_FAILS=0;
+  // ADAPTIVE BACKPRESSURE: adopt the poll interval the server asked for. When it
+  // detects a queue forming it raises pollHint (60/120s); we back off, which drains
+  // the queue, and it drops back to 30s. Clamped so a bad value can't wedge us.
+  if(r.pollHint){
+    const next=Math.max(20000, Math.min(180000, Number(r.pollHint)*1000));
+    if(next!==POLL_MS){ POLL_MS=next; if(window._rrReschedulePoll) window._rrReschedulePoll(); }
+  }
+  // The freshness line stays PLAIN ("Up to date / Updating… / Can't refresh").
+  // Backpressure still works silently (pollHint widens the poll under load, just
+  // above); no load-level note is ever appended to the line (the owner asked to
+  // keep it plain).
+  setFresh("ok", r.now);
+  store.cache=r;
+  renderAll(r);
+}
+/* One miss shouldn't slap "Can't reach the server" over good data — a mobile
+   blip or a single slow response is normal. Keep the last list, retry quietly in
+   a few seconds, and only show the banner after TWO misses in a row. Every miss
+   is reported so the timing report separates true outages from an early reload. */
+function onLoadFailed(err){
+  LOAD_FAILS++;
+  beacon(err && err.kind==="timeout" ? "timeout" : "error", Date.now()-LOAD_START, LOAD_NAV);
+  // A quiet 3s fast-retry is right for a one-off blip (network drop), but WRONG for
+  // a timeout: the server is overloaded, so re-hitting it in 3s makes it worse. On a
+  // timeout we keep the last good view ("stale") and simply wait for the next
+  // scheduled poll, which gives the server room to drain. Fast-retry non-timeouts.
+  if(LOAD_FAILS < 2 && !(err && err.kind==="timeout")){
+    setFresh("loading");                      // still "Updating…" — we're quietly retrying
+    if(RETRY_TIMER) clearTimeout(RETRY_TIMER);
+    RETRY_TIMER=setTimeout(()=>{ RETRY_TIMER=null; loadTours("retry"); }, 3000);
+    return;
+  }
+  setFresh("stale");                          // now it's a real problem — say so
+  if(!store.cache){ showLoadError(err); return; }  // nothing cached -> replace the screen
+  // We DO have a good cached view. Restore it so the UI isn't stuck — a "Load
+  // more" that failed on a slow phone otherwise left its button frozen on
+  // "Loading…". If this was a "Load more" (a wider window than the cached one),
+  // fall back to the cached window so we stop retrying a too-heavy request; the
+  // button reverts to tappable and the user can try again.
+  const cachedWin = Number(store.cache.windowDays)||0;
+  if(cachedWin>0 && MANAGER_DAYS>cachedWin) MANAGER_DAYS = cachedWin;
+  renderAll(store.cache);
+}
+/* ---- Pending assignments: the real fix for the "reverts to Albert" bug ----
+   After you assign Carlos, Google's Sheets backend may still serve the very
+   next read from a replica that hasn't caught up, returning the OLD guide. So
+   we remember what you just set and force EVERY render to show it until the
+   server actually agrees (or a timeout passes). A stale read can no longer
+   revert the screen. */
+const PENDING_TTL = 90000;               // hold the optimistic value up to 90s
+/* Persisted in localStorage so it SURVIVES A FULL PAGE RELOAD — reloading right
+   after assigning used to wipe the in-memory overlay and let a stale read revert
+   the screen. Now the pending value is reloaded on boot and keeps holding. */
+function loadPending(){ try{ const p=JSON.parse(localStorage.getItem("rr_pending")||"{}"); const n=Date.now();
+  Object.keys(p).forEach(k=>{ if(!p[k]||p[k].until<n) delete p[k]; }); return p; }catch(e){ return {}; } }
+function savePending(){ try{ localStorage.setItem("rr_pending", JSON.stringify(PENDING_ASSIGN)); }catch(e){} }
+let PENDING_ASSIGN = loadPending();      // shiftKey -> { guide, until }
+function shiftIdKey(o){
+  const isPriv=(o.isPrivate==1||o.isPrivate===true||o.isPrivate==="1");
+  return o.dateKey+"|"+String(o.time)+"|"+o.language+"|"+(isPriv?("P"+(o.privIndex||1)):"R");
+}
+function setPendingAssign(info, guide){
+  PENDING_ASSIGN[shiftIdKey(info)] = { guide: guide||"", until: Date.now()+PENDING_TTL };
+  savePending();
+}
+/* The SAME hold for CHECK-INS. Until now only OFFLINE-queued check-ins were masked
+   on refresh; a SUCCESSFUL check-in had nothing holding it, so the first read after
+   it — if it hit a lagging Sheets replica — flipped the guest back to "Check in"
+   (the double-refresh). Persisted + held for the settle window, exactly like a
+   pending assign. Keyed by bookingId|dateKey. */
+function loadPendingCk(){ try{ const p=JSON.parse(localStorage.getItem("rr_pendck")||"{}"); const n=Date.now();
+  Object.keys(p).forEach(k=>{ if(!p[k]||p[k].until<n) delete p[k]; }); return p; }catch(e){ return {}; } }
+function savePendingCk(){ try{ localStorage.setItem("rr_pendck", JSON.stringify(PENDING_CHECKIN)); }catch(e){} }
+let PENDING_CHECKIN = loadPendingCk();
+function setPendingCheckin(bookingId, dateKey, n){ if(!bookingId) return;
+  PENDING_CHECKIN[bookingId+"|"+dateKey] = { n: Math.max(0, +n||0), until: Date.now()+PENDING_TTL }; savePendingCk(); }
+/* Overlay pending assignments onto a tours payload, in place. Holds the value
+   you just set for the whole settle window, then lets the server value through. */
+function applyPendingAssigns(r){
+  const now=Date.now();
+  Object.keys(PENDING_ASSIGN).forEach(k=>{ if(PENDING_ASSIGN[k].until<now) delete PENDING_ASSIGN[k]; });
+  if(!Object.keys(PENDING_ASSIGN).length) return;
+  const overlay=s=>{
+    const p=PENDING_ASSIGN[shiftIdKey(s)]; if(!p) return;
+    // Impose the just-assigned value for the WHOLE window, regardless of what any
+    // single read says. Google's sheet replicas are inconsistent for a few
+    // seconds after a write, so consecutive reads flip between old and new —
+    // clearing the moment one read "matched" let the next lagging read revert it
+    // (the flip-back). We hold until the pending expires (PENDING_TTL), by which
+    // time every replica has converged on the new value.
+    s.assigned=p.guide?[p.guide]:[]; s.guide=p.guide||"";
+    s.coGuides=p.guide?[p.guide]:[]; s.status=p.guide?"OK":"Not assigned";
+    // The second guide is a separate overlay (no replica lag), so a slot-1 hold must
+    // not hide it: keep it on `assigned` so its chip/dropdown stay put.
+    if(s.secondGuide && !s.assigned.some(a=>a&&a.toLowerCase()===s.secondGuide.toLowerCase())) s.assigned.push(s.secondGuide);
+  };
+  (r.allTours||[]).forEach(overlay);
+  (r.tours||[]).forEach(overlay);
+  (r.schedule||[]).forEach(overlay);
+}
+/* Overlay not-yet-synced check-ins (the offline queue) onto the freshly loaded
+   data, so a queued check-in still shows as done (✓ ⏳) after a reload instead of
+   reverting to "Check in" and making the guide think it was lost. The server
+   merge guarantees the data itself is safe; this keeps the SCREEN honest until
+   the queue drains. */
+function applyPendingCheckins(r){
+  // (1) SUCCESSFUL check-ins / count corrections held through the replica-settle window
+  // — the fix for the check-in half of the double-refresh. A stale read can no longer
+  // flip a just-set value back: it re-checks a just-checked guest, and for a booking the
+  // server still shows checked it holds the EXACT count I set (so a correction DOWN — who
+  // actually came — isn't flipped back up). A manager undo clears the hold (so an un-check
+  // is never fought: on undo PENDING_CHECKIN is dropped for that booking).
+  const now=Date.now();
+  Object.keys(PENDING_CHECKIN).forEach(k=>{ if(PENDING_CHECKIN[k].until<now) delete PENDING_CHECKIN[k]; });
+  if(Object.keys(PENDING_CHECKIN).length){
+    const hold=list=>(list||[]).forEach(s=>(s.bookings||[]).forEach(b=>{
+      const p=PENDING_CHECKIN[(b.bookingId||"")+"|"+(s.dateKey||"")]; if(!p) return;
+      if(!b.checked){ b.checked=true; b.checkedIn=p.n; }   // just-checked, server read not caught up yet
+      else{ b.checkedIn=p.n; }                             // already checked -> hold my exact count (incl. a correction down)
+    }));
+    hold(r.tours); hold(r.allTours);
+  }
+  // (2) OFFLINE-queued (not-yet-saved) check-ins — show ✓ ⏳ until they sync.
+  let q; try{ q=ckQueueLoad(); }catch(e){ return; }
+  if(!q||!q.length) return;
+  const pend={};
+  q.forEach(item=>{ const d=item&&item.data; if(!d||!d.bookings) return;
+    d.bookings.forEach(b=>{ if(b.checked&&b.bookingId) pend[b.bookingId]=Math.max(pend[b.bookingId]||0, +b.checkedIn||0); }); });
+  if(!Object.keys(pend).length) return;
+  const mark=list=>(list||[]).forEach(s=>(s.bookings||[]).forEach(b=>{
+    if(b.bookingId in pend && !b.checked){ b.checked=true; b.checkedIn=pend[b.bookingId]; b.pending=true; }
+  }));
+  mark(r.tours); mark(r.allTours);
+}
+function renderAll(r){
+  applyPendingAssigns(r);                // stale reads can never undo your last action
+  applyPendingCheckins(r);               // a queued (offline) check-in still shows ✓ ⏳ after a reload
+  MANAGER=!!r.manager;
+  const hb=$("historyBtn"); if(hb) hb.classList.remove("hidden");   // History: managers see all tours, guides see their own (read-only)
+  HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||3;
+  GUIDES_BY_LANG=r.guidesByLanguage||{};
+  GUIDE_TOUR_TYPES=r.guideTourTypes||{};
+  const all=r.allTours||[];
+  renderTours(r.tours||[], "toursPane");
+  if(MANAGER){
+    // Managers get three tabs — split the full list by tour type so each stays
+    // short and scannable on a phone (fewer cards, no scrolling past SF to reach 3h).
+    const all3h=all.filter(t=>!t.sfExt), allSf=all.filter(t=>t.sfExt);
+    renderTours(all3h, "schedPane", true); $("tabSched").textContent="3h tours";
+    renderTours(allSf, "sfPane", true);    $("tabSf").textContent="SF tours";
+    $("tabSf").classList.remove("hidden");
+  } else {
+    renderSchedule(r.schedule||[]); $("tabSched").textContent="All guides";
+    $("tabSf").classList.add("hidden");
+  }
+  TOURS_CACHE = MANAGER ? (r.tours||[]).concat(all) : (r.tours||[]);
+  bindTours(TOURS_CACHE);
+  restoreTab();                          // keep the user on their last tab (no jump to My tours)
+}
+
+/* Diagnose a failed load: try the lightweight health endpoint to tell a dead
+   connection apart from a server-side problem, then show a useful message. */
+async function showLoadError(err){
+  let msg, hint;
+  if(err && (err.kind==="auth"||err.kind==="badresp")){
+    msg = err.message;
+    hint = "Tap the test link below: if it shows an error page or a Google sign-in instead of data, the deployment/URL is the problem (manager fix, not your phone).";
+  } else {
+    try{
+      const h = await api("health",{});
+      if(h && h.ok){ msg="The server is up but the tours request failed."; hint="Pull to refresh or tap Retry. If it keeps failing, tell Albert or Carlos."; }
+      else { msg="The tour server reported a problem"+(h&&h.error?": "+h.error:"."); hint="Tell Albert or Carlos — this is a server-side issue, not your phone."; }
+    }catch(e2){
+      msg = err&&err.kind==="timeout" ? "The server took too long to answer." : "Can't reach the tour server.";
+      hint = "Check your internet connection (try opening any website), then tap Retry.";
+    }
+  }
+  $("toursPane").innerHTML='<div class="loaderr"><b>'+esc(msg)+'</b>'+esc(hint)+
+    '<br><button class="retry" onclick="loadTours()">Retry</button>'+serverTestLink()+'</div>';
+}
+
+/* ================== TOUR CARDS ================== */
+function groupByDay(items){
+  const g={}; items.forEach(t=>{ (g[t.dateKey]=g[t.dateKey]||[]).push(t); });
+  return Object.keys(g).sort().map(dk=>({dateKey:dk, items:g[dk]}));
+}
+/* Minutes-since-midnight for a time string, so tours sort NUMERICALLY by time.
+   A string compare put "9:00" AFTER "11:00" (because "9" > "1") — the SF mis-order. */
+function _mins(s){ const m=String(s||"").match(/(\d{1,2}):(\d{2})/); return m?(+m[1]*60 + +m[2]):0; }
+function renderTours(tours, paneId, canAssign){
+  const pane=$(paneId||"toursPane");
+  const seen={}; tours=(tours||[]).filter(t=>{ if(seen[t.id]) return false; seen[t.id]=true; return true; });
+  const isMgrPane = canAssign && (paneId==="schedPane" || paneId==="sfPane");
+  const opener = isMgrPane ? openScheduleForm(paneId==="sfPane") : "";
+  if(!tours.length){ pane.innerHTML=opener+'<div class="empty">'+(isMgrPane?"No upcoming tours.":"No upcoming tours assigned to you.")+'</div>'; bindOpenForm(); return; }
+  let html=opener;
+  groupByDay(tours).forEach(day=>{
+    html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
+    // Within a day, a tour with guests but no guide sorts to the TOP so it can't be
+    // missed; otherwise chronological by start time (_mins, global).
+    if(canAssign) day.items.sort((a,b)=>{ const au=(!(a.assigned&&a.assigned.length)&&a.bookedGuests>0)?0:1, bu=(!(b.assigned&&b.assigned.length)&&b.bookedGuests>0)?0:1; return au-bu || (_mins(a.time)-_mins(b.time)); });
+    // Times already running that day per language — the options for a manager's
+    // "move to another time" dropdown (plus a "New time…" entry, added per row).
+    // ALL times running that day (any language) — so a move can go back to a time
+    // that currently only exists in another language (e.g. 5 PM English) in one
+    // step by also picking the language. "＋ New time…" is added per row.
+    const dayTimes=[];
+    day.items.forEach(t=>{ if(!dayTimes.some(x=>x.time===t.time)) dayTimes.push({time:t.time,timeLabel:t.timeLabel||t.time}); });
+    dayTimes.sort((a,b)=>_mins(a.time)-_mins(b.time));
+    day.items.forEach(t=> html+=tourCard(t, canAssign, dayTimes));
+  });
+  // Both roles load the near window first; "Load more" pulls the next block of
+  // days on demand (a guide's My-tours and the manager's All-tours both stop at
+  // the window, so far-out tours are only built when actually asked for).
+  if(HAS_MORE)
+    html+='<button class="loadmore" id="loadMoreBtn_'+paneId+'">Load '+MORE_DAYS+' more days</button>';
+  pane.innerHTML=html;
+  bindOpenForm();
+  const lm=$("loadMoreBtn_"+paneId);
+  if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
+}
+/* Manager-only: open a brand-new schedule (pick day/date, time, language and,
+   optionally, a guide). Reuses the assign action, which creates the grid slot
+   if it doesn't exist yet. Leaving the guide empty opens an unassigned slot. */
+function openScheduleForm(isSf){
+  const langs=Object.keys(GUIDES_BY_LANG||{});
+  if(!langs.length) langs.push("English","German","Spanish","Italian","French");
+  const langOpts=langs.map(l=>'<option>'+esc(l)+'</option>').join("");
+  return '<details class="openform" data-sf="'+(isSf?"1":"")+'"><summary>➕ Open '+(isSf?"an SF schedule":"a schedule")+'</summary>'+
+    '<div class="ofrow">'+
+      '<label>Date<input type="date" class="of-date"></label>'+
+      '<label>Time<input type="text" class="of-time" placeholder="11:00" value="11:00"></label>'+
+    '</div>'+
+    '<div class="ofrow">'+
+      '<label>Language<select class="of-lang">'+langOpts+'</select></label>'+
+      '<label>Guide<select class="of-guide"><option value="">Not assigned</option></select></label>'+
+    '</div>'+
+    '<div class="ofrow"><button class="of-open">Open schedule</button><span class="of-msg"></span></div>'+
+    '</details>';
+}
+function bindOpenForm(){
+  // Two manager panes (3h + SF) can each carry an "Open a schedule" form, so bind
+  // EVERY one, not just the first in the document. Each form's data-sf tells it
+  // which tour type it opens and which guides it offers.
+  document.querySelectorAll(".openform").forEach(form=>{
+    if(form.dataset.bound) return; form.dataset.bound="1";
+    const isSf=form.dataset.sf==="1";
+    const langSel=form.querySelector(".of-lang"), guideSel=form.querySelector(".of-guide");
+    const fillGuides=()=>{ const gs=guidesForType((GUIDES_BY_LANG||{})[langSel.value]||[], isSf);
+      guideSel.innerHTML='<option value="">Not assigned</option>'+gs.map(n=>'<option>'+esc(n)+'</option>').join(""); };
+    langSel.onchange=fillGuides; fillGuides();
+    form.querySelector(".of-open").onclick=async ()=>{
+      const msg=form.querySelector(".of-msg");
+      const dateKey=form.querySelector(".of-date").value;
+      const time=(form.querySelector(".of-time").value||"").trim();
+      const language=langSel.value, guide=guideSel.value;
+      if(!dateKey||!time){ msg.textContent="Pick a date and time."; return; }
+      const btn=form.querySelector(".of-open"); btn.disabled=true; msg.textContent="Opening…"; LAST_EDIT=Date.now();
+      try{
+        const r=await api("assign",{token:store.token,dateKey:dateKey,time:time,language:language,guide:guide,sfExt:isSf?"1":"",force:"1"});
+        if(!r.ok){ msg.textContent=r.error||"Error"; btn.disabled=false; return; }
+        msg.textContent="Opened ✓"; setTimeout(loadTours,700);
+      }catch(err){ msg.textContent="Network problem"; btn.disabled=false; }
+    };
+  });
+}
+/* Keep only the guides who run this tour type (Guides tab "Tour" column, relayed
+   as guideTourTypes). Blank/unknown defaults to 3h, matching the server. */
+function guidesForType(names, isSf){
+  return (names||[]).filter(n=>{
+    const t=(GUIDE_TOUR_TYPES||{})[n]||{threeH:true,sf:false};
+    return isSf ? !!t.sf : !!t.threeH;
+  });
+}
+/* Manager-only: dropdown of guides who SPEAK the tour's language. Picking one
+   writes it into the Schedule_<Language> grid in bold (= a management lock). */
+function assignSelect(t, slot){
+  // slot 1 = the normal guide (assigned[0]); slot 2 = the full-tour SECOND guide
+  // (t.secondGuide, a portal overlay). A guide can't be picked for BOTH slots.
+  slot = slot||1;
+  // EVERY guide who speaks the language is assignable — the dot is only INFO, never
+  // a block. Server sends guideOptions [{name,status}] where status is:
+  //   free 🟢 (marked available, no clash) · overlap 🟡 (a tour within 5h) ·
+  //   busy 🔴 (a tour at the SAME time) · unavailable ⚪ (did NOT mark availability
+  //   for this slot) · vacation 🌴 (on their blocked/vacation dates). Falls back to
+  //   the plain eligible list if guideOptions is absent.
+  const DOT={free:"🟢",overlap:"🟡",busy:"🔴",unavailable:"⚪",vacation:"🌴"};
+  let opts = (Array.isArray(t.guideOptions)&&t.guideOptions.length)
+    ? t.guideOptions.slice()
+    : (t.eligible||guidesForType(GUIDES_BY_LANG[t.language]||[], t.sfExt)).map(n=>({name:n,status:""}));
+  const g1=(t.assigned&&t.assigned[0])||"", g2=t.secondGuide||"";
+  const cur = slot===2 ? g2 : g1;
+  const other = slot===2 ? g1 : g2;               // already on the other slot -> not offered here
+  if(other) opts=opts.filter(o=>o.name!==other);
+  if(cur && !opts.some(o=>o.name===cur)) opts=[{name:cur,status:""}].concat(opts);
+  const legend="🟢 available · 🟡 overlapping tour (within 5h) · 🔴 already on a tour this time · ⚪ did not mark availability · 🌴 on vacation — you can still pick anyone";
+  let html='<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",slot:slot}))+'\'>';
+  html+='<option value=""'+(cur?'':' selected')+'>Not assigned</option>';
+  opts.forEach(o=>{ const d=DOT[o.status]?DOT[o.status]+" ":""; html+='<option value="'+esc(o.name)+'"'+(o.name===cur?' selected':'')+'>'+d+esc(o.name)+'</option>'; });
+  return html+'</select>';
+}
+function tourCard(t, canAssign, dayTimes){
+  const missN = Math.max(0, t.bookedGuests - t.checkedGuests);
+  const sub = missN>0 ? '<div class="sub">'+missN+' to check in</div>' : '<div class="sub done">all checked</div>';
+  const assigned = (t.assigned && t.assigned.length) ? t.assigned : (canAssign ? [] : [store.name].concat(t.coGuides||[]));
+  // A tour that HAS guests but NO guide is the thing a manager must not miss.
+  const needsGuide = canAssign && !assigned.length && t.bookedGuests>0;
+  let chips;
+  if(canAssign && !HISTORY_RENDER){
+    // MANAGER (live): the dropdown IS the guide — its current selection shows who's
+    // on the tour — so we don't also repeat the guide as a chip (that was the jumble).
+    // A full (2-guide) tour shows the two picks LABELLED and ORDERED: Guide 1 above
+    // Guide 2, each on its own row, instead of a pile of chips + unlabelled selects.
+    chips = needsGuide ? '<span class="chip needs">⚠ Needs a guide</span>' : '';
+    if(t.full){
+      chips += '<div class="asgrow"><span class="asglbl">Guide 1</span>'+assignSelect(t,1)+'</div>'
+            +  '<div class="asgrow"><span class="asglbl">Guide 2</span>'+assignSelect(t,2)+'</div>';
+    } else {
+      chips += assignSelect(t,1);
+    }
+  } else {
+    // GUIDE / History: read-only chips of who is on the tour.
+    chips = assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join("")
+      || '<span class="chip miss">Not assigned</span>';
+  }
+  // FULL tour (20+ guests): prompt a second guide + reopen. The red outline is on
+  // the card (.tour.full); this badge spells out the action.
+  if(t.full) chips = '<span class="chip fullbadge" title="This tour is full (20+ guests). Assign a second guide and reopen it if you can.">🔴 Full'+(canAssign?' — add 2nd guide, reopen':'')+'</span>'+chips;
+  // Full no-show (nobody turned up): a badge even on a collapsed card.
+  if(t.noShow) chips = '<span class="chip noshowchip" title="Total no-show — '+esc(t.noShowGuide||"the guide")+'">🚫 Total no-show</span>'+chips;
+  let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language,t,dayTimes)).join("");
+  if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
+  // Small round ✕ in the card's top-right corner — DELETES the tour (frees its guide).
+  // Never in History (a past tour isn't deleted from here).
+  const closeBtn=(canAssign && !HISTORY_RENDER)?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Delete this tour">✕</button>':'';
+  // GUIDES (not management) get a green tour when people are signed up, red when
+  // it's empty. Managers keep the plain card (they have the counts + assign UI).
+  const peopleCls = MANAGER ? '' : (Number(t.bookedGuests)>0 ? ' has-people' : ' no-people');
+  const fullCls = t.full ? ' full' : '';   // red outline on a full (20+) tour
+  return '<div class="tour'+peopleCls+fullCls+'" data-tour="'+esc(t.id)+'">'+ closeBtn +
+    '<div class="head js-toggle">'+
+      '<span class="time">'+esc(t.timeLabel||t.time)+'</span>'+ flagImg(t.language)+
+      (t.sfExt?'<span class="pill sf">SF</span>':'<span class="pill h3">3h</span>')+
+      (t.isPrivate?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
+      '<div class="count"><div class="big"><span class="ck">'+t.checkedGuests+'</span> / '+t.bookedGuests+(t.bookedChildren?'<span class="kids">+'+t.bookedChildren+'</span>':'')+'</div>'+sub+'</div>'+
+    '</div>'+
+    '<div class="chips">'+chips+'</div>'+
+    '<div class="bookings">'+bk+ noShowControl(t,canAssign)+
+      '<div class="savebar"><span class="msg" data-msg="'+esc(t.id)+'"></span></div>'+
+    '</div></div>';
+}
+/* FULL NO-SHOW control (shown inside the open card). Offer "Total no-show" only
+   when guests were expected and NONE are checked in; once flagged, show who it pays
+   + an Undo. The flat fee (PORTAL.NO_SHOW_PAY on the server) is deliberately NOT
+   shown to guides — the policy may change. A manager acts for the primary guide; a
+   guide acts for their own card. */
+function nsInfo(t, guide){
+  return {dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",guide:guide||t.noShowGuide||""};
+}
+function noShowControl(t, canAssign){
+  // A GUIDE's History is read-only: they can SEE a no-show was flagged, but cannot
+  // mark or remove one there (that's a manager action in History).
+  // A guide's History is read-only, and so is ANY past month (only the current month's
+  // ledger can be mutated) — treat both like a read-only guide view.
+  const histGuide = HISTORY_RENDER && (!MANAGER || !HISTORY_EDITABLE);
+  if(t.noShow){
+    // A manager can always remove it; a guide only on their own LIVE card. In History
+    // the whole point is that management can take it off that day (explicit label).
+    const canUndo = !histGuide && (MANAGER || !canAssign);
+    const undoLabel = HISTORY_RENDER ? 'Remove no-show' : 'Undo';
+    return '<div class="noshowbar on"><span class="noshowtag">🚫 Total no-show — '+esc(t.noShowGuide||"the guide")+'</span>'+
+      (canUndo?'<button class="noshowundo" data-noshow=\''+esc(JSON.stringify(nsInfo(t)))+'\'>'+undoLabel+'</button>':'')+'</div>';
+  }
+  if(histGuide) return "";   // guides don't mark no-shows from History
+  const nsGuide = canAssign ? ((t.assigned&&t.assigned[0])||t.guide||"") : (store.name||"");
+  if(!t.bookedGuests || t.checkedGuests>0 || !nsGuide) return "";   // guests expected, none checked in, a guide to pay
+  return '<div class="noshowbar"><button class="noshowbtn" data-noshow=\''+esc(JSON.stringify(nsInfo(t,nsGuide)))+'\'>Total no-show</button></div>';
+}
+function bookingRow(tourId,b,i,canAssign,lang,tour,dayTimes){
+  const wa = digits(b.phone) ? '<a class="wa" target="_blank" href="https://wa.me/'+digits(b.phone)+'">'+WA_ICON+'</a>' : '';
+  const ph = b.phone ? '<a class="ph" href="tel:'+esc(b.phone)+'">'+esc(b.phone)+'</a>' : '';
+  const note = b.note ? '<div class="bnote">'+esc(b.note)+'</div>' : '';
+  // GUIDE History row: read-only — the guest, their phone + WhatsApp (tap to open the
+  // chat and ask for a review), and a clear "checked in / not" status. No steppers or
+  // check-in buttons (that's the live view / a manager).
+  if(HISTORY_RENDER && !MANAGER){
+    const mn = b.manualNote ? '<div class="bnote mnote">'+esc(b.manualNote)+'</div>' : '';
+    const inOut = b.checked
+      ? '<span class="ckst in">✓ Checked in'+(b.checkedAt?' · '+esc(b.checkedAt):'')+'</span>'
+      : '<span class="ckst out">Not checked in</span>';
+    return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
+      '<span class="src '+(b.paid?'paid':'free')+'">'+esc(srcLabel(b.source)||"?")+'</span>'+
+      (b.isPrivate?'<span class="src priv">Private</span>':'')+ph+wa+note+mn+'</div>'+
+      inOut +
+    '</div></div>';
+  }
+  // Manager: move this booking to another LANGUAGE and/or TIME in ONE step. The
+  // "Move" button appears only once a dropdown is changed, then applies BOTH
+  // together — so a language + time change is a single move, no intermediate tour.
+  const canEdit = canAssign && !HISTORY_RENDER;   // History is read-only except no-show + undo
+  let mvbox = '';
+  if(canEdit && b.bookingId && tour){
+    const times=(dayTimes||[]).slice();
+    if(!times.some(x=>x.time===tour.time)) times.unshift({time:tour.time,timeLabel:tour.timeLabel||tour.time});
+    const info={bookingId:b.bookingId,fromLanguage:lang,fromTime:tour.time,fromDate:tour.dateKey,name:b.name||b.bookingId};
+    const langOpts=['English','German','Spanish','French','Italian'].map(L=>'<option'+(L===lang?' selected':'')+'>'+L+'</option>').join('');
+    const timeOpts=times.map(x=>'<option value="'+esc(x.time)+'"'+(x.time===tour.time?' selected':'')+'>'+esc(x.timeLabel||x.time)+'</option>').join('')+'<option value="__new__">＋ New time…</option>';
+    mvbox='<span class="mvbox" data-mv=\''+esc(JSON.stringify(info))+'\'>'+
+      '<select class="mvsel mv-lang" title="Move to another language">'+langOpts+'</select>'+
+      '<select class="mvsel mv-time" title="Move to another time">'+timeOpts+'</select>'+
+      '<input type="date" class="mvsel mv-date" value="'+esc(tour.dateKey||'')+'" title="Move to another day">'+
+      '<button class="mv-go" hidden>Move</button></span>';
+  }
+  // Per-booking MANAGER note: shown INLINE below the name (visible without tapping),
+  // just like the source note. The post-it is now only an EDIT affordance for
+  // managers; guides simply read the note inline.
+  const ref = esc(tourId+'~'+i);
+  const hasN = !!b.manualNote;
+  const mnote = hasN ? '<div class="bnote mnote">'+esc(b.manualNote)+'</div>' : '';
+  const noteBtn = canEdit && b.bookingId
+    ? '<button class="bnotebtn'+(hasN?' has':'')+'" data-bnote="'+ref+'" title="'+(hasN?'Edit note':'Add a note')+'">'+POSTIT+'</button>' : '';
+  const noteEditor = canEdit && b.bookingId
+    ? '<div class="bnotepanel" data-bnp="'+ref+'" hidden><textarea class="bnoteta" placeholder="Note for this booking…">'+esc(b.manualNote||'')+'</textarea>'+
+      '<div class="noterow"><button class="bnotesave" data-bns="'+ref+'" data-bid="'+esc(b.bookingId)+'" data-blang="'+esc(lang)+'">Save</button>'+
+      '<button class="bnoteclose">Close</button><span class="notemsg" data-bnm="'+ref+'"></span></div></div>'
+    : '';
+  // The move controls (3 dropdowns) are the main reason a row was so TALL. They're
+  // now COLLAPSED behind a small ⇄ button (like the note post-it) and open into a
+  // panel below the row — so a normal row is just name · source · phone · check-in.
+  const moveBtn = mvbox
+    ? '<button class="bmovebtn" data-bmove="'+ref+'" title="Move this booking to another day / time / language">⇄</button>' : '';
+  // The panel also holds the destructive "Remove" (a cancellation that never came
+  // through automatically) — kept INSIDE the collapsed panel, not as another
+  // always-visible row button, and clearly separated + confirmed.
+  const killData = (canEdit && b.bookingId)
+    ? esc(JSON.stringify({bookingId:b.bookingId, language:lang, name:b.name||b.bookingId})) : '';
+  const movePanel = mvbox
+    ? '<div class="bmovepanel" data-bmvp="'+ref+'" hidden><div class="mvlbl">Move to another day / time / language</div>'+mvbox+
+      '<div class="bmvsep"></div>'+
+      '<button class="bmvremove" data-bkill=\''+killData+'\' title="Remove this booking (a cancellation that did not arrive automatically)">🗑 Remove / cancel this booking</button>'+
+      '</div>' : '';
+  // WhatsApp sits next to the phone (inside .nm), NOT in the right-hand control
+  // cluster — on a two-guide tour that cluster has two check-in buttons and the
+  // icon used to overlap them.
+  return '<div class="bkwrap"><div class="bk"><div class="nm"><b>'+esc(b.name||"—")+'</b>'+
+    '<span class="src '+(b.paid?'paid':'free')+'">'+esc(srcLabel(b.source)||"?")+'</span>'+(b.isPrivate?'<span class="src priv">Private</span>':'')+ph+wa+note+mnote+noteBtn+moveBtn+'</div>'+
+    stepper(tourId,"bk|"+i,b.checkedIn,b.guests,b.guests,b.children)+
+    checkinButtons(tourId,b,i,tour)+
+    '</div>'+ noteEditor + movePanel + '</div>';
+}
+/* ONE check-in button, OR — on a full tour that has a 2nd guide — two buttons "1/2"
+   (labelled by each guide's initials) so a guest is checked in under, and PAID to,
+   the guide who took them. gi=0 single-guide; gi=1/2 which guide. */
+function ckBtn(tourId,i,b,gi,label,title){
+  const ref = esc(tourId)+'~'+i+(gi?'~'+gi:'');
+  const onThis = !gi || (Number(b.guideIndex)||1)===gi;   // this guest is on THIS guide
+  const done = !!b.checked && onThis;
+  const lockedOther = !!b.checked && !!gi && !onThis;      // checked on the OTHER guide -> locked until undo
+  // In History: only a MANAGER can tap a checked-in guest's button (= undo); new
+  // check-ins are disabled, and a guide's history is fully read-only. Live: a done
+  // button is tappable only by a manager (undo).
+  // History: only a manager, and only on the EDITABLE (current) month, can tap a
+  // checked-in guest to undo; new check-ins are always disabled, and a past month is
+  // fully read-only.
+  const dis = HISTORY_RENDER ? (!done || !MANAGER || !HISTORY_EDITABLE) : ((done && !(MANAGER && !b.pending)) || lockedOther);
+  const txt = done ? (b.pending?'✓ ⏳':('✓ '+(b.checkedAt?esc(b.checkedAt):'In'))) : (gi?esc(label):'Check in');
+  return '<button class="ckin'+(done?' done':'')+(gi?' g'+gi:'')+(lockedOther?' lockedother':'')+'" data-ck="'+ref+'"'+
+    (dis?' disabled':'')+(title?' title="'+esc(title)+'"':'')+'>'+txt+'</button>';
+}
+function checkinButtons(tourId,b,i,tour){
+  if(tour && tour.noShow) return '';   // nobody showed -> no check-in (undo the no-show first)
+  if(tour && tour.secondGuide){
+    const g1=(tour.assigned&&tour.assigned[0])||tour.guide||"", g2=tour.secondGuide;
+    return ckBtn(tourId,i,b,1,initials(g1)||'1', g1||'Guide 1')+ckBtn(tourId,i,b,2,initials(g2)||'2', g2);
+  }
+  return ckBtn(tourId,i,b,0,'','');
+}
+function stepper(tourId,ref,val,max,total,kids){
+  const kidsHtml = kids?'<span class="kids">+'+kids+'</span>':'';
+  const dis = HISTORY_RENDER ? ' disabled' : '';   // History shows the count read-only (no new check-ins)
+  return '<div class="stepper" data-ref="'+esc(ref)+'" data-tour="'+esc(tourId)+'" data-max="'+max+'">'+
+    '<button class="js-dec"'+dis+'>−</button><span class="val">'+val+'</span>'+
+    (total?'<span class="of">/'+total+kidsHtml+'</span>':'')+'<button class="js-inc"'+dis+'>+</button></div>';
+}
+function bindTours(tours){
+  TOURS_CACHE=tours;
+  // Restore each card's open/closed state (a poll re-renders the DOM, so without
+  // this every card would collapse). A card the manager left OPEN stays open.
+  const stillOpen=new Set();
+  document.querySelectorAll(".tour:not(.static)").forEach(card=>{
+    const b=card.querySelector(".bookings"); if(!b) return;
+    const open=OPEN_CARDS.has(card.dataset.tour);
+    b.style.display = open ? "" : "none";
+    if(open) stillOpen.add(card.dataset.tour);
+  });
+  OPEN_CARDS=stillOpen; saveOpenCards();   // drop ids for cards no longer on screen
+  document.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{
+    const card=h.closest(".tour"); const b=card&&card.querySelector(".bookings"); if(!b) return;
+    const nowOpen = b.style.display==="none";
+    b.style.display = nowOpen ? "" : "none";
+    if(nowOpen) OPEN_CARDS.add(card.dataset.tour); else OPEN_CARDS.delete(card.dataset.tour);
+    saveOpenCards();
+  }; });
+  document.querySelectorAll(".stepper").forEach(st=>{
+    const val=st.querySelector(".val"), max=Number(st.dataset.max);
+    st.querySelector(".js-dec").onclick=()=>{ val.textContent=Math.max(0,+val.textContent-1); recount(st.dataset.tour); stepperChanged(st); };
+    st.querySelector(".js-inc").onclick=()=>{ val.textContent=Math.min(max,+val.textContent+1); recount(st.dataset.tour); stepperChanged(st); };
+  });
+  // Manager assign dropdowns.
+  document.querySelectorAll(".asgsel").forEach(sel=>{
+    sel.onchange=async ()=>{
+      let info; try{ info=JSON.parse(sel.dataset.assign); }catch(e){ return; }
+      const newGuide=sel.value;
+      MUTATING++; LAST_EDIT=Date.now();
+      // SECOND GUIDE (slot 2): a portal overlay — immediately consistent, so no
+      // optimistic hold and no conflict path (two guides on one tour is always OK).
+      if(info.slot===2){
+        let msg="";
+        try{ const r=await api("assign",Object.assign({token:store.token, guide:newGuide},info));
+          if(!r||!r.ok) msg=(r&&r.error)||"Could not set the second guide"; }
+        catch(err){ msg=err.message||"Network problem — try again"; }
+        MUTATING--;
+        try{ await loadTours(); }catch(e){}
+        if(msg) alert(msg);
+        return;
+      }
+      setPendingAssign(info, newGuide);          // remember the choice; render shows it now
+      if(store.cache) renderAll(store.cache);     // instant, and stale reads can't undo it
+      let ok=true, hard=false, errMsg="";
+      try{
+        let r=await api("assign",Object.assign({token:store.token, guide:newGuide},info));
+        if(!r.ok && r.conflict){
+          // Management can ENFORCE the change — but never by accident.
+          if(confirm(r.error+"\n\nAssign anyway?")){
+            r=await api("assign",Object.assign({token:store.token, guide:newGuide, force:1},info));
+          } else { ok=false; hard=true; }   // manager DECLINED -> a real decision, don't retry
+        }
+        if(!r.ok){ ok=false; errMsg=r.conflict?"":(r.error||"");
+          // "Server busy, try again" = the server was momentarily locked -> transient.
+          if(!hard) hard = !/busy|try again/i.test(errMsg); }
+      }catch(err){ ok=false; errMsg=err.message||"Network problem — try again";
+        // A timeout (overloaded) or network drop is transient; anything else is hard.
+        hard = !(err && (err.kind==="timeout" || err.kind==="network")); }
+      if(ok){
+        // Confirmed. The optimistic overlay already shows it and HOLDS it through
+        // the replica-settle window, so we do NOT re-read the grid now (a lagging
+        // replica could otherwise flip it back). The next natural poll reconciles.
+        if(store.cache) renderAll(store.cache);
+      } else if(!hard){
+        // TRANSIENT (server was briefly locked / timed out / offline): QUEUE it and
+        // keep the overlay, so a burst of changes never loses the last few — asgFlush retries.
+        asgEnqueue(info, newGuide);
+        setPendingAssign(info, newGuide);          // refresh the hold so it survives until the retry lands
+      } else {
+        delete PENDING_ASSIGN[shiftIdKey(info)];   // real rejection -> drop the optimistic value
+        try{ await loadTours(); }catch(e){}          // and show the real state
+      }
+      MUTATING--;
+      if(!ok && hard && errMsg) alert(errMsg);
+    };
+  });
+  // Manager: move a booking to another LANGUAGE and/or TIME in one step. Changing
+  // either dropdown reveals a "Move" button; clicking it applies BOTH at once, so
+  // a language + time change never needs two moves or an intermediate tour.
+  document.querySelectorAll(".mvbox").forEach(box=>{
+    // GUARDED: a malformed data-mv (e.g. a stray quote) must NEVER throw here — that
+    // would abort bindTours before the check-in buttons below get their handlers.
+    let info; try{ info=JSON.parse(box.dataset.mv); }catch(e){ return; }
+    const langSel=box.querySelector(".mv-lang"), timeSel=box.querySelector(".mv-time"), dateSel=box.querySelector(".mv-date"), go=box.querySelector(".mv-go");
+    if(!langSel||!timeSel||!go) return;
+    const sync=()=>{ go.hidden = (langSel.value===info.fromLanguage && timeSel.value===info.fromTime && (!dateSel || dateSel.value===info.fromDate)); };
+    langSel.onchange=sync;
+    timeSel.onchange=sync;   // "＋ New time…" also just reveals Move; it's resolved on click
+    if(dateSel) dateSel.onchange=sync;   // a new day also reveals Move
+    go.onclick=async ()=>{
+      const toLanguage=langSel.value;
+      let toTime=timeSel.value, timeLabel=(timeSel.options[timeSel.selectedIndex]&&timeSel.options[timeSel.selectedIndex].text)||timeSel.value;
+      if(toTime==="__new__"){
+        const typed=prompt("Move "+info.name+" to what time?\nType like 4:30 PM (or 16:30).","");
+        if(!typed || !typed.trim()){ timeSel.value=info.fromTime; sync(); return; }
+        const parsed=parseTypedTime(typed);
+        if(!parsed){ alert("Couldn't read \""+typed+"\" as a time. Try 4:30 PM or 16:30."); timeSel.value=info.fromTime; sync(); return; }
+        toTime=parsed.t24; timeLabel=parsed.label;   // send unambiguous 24h; show the clear label
+      }
+      const toDate=dateSel?dateSel.value:"";
+      const langChange=(toLanguage!==info.fromLanguage), timeChange=(toTime!==info.fromTime), dateChange=(!!toDate && toDate!==info.fromDate);
+      if(!langChange && !timeChange && !dateChange){ go.hidden=true; return; }
+      // Build a clear "Move X to: …" summary from whatever changed.
+      const bits=[]; if(langChange) bits.push(toLanguage); if(timeChange) bits.push(timeLabel);
+      if(dateChange) bits.push(dayTitle(toDate)+" "+monthTitle(toDate));
+      if(!confirm("Move "+info.name+" to:\n"+bits.join(" · ")+"\n\nIf no tour exists there yet, it will be created.")){
+        langSel.value=info.fromLanguage; timeSel.value=info.fromTime; if(dateSel) dateSel.value=info.fromDate; sync(); return;
+      }
+      go.disabled=true; go.textContent="Moving…"; MUTATING++; LAST_EDIT=Date.now();
+      try{
+        const r=await api("move",{token:store.token, bookingId:info.bookingId, fromLanguage:info.fromLanguage, toLanguage:toLanguage, toTime: timeChange? toTime : "", toDate: dateChange? toDate : ""});
+        if(!r.ok) alert(r.error||"Could not move");
+      }catch(err){
+        alert("Couldn't confirm the move just now — reloading to show the current state. If it didn't take, try again.");
+      }finally{
+        MUTATING--;      // release the poll-hold before we reconcile
+        loadTours();     // reconcile either way: the screen + status show the TRUE server state
+      }
+    };
+  });
+  // Per-booking note: toggle the panel next to the language dropdown.
+  document.querySelectorAll(".bnotebtn").forEach(btn=>{
+    btn.onclick=(e)=>{ e.stopPropagation();
+      const panel=btn.closest(".bkwrap").querySelector(".bnotepanel");
+      if(panel){ panel.hidden=!panel.hidden; const ta=panel.querySelector(".bnoteta"); if(ta&&!panel.hidden) ta.focus(); }
+    };
+  });
+  document.querySelectorAll(".bnoteclose").forEach(b=>{ b.onclick=(e)=>{ e.stopPropagation(); const p=b.closest(".bnotepanel"); if(p) p.hidden=true; }; });
+  // ⇄ move toggle: open/close the move panel for this booking.
+  document.querySelectorAll(".bmovebtn").forEach(btn=>{
+    btn.onclick=(e)=>{ e.stopPropagation(); LAST_EDIT=Date.now();
+      const panel=btn.closest(".bkwrap").querySelector(".bmovepanel");
+      if(panel) panel.hidden=!panel.hidden;
+    };
+  });
+  // 🗑 Remove / cancel this booking — a cancellation that never came through
+  // automatically. Confirmed, then the booking is removed everywhere (not counted).
+  document.querySelectorAll(".bmvremove").forEach(btn=>{
+    btn.onclick=async (e)=>{ e.stopPropagation(); LAST_EDIT=Date.now();
+      let info={}; try{ info=JSON.parse(btn.dataset.bkill||"{}"); }catch(_){}
+      if(!info.bookingId) return;
+      if(!confirm("Remove "+(info.name||"this booking")+" from the tour?\n\nUse this for a cancellation that didn’t arrive automatically. The guest is removed and will NOT be counted. This can’t be undone here.")) return;
+      const old=btn.textContent; btn.disabled=true; btn.textContent="Removing…";
+      try{
+        const r=await api("removeBooking",{token:store.token,bookingId:info.bookingId,language:info.language,name:info.name});
+        if(r && r.ok){ if(r.warning) alert(r.warning); loadTours(); }
+        else { alert((r && r.error) || "Could not remove the booking"); btn.disabled=false; btn.textContent=old; }
+      }catch(err){ alert("Network error — try again"); btn.disabled=false; btn.textContent=old; }
+    };
+  });
+  document.querySelectorAll(".bnotesave").forEach(b=>{
+    b.onclick=async (e)=>{ e.stopPropagation();
+      const ref=b.dataset.bns, bookingId=b.dataset.bid, lang=b.dataset.blang, panel=b.closest(".bnotepanel");
+      const ta=panel.querySelector(".bnoteta"), msg=panel.querySelector(".notemsg");
+      const note=ta?ta.value:""; b.disabled=true; if(msg) msg.textContent="Saving…"; LAST_EDIT=Date.now();
+      try{
+        const r=await api("setNote",{token:store.token, bookingId:bookingId, language:lang, note:note});
+        if(!r.ok){ if(msg) msg.textContent=r.error||"Error"; b.disabled=false; return; }
+        if(msg) msg.textContent="Saved ✓";
+        // Update the cache so a background refresh doesn't clobber the just-typed note.
+        const parts=ref.split("~"), t=TOURS_CACHE.find(x=>x.id===parts[0]);
+        if(t&&t.bookings[+parts[1]]) t.bookings[+parts[1]].manualNote=r.note;
+        setTimeout(loadTours,700);
+      }catch(err){ if(msg) msg.textContent="Network problem"; b.disabled=false; }
+    };
+  });
+  // Management: close a schedule — no confirmation, it just disappears (and
+  // comes back on its own if someone books it).
+  document.querySelectorAll(".closebtn").forEach(btn=>{
+    btn.onclick=async (e)=>{ e.stopPropagation();
+      if(!confirm("Delete this tour? The guide is freed and the empty column is removed. It won't come back on its own.")) return;
+      const id=btn.dataset.close; btn.disabled=true; LAST_EDIT=Date.now();
+      const card=btn.closest(".tour"); if(card) card.remove();
+      try{
+        const r=await api("closeShift",{token:store.token, id:id});
+        if(!r.ok){ alert(r.error||"Could not delete it"); loadTours(); return; }
+        setTimeout(loadTours,700);
+      }catch(err){ alert("Network problem"); loadTours(); }
+    };
+  });
+  // FULL NO-SHOW: flag a tour where nobody turned up (the guide is still paid), or undo it.
+  const noShowCall = async (btn, extra, verb)=>{
+    let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(e){ return; }
+    btn.disabled=true; btn.textContent=verb+"…"; MUTATING++; LAST_EDIT=Date.now();
+    let msg="";
+    try{ const r=await api("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
+    catch(err){ msg=err.message||"Network problem — try again"; }
+    MUTATING--; try{ await loadTours(); }catch(e){} if(msg) alert(msg);
+  };
+  document.querySelectorAll(".noshowbtn").forEach(btn=>{
+    btn.onclick=async (e)=>{ e.stopPropagation();
+      let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(err){ return; }
+      if(!confirm("Mark this tour as a total no-show?\nNobody in the group came.")) return;
+      noShowCall(btn, {}, "Saving");
+    };
+  });
+  document.querySelectorAll(".noshowundo").forEach(btn=>{
+    btn.onclick=(e)=>{ e.stopPropagation(); noShowCall(btn, {clear:1}, "Undoing"); };
+  });
+  // Check-in button per reservation: set the count, lock the row, save.
+  document.querySelectorAll(".ckin:not(.done)").forEach(btn=>{
+    btn.onclick=async ()=>{
+      const parts=btn.dataset.ck.split("~"); const tid=parts[0], idx=+parts[1]; const gi=parts.length>2?(+parts[2]||1):1;
+      const t=TOURS_CACHE.find(x=>x.id===tid); if(!t) return;
+      const card=btn.closest('.tour');
+      const sval=card.querySelector('.stepper[data-ref="bk|'+idx+'"] .val');
+      const b=t.bookings[idx];
+      const prev={checked:b.checked,checkedIn:b.checkedIn,checkedAt:b.checkedAt};
+      const n=+(sval?sval.textContent:b.checkedIn);
+      const _n=new Date(); const hhmm=String(_n.getHours()).padStart(2,"0")+":"+String(_n.getMinutes()).padStart(2,"0");
+      // Show a SAVING state (not a confirmed ✓) and lock the row while it writes.
+      b.checked=true; b.checkedIn=n; b.guideIndex=gi;
+      setPendingCheckin(b.bookingId, t.dateKey, n);   // HOLD it so the next (possibly stale) read can't flip it back
+      btn.disabled=true; btn.textContent="Saving…";
+      // Lock the sibling 1/2 button during the save so a guest can't be tapped onto BOTH guides.
+      const wrap=btn.closest('.bkwrap'); if(wrap) wrap.querySelectorAll('.ckin').forEach(x=>{ if(x!==btn) x.disabled=true; });
+      const steps=card.querySelectorAll('.stepper[data-ref="bk|'+idx+'"] button'); steps.forEach(x=>x.disabled=true);
+      recount(tid);
+      const ok=await saveTour(tid);
+      if(ok){
+        // CONFIRMED on the server — show the ✓.
+        b.checkedAt=hhmm; btn.classList.add("done"); btn.textContent="✓ "+hhmm;
+      } else {
+        // Not confirmed yet — HOLD it on the phone and keep re-sending (offline
+        // queue) instead of making the guide re-tap. It stays checked locally,
+        // and syncs the moment the connection is back.
+        ckEnqueue(buildTourData(tid));
+        b.checkedAt=hhmm; btn.classList.add("done"); btn.textContent="✓ ⏳"; btn.title="Saved on your phone — syncing when back online";
+      }
+    };
+  });
+  // MANAGER undo: tap a confirmed ✓ to delete that check-in cleanly (ledger +
+  // feed, server-side, atomic). Guides and still-syncing (✓ ⏳) buttons stay
+  // locked. This is the reliable "delete a check-in".
+  if(MANAGER) document.querySelectorAll(".ckin.done:not([disabled])").forEach(btn=>{
+    btn.title="Tap to undo this check-in";
+    btn.onclick=async ()=>{
+      const parts=btn.dataset.ck.split("~"); const tid=parts[0], idx=+parts[1];
+      const t=TOURS_CACHE.find(x=>x.id===tid); if(!t) return;
+      const b=t.bookings[idx]; if(!b||!b.bookingId) return;
+      if(!confirm("Undo the check-in for "+(b.name||"this guest")+"?\nThis removes it from the ledger and the feed.")) return;
+      const old=btn.textContent; btn.disabled=true; btn.textContent="Undoing…";
+      MUTATING++; LAST_EDIT=Date.now();
+      let ok=false, errMsg="";
+      try{ const r=await api("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
+      catch(err){ errMsg=err.message||"Network problem — try again"; }
+      MUTATING--;
+      if(ok){ b.checked=false; b.checkedAt=""; b.checkedIn=b.guests;
+        try{ delete PENDING_CHECKIN[b.bookingId+"|"+t.dateKey]; savePendingCk(); }catch(e){}   // drop the hold so undo isn't fought
+        recount(tid); loadTours("undo"); }
+      else { btn.disabled=false; btn.textContent=old; alert(errMsg||"Could not undo"); }
+    };
+  });
+}
+/* A stepper tap on an ALREADY checked-in booking re-saves the new count, so a guide
+   or manager can correct who actually came (a group that wasn't full), down or up —
+   including to 0. A not-yet-checked booking just stages its number; tapping "Check in"
+   saves it, as before. The new value is (1) held at once so a poll can't reset the
+   stepper mid-edit, (2) PERSISTED to the offline queue at once so even a hard reload
+   can't lose it (boot's ckFlush re-sends it, self-correcting), and (3) sent quickly via
+   a short debounce — so rapid +/- taps become one fast save, dropped from the queue once
+   the server confirms it. */
+let STEP_SAVE_TIMER={};
+function stepperChanged(st){
+  const ref=st.dataset.ref||""; if(ref.indexOf("bk|")!==0) return;
+  const tid=st.dataset.tour, idx=+ref.split("|")[1];
+  const t=TOURS_CACHE.find(x=>x.id===tid); if(!t) return;
+  const b=t.bookings[idx]; if(!b||!b.checked||!b.bookingId) return;   // only re-save a booking that is already checked in
+  const n=+st.querySelector(".val").textContent;
+  b.checkedIn=n;                                       // keep the cache in sync with the stepper
+  setPendingCheckin(b.bookingId, t.dateKey, n);        // hold the EXACT value through the settle window (up or down)
+  LAST_EDIT=Date.now();
+  ckEnqueueTour(buildTourData(tid));                   // persist NOW (survives a hard reload / closed app)
+  clearTimeout(STEP_SAVE_TIMER[tid]);
+  STEP_SAVE_TIMER[tid]=setTimeout(()=>flushStepperSave(tid), 300);
+}
+// Send a tour's staged count edit now (debounce fired, or the app is backgrounding) and,
+// once the server confirms, drop its safety copy from the offline queue. A failed save
+// stays queued and ckFlush retries it on the next boot / poll / focus / reconnect.
+function flushStepperSave(tid){
+  if(STEP_SAVE_TIMER[tid]){ clearTimeout(STEP_SAVE_TIMER[tid]); delete STEP_SAVE_TIMER[tid]; }
+  const data=buildTourData(tid); if(!data) return;
+  saveTour(tid).then(ok=>{ if(ok) ckDequeueTour(data); }).catch(()=>{});
+}
+function flushStepperSavesNow(){ Object.keys(STEP_SAVE_TIMER).forEach(tid=>{ try{ flushStepperSave(tid); }catch(e){} }); }
+function recount(tourId){
+  const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]'); let sum=0;
+  const t=TOURS_CACHE.find(x=>x.id===tourId);
+  card.querySelectorAll('.stepper[data-ref^="bk|"]').forEach(st=>{ const idx=+st.dataset.ref.split("|")[1]; const b=t&&t.bookings[idx]; if(b&&b.checked) sum+=+st.querySelector('.val').textContent; });
+  card.querySelector('.count .ck').textContent=sum;
+  const total=Number((TOURS_CACHE.find(x=>x.id===tourId)||{}).bookedGuests||0);
+  const sub=card.querySelector('.count .sub'); const miss=Math.max(0,total-sum);
+  sub.className='sub'+(miss?'':' done'); sub.textContent=miss?miss+' to check in':'all checked';
+}
+/* Build the save payload for a tour from its current card + cache. Shared by
+   saveTour and the offline retry queue so a queued re-send matches exactly. */
+function buildTourData(tourId){
+  const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return null;
+  const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
+  const bookings=t.bookings.map((b,i)=>{ const st=card?card.querySelector('.stepper[data-ref="bk|'+i+'"] .val'):null;
+    return {bookingId:b.bookingId,source:b.source,name:b.name,phone:b.phone,guests:b.guests,children:b.children||0,income:b.income,isPrivate:b.isPrivate,manualNote:b.manualNote||"",checked:!!b.checked,checkedIn:+(st?st.textContent:b.checkedIn),guideIndex:Number(b.guideIndex)||1}; });
+  return {dateKey:t.dateKey,time:t.time,timeLabel:t.timeLabel,day:t.day,language:t.language,bookings,guide:t.guide||"",secondGuide:t.secondGuide||""};
+}
+/* ===== Offline-safe check-in queue =====
+   A check-in whose save doesn't reach the server is kept on the PHONE and
+   re-sent automatically until confirmed — surviving a dropped signal and a full
+   reload. So a tapped check-in is never lost; the reconciler + the union read on
+   the server make sure it lands in both the feed and the ledger. */
+function ckQueueLoad(){ try{ return JSON.parse(localStorage.getItem("rr_ckqueue")||"[]"); }catch(e){ return []; } }
+function ckQueueSave(q){ try{ localStorage.setItem("rr_ckqueue", JSON.stringify(q||[])); }catch(e){} }
+function ckEnqueue(data){ if(!data) return; const q=ckQueueLoad(); q.push({data:data, ts:Date.now()}); ckQueueSave(q); }
+/* Queue a save keyed by its TOUR, so rapid count edits keep ONE entry (the latest) instead
+   of stacking — and a confirmed save can drop exactly that tour's copy. The stored payload
+   carries every booking's current count, so one flush re-applies the whole tour correctly. */
+function ckTourKey_(d){ return ((d&&d.dateKey)||"")+"|"+((d&&d.time)||"")+"|"+((d&&d.language)||""); }
+function ckEnqueueTour(data){ if(!data) return; const k=ckTourKey_(data);
+  const q=ckQueueLoad().filter(it=>ckTourKey_(it.data)!==k); q.push({data:data, ts:Date.now()}); ckQueueSave(q); }
+function ckDequeueTour(data){ if(!data) return; const k=ckTourKey_(data);
+  ckQueueSave(ckQueueLoad().filter(it=>ckTourKey_(it.data)!==k)); }
+function ckPending(){ return ckQueueLoad().length; }
+let CK_FLUSHING=false;
+async function ckFlush(){
+  if(CK_FLUSHING || !store.token) return;
+  const q=ckQueueLoad(); if(!q.length) return;
+  CK_FLUSHING=true;
+  const keep=[];
+  for(const item of q){
+    try{ const r=await api("save",{token:store.token,data:JSON.stringify(item.data)}); if(!(r&&r.ok)) keep.push(item); }
+    catch(e){ keep.push(item); }   // still offline — try again next time
+  }
+  ckQueueSave(keep);
+  CK_FLUSHING=false;
+  if(keep.length!==q.length && canAutoRefresh()) loadTours();   // something synced -> refresh
+}
+
+/* ---- ASSIGN queue: the same safety net check-ins have ----
+   Under a slow, owner-serialized server a BURST of assignments can make the
+   last-fired ones hit the 10s server lock ("Server busy") or time out. Before,
+   a failed assign was dropped (it reverted, easy to miss among many) — so the
+   LAST few changes silently vanished on the next reopen. Now a TRANSIENT failure
+   is QUEUED and retried on every poll/focus/reconnect (exactly like a check-in),
+   and the optimistic overlay is HELD meanwhile, so a burst of changes all land. */
+function asgQueueLoad(){ try{ return JSON.parse(localStorage.getItem("rr_asgqueue")||"[]"); }catch(e){ return []; } }
+function asgQueueSave(q){ try{ localStorage.setItem("rr_asgqueue", JSON.stringify(q||[])); }catch(e){} }
+function asgEnqueue(info, guide){ if(!info) return; const k=shiftIdKey(info);
+  const q=asgQueueLoad().filter(it=>shiftIdKey(it.info)!==k);   // a newer choice supersedes an older queued one
+  q.push({info:info, guide:guide||"", ts:Date.now()}); asgQueueSave(q); }
+function asgPending(){ return asgQueueLoad().length; }
+let ASG_FLUSHING=false;
+async function asgFlush(){
+  if(ASG_FLUSHING || !store.token) return;
+  const q=asgQueueLoad(); if(!q.length) return;
+  ASG_FLUSHING=true;
+  const keep=[];
+  for(const item of q){
+    setPendingAssign(item.info, item.guide);   // keep the screen showing the intended value while it retries
+    try{
+      const r=await api("assign",Object.assign({token:store.token, guide:item.guide}, item.info));
+      if(r && r.ok){ /* landed */ }
+      else if(r && r.conflict){ /* needs a human decision, not a transient drop -> stop retrying */ }
+      else { keep.push(item); }                // still busy/offline -> try again next time
+    }catch(e){ keep.push(item); }
+  }
+  asgQueueSave(keep);
+  ASG_FLUSHING=false;
+  if(keep.length!==q.length && canAutoRefresh()) loadTours();   // something synced -> refresh
+}
+async function saveTour(tourId,btn){
+  const t=TOURS_CACHE.find(x=>x.id===tourId); if(!t) return false;
+  const card=document.querySelector('.tour[data-tour="'+cssq(tourId)+'"]');
+  const data=buildTourData(tourId); if(!data) return false;
+  const msg=card.querySelector('[data-msg]'); if(btn) btn.disabled=true; msg.style.color="var(--muted)"; msg.textContent="Saving…";
+  MUTATING++; LAST_EDIT=Date.now();   // block auto-refresh from clobbering the check-in mid-save
+  let ok=false;
+  try{ const r=await api("save",{token:store.token,data:JSON.stringify(data)});
+    ok=!!(r&&r.ok);
+    if(ok){ msg.style.color="var(--ok)"; msg.textContent="Saved ✓"; DIRTY[tourId]=false; }
+    else{ msg.style.color="var(--danger)"; msg.textContent=(r&&r.error)||"Error"; } }
+  catch(err){ msg.style.color="var(--danger)"; msg.textContent=err.message; }
+  finally{ MUTATING--; }
+  if(btn) btn.disabled=false; setTimeout(()=>{ if(!DIRTY[tourId]) msg.textContent=""; },4000);
+  return ok;   // so the check-in button only confirms "✓" when the ledger write succeeded
+}
+
+/* ================== ALL GUIDES (read-only, non-managers) ================== */
+function renderSchedule(rows){
+  const pane=$("schedPane");
+  if(!rows.length){ pane.innerHTML='<div class="empty">No upcoming schedule.</div>'; return; }
+  let html="";
+  groupByDay(rows).forEach(day=>{
+    html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
+    day.items.sort((a,b)=>_mins(a.time)-_mins(b.time)).forEach(s=>{
+      const miss = !s.assigned.length || (s.status && s.status!=="OK");
+      const who = s.assigned.length
+        ? s.assigned.map(n=>'<span class="chip"><span class="avatar">'+esc(initials(n))+'</span>'+esc(n)+'</span>').join(" ")
+        : "Not assigned";
+      html+='<div class="tour static"><div class="head">'+
+        '<span class="time">'+esc(to12(s.time))+'</span>'+flagImg(s.language)+
+        (s.private?'<span class="pill priv">Private</span>':'')+'<span class="spacer"></span>'+
+        '<span class="guides'+(miss?' miss':'')+'">'+who+'</span></div></div>';
+    });
+  });
+  if(HAS_MORE) html+='<button class="loadmore" id="loadMoreBtn_sched">Load '+MORE_DAYS+' more days</button>';
+  pane.innerHTML=html;
+  const lm=$("loadMoreBtn_sched");
+  if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
+}
+
+/* ================== HISTORY (manager: any month) ==================
+   A manager-only overlay of the tours that already ran, for ANY month (a guide sees
+   only their own). A month picker chooses which month; the current month's ledger is
+   live (no-shows can be marked and a wrong check-in undone), a past month reads its
+   archive and is read-only. It fetches action=history&month=YYYY-MM and renders the
+   SAME tour cards. Isolated from the live poll: its own cache + binding, and the poll
+   pauses while it's open. */
+async function openHistory(){
+  HISTORY_OPEN=true;
+  HISTORY_MONTH="";                        // default to the current month each time it opens
+  document.documentElement.classList.add("histopen"); document.body.classList.add("histopen");   // lock the page scroll behind the overlay
+  $("historyView").classList.remove("hidden");
+  $("historyView").scrollTop=0;            // always open at the top (most recent day)
+  $("historyPane").innerHTML='<div class="spin">Loading…</div>';
+  await historyRefresh();
+}
+function closeHistory(){
+  HISTORY_OPEN=false;
+  $("historyView").classList.add("hidden");
+  document.documentElement.classList.remove("histopen"); document.body.classList.remove("histopen");
+  $("historyPane").innerHTML="";          // drop the cards so a live poll never touches them
+  HISTORY_CACHE=[]; HISTORY_OPEN_CARDS.clear();   // reopen History with everything collapsed
+}
+// "2026-10" -> "October 2026" for the picker + subtitle.
+function monthLabel(ym){
+  const m=/^(\d{4})-(\d{2})$/.exec(ym||""); if(!m) return ym||"";
+  const names=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return names[Number(m[2])-1]+" "+m[1];
+}
+// Fill the month <select> from the server's list (newest first), keeping the chosen month.
+function fillMonthPicker(months,current){
+  const sel=$("histMonth"); if(!sel) return;
+  const list=(months&&months.length)?months:[current];
+  sel.innerHTML=list.map(ym=>'<option value="'+esc(ym)+'"'+(ym===current?' selected':'')+'>'+esc(monthLabel(ym))+'</option>').join("");
+}
+async function historyRefresh(){
+  // On a month change, swap the spinner in so the stale month's cards don't linger.
+  if(HISTORY_MONTH!==undefined) $("historyPane").innerHTML='<div class="spin">Loading…</div>';
+  let r; try{ r=await api("history",{token:store.token, month:HISTORY_MONTH||""}); }
+  catch(err){ $("historyPane").innerHTML='<div class="loaderr"><b>Could not load history.</b>Check your connection and tap Done, then History again.</div>'; return; }
+  if(!r || !r.ok){
+    if(r && /expired/i.test(r.error||"")){ store.token=""; store.cache=null; location.reload(); return; }
+    $("historyPane").innerHTML='<div class="empty">'+esc((r&&r.error)||"Could not load history.")+'</div>'; return;
+  }
+  HISTORY_MONTH=r.month||HISTORY_MONTH; HISTORY_EDITABLE=(r.editable!==false);
+  fillMonthPicker(r.months, HISTORY_MONTH);
+  const sub=$("histSub");
+  if(sub) sub.innerHTML=esc(monthLabel(HISTORY_MONTH))+(HISTORY_EDITABLE?"":'<span class="histro">view only</span>')+
+    (r.now&&HISTORY_EDITABLE?" · updated "+esc(r.now):"");
+  renderHistory(r.tours||[]);
+}
+function renderHistory(tours){
+  HISTORY_CACHE=tours;
+  const pane=$("historyPane");
+  if(!tours.length){ pane.innerHTML='<div class="empty">No tours with bookings in '+esc(monthLabel(HISTORY_MONTH))+'.</div>'; return; }
+  // Build the cards in history mode so the shared helpers drop the editing UI.
+  HISTORY_RENDER=true;
+  let html="";
+  try{
+    // Most RECENT day first (then older below), so the useful info is at the top.
+    groupByDay(tours).reverse().forEach(day=>{
+      html+='<div class="dayhdr"><div><div class="d">'+dayTitle(day.dateKey)+'</div><div class="m">'+monthTitle(day.dateKey)+'</div></div>'+relBadge(day.dateKey)+'</div>';
+      const dayTimes=[];
+      day.items.forEach(t=>{ if(!dayTimes.some(x=>x.time===t.time)) dayTimes.push({time:t.time,timeLabel:t.timeLabel||t.time}); });
+      day.items.sort((a,b)=>_mins(a.time)-_mins(b.time));
+      // Managers get the editable card (no-show + undo); guides get a read-only card.
+      day.items.forEach(t=> html+=tourCard(t, MANAGER, dayTimes));
+    });
+  } finally { HISTORY_RENDER=false; }
+  pane.innerHTML=html;
+  bindHistoryCards();
+}
+function bindHistoryCards(){
+  const root=$("historyPane"); if(!root) return;
+  // CLOSED by default (keeps a long list scannable); a tapped-open card is remembered
+  // in HISTORY_OPEN_CARDS so a refresh doesn't collapse it.
+  root.querySelectorAll(".tour").forEach(card=>{
+    const b=card.querySelector(".bookings"); if(!b) return;
+    b.style.display = HISTORY_OPEN_CARDS.has(card.dataset.tour) ? "" : "none";
+  });
+  root.querySelectorAll(".js-toggle").forEach(h=>{ h.onclick=()=>{
+    const card=h.closest(".tour"); const b=card&&card.querySelector(".bookings"); if(!b) return;
+    const nowOpen = b.style.display==="none";
+    b.style.display = nowOpen ? "" : "none";
+    if(nowOpen) HISTORY_OPEN_CARDS.add(card.dataset.tour); else HISTORY_OPEN_CARDS.delete(card.dataset.tour);
+  }; });
+  // FULL NO-SHOW — same action as the live view, then refresh history.
+  const noShowCall=async (btn,extra,verb)=>{
+    let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(e){ return; }
+    btn.disabled=true; btn.textContent=verb+"…"; MUTATING++;
+    let msg="";
+    try{ const r=await api("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
+    catch(err){ msg=err.message||"Network problem — try again"; }
+    MUTATING--; await historyRefresh(); if(msg) alert(msg);
+  };
+  // No-show + undo-check-in are MANAGER-only in History (a guide's view is read-only;
+  // its no-show buttons aren't rendered and its ✓ buttons are disabled, but gate the
+  // bindings too for defence-in-depth — the server enforces it regardless).
+  if(!MANAGER) return;
+  root.querySelectorAll(".noshowbtn").forEach(btn=>{ btn.onclick=async (e)=>{ e.stopPropagation();
+    if(!confirm("Mark this tour as a total no-show?\nNobody in the group came.")) return; noShowCall(btn,{},"Saving"); }; });
+  root.querySelectorAll(".noshowundo").forEach(btn=>{ btn.onclick=(e)=>{ e.stopPropagation(); noShowCall(btn,{clear:1},"Undoing"); }; });
+  // UNDO a check-in — tap a ✓ (enabled only on checked guests in history).
+  root.querySelectorAll(".ckin.done:not([disabled])").forEach(btn=>{
+    btn.title="Tap to undo this check-in";
+    btn.onclick=async ()=>{
+      const parts=btn.dataset.ck.split("~"); const tid=parts[0], idx=+parts[1];
+      const t=HISTORY_CACHE.find(x=>x.id===tid); if(!t) return;
+      const b=t.bookings[idx]; if(!b||!b.bookingId) return;
+      if(!confirm("Undo the check-in for "+(b.name||"this guest")+"?\nThis removes it from the ledger and the feed.")) return;
+      const old=btn.textContent; btn.disabled=true; btn.textContent="Undoing…"; MUTATING++;
+      let ok=false, errMsg="";
+      try{ const r=await api("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
+      catch(err){ errMsg=err.message||"Network problem — try again"; }
+      MUTATING--;
+      if(ok){ await historyRefresh(); }
+      else { btn.disabled=false; btn.textContent=old; alert(errMsg||"Could not undo"); }
+    };
+  });
+}
+
+/* ================== BOOT ================== */
+if(PORTAL_URL.indexOf("PASTE_")===0){ $("loginErr").textContent="Portal not configured yet (PORTAL_URL)."; }
+if(store.token){ showDash(); }
+</script>
+</body>
+</html>
