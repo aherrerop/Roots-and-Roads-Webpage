@@ -58,9 +58,31 @@
 // cold Properties service can never break startup. See STAGING.md.
 const GUIDE_FILE_ID = "1ZkF0yDVE5Q7V2XUO5051ojJdTXtsvb8FA2sh15rqf-0";
 const BOOKING_SHEET_ID = "1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw";
+// The LIVE ledger id — used only by the fail-closed guard in ledgerSS_ so a staging copy
+// can't point its ledger at production. The live ledger is normally resolved via the
+// LEDGER_ID Script Property; this constant is just the sentinel the guard refuses.
+const LIVE_LEDGER_ID = "1D-iDzVDv1uvLZ8AI6WT8kc22ZzSpXmgqk_kQ-u8Mf40";
+// A non-production COPY of this project (a staging clone) sets the Script Property
+// ENV=staging. In that mode, FAIL-CLOSED: every external sheet id MUST be overridden by its
+// own Script Property pointing at a COPY sheet — if one is missing we THROW rather than
+// silently fall back to the LIVE id, so a misconfigured copy can never read or write
+// production data (the Nov-2026 staging incident). Production (ENV unset) uses the hardcoded
+// live ids exactly as before; the tests (ENV unset) likewise resolve the constants to mocks.
+function isCopyEnv_() {
+  try {
+    var e = PropertiesService.getScriptProperties().getProperty('ENV');
+    return e === 'staging' || e === 'copy' || e === 'test';
+  } catch (x) { return false; }
+}
 function extSheetId_(key, dflt) {
-  try { return PropertiesService.getScriptProperties().getProperty(key) || dflt; }
-  catch (e) { return dflt; }
+  var v = null;
+  try { v = PropertiesService.getScriptProperties().getProperty(key); } catch (e) {}
+  if (v) return v;
+  if (isCopyEnv_()) {
+    throw new Error('Non-production copy (ENV=staging): Script Property "' + key +
+                    '" must point at a COPY sheet — refusing to touch the live sheet.');
+  }
+  return dflt;
 }
 function bookingSheetId_() { return extSheetId_('BOOKING_SHEET_ID', BOOKING_SHEET_ID); }
 function guideFileId_()    { return extSheetId_('GUIDE_FILE_ID', GUIDE_FILE_ID); }

@@ -2275,6 +2275,19 @@ function apiHealth_() {
   try {
     out.ledgerOk = !!ledgerSS_();
   } catch (e) { out.ledgerOk = false; }
+  // The EXACT spreadsheets this deployment reads/writes, resolved the same way the real
+  // read/write paths do (control_/bookingSheetId_/ledgerSS_/…). This is the isolation
+  // check: on STAGING every one of these must be a COPY id, never the live sheet.
+  try {
+    out.sheets = {
+      control: control_().getId(),
+      booking: bookingSheetId_(),
+      guide3h: guideFileId_(),
+      guideSf: sfGuideFileId_()
+    };
+    try { out.sheets.ledger = ledgerSS_().getId(); } catch (e) { out.sheets.ledger = '(none)'; }
+  } catch (e) { /* diagnostic only */ }
+  try { out.env = PropertiesService.getScriptProperties().getProperty('ENV') || 'production'; } catch (e) {}
   try {
     const scriptTz = Session.getScriptTimeZone();
     out.timezoneOk = scriptTz === 'Europe/Madrid';
@@ -3871,6 +3884,11 @@ function ledgerSS_() {
   if (__RRX.ledgerSS) return __RRX.ledgerSS;
   const props = PropertiesService.getScriptProperties();
   const id = props.getProperty('LEDGER_ID');
+  // Fail-closed: a staging copy must never point its ledger at the LIVE ledger. On a copy,
+  // leave LEDGER_ID unset (a fresh ledger is created below) or set it to a COPY.
+  if (id && isCopyEnv_() && id === LIVE_LEDGER_ID) {
+    throw new Error('Non-production copy (ENV=staging): LEDGER_ID points at the LIVE ledger — refusing. Unset it (a copy ledger is created) or set a COPY.');
+  }
   if (id) {
     try { return (__RRX.ledgerSS = SpreadsheetApp.openById(id)); } catch (e) { /* recreate below */ }
   }

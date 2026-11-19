@@ -144,6 +144,20 @@ feed = {
 };
 check('a bare placeholder on a missing slot does NOT force a cold build (true)', reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18') === true, null);
 
+console.log('--- Fail-closed staging guard: a non-prod copy must override every sheet id or REFUSE ---');
+delete __mock.PROPS['ENV']; delete __mock.PROPS['TESTSHEETKEY'];
+check('production (ENV unset): extSheetId_ falls back to the live default', extSheetId_('TESTSHEETKEY', 'LIVE_DEFAULT') === 'LIVE_DEFAULT', null);
+__mock.PROPS['TESTSHEETKEY'] = 'COPY_ID';
+check('an override Script Property always wins', extSheetId_('TESTSHEETKEY', 'LIVE_DEFAULT') === 'COPY_ID', null);
+delete __mock.PROPS['TESTSHEETKEY']; __mock.PROPS['ENV'] = 'staging';
+check('isCopyEnv_ true when ENV=staging', isCopyEnv_() === true, null);
+let guardThrew = false; try { extSheetId_('TESTSHEETKEY', 'LIVE_DEFAULT'); } catch (e) { guardThrew = true; }
+check('ENV=staging + MISSING override THROWS (never silently uses the live sheet)', guardThrew === true, null);
+__mock.PROPS['TESTSHEETKEY'] = 'COPY_ID3';
+check('ENV=staging + override present -> returns the copy id (no throw)', extSheetId_('TESTSHEETKEY', 'LIVE_DEFAULT') === 'COPY_ID3', null);
+delete __mock.PROPS['ENV']; delete __mock.PROPS['TESTSHEETKEY'];
+check('production again after cleanup (ENV unset): isCopyEnv_ false', isCopyEnv_() === false, null);
+
 __mock.removeRealCache();
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
