@@ -1136,12 +1136,31 @@ function apiTours_(p) {
   // offer "Load more" (a wider request regenerates the further-out slots + bookings).
   const managerHorizon = addDaysKey_(today, windowDays);
   const hasMore = windowDays < PORTAL.UPCOMING_DAYS;
+  // The assign-dropdown options (eligible guides + their free / overlap / busy / vacation /
+  // unavailable dots) depend only on ASSIGNMENTS + the guide roster + availability — never
+  // on check-ins — so compute them for every manager shift ONCE and cache them, keyed on
+  // the global version (an assign/move bumps it) plus the config version (a guide or
+  // availability edit). A routine manager poll (check-ins only) then REUSES this instead of
+  // recomputing O(shifts x guides) dropdown statuses every time: that recompute was the
+  // heavy half of the old per-poll mgrTours cost that serialized against — and timed out —
+  // the guides' own loads during a busy assign period.
+  const guideOptsById = isManager ? _t('mgrOpts', function () {
+    return cachedRead_('gopts:' + managerHorizon + ':' + configVersion_(), PORTAL.CACHE_TTL, function () {
+      const busyMap = buildBusyMap_(schedule);
+      const m = {};
+      schedule.filter(s => s.dateKey <= managerHorizon).forEach(shift => {
+        const aid = shiftKey_(shift.dateKey, shift.minutes, shift.language) + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
+        m[aid] = {
+          eligible: eligibleGuidesForShift_(shift, guidesByLanguage),
+          guideOptions: guideStatusesForShift_(shift, guidesByLanguage, busyMap)
+        };
+      });
+      return m;
+    });
+  }) : {};
   if (isManager) _t('mgrTours', function () {
     // Check-ins come from the targeted ledger read above, so a check-in shows no
     // matter which assigned guide on the tour tapped it.
-    // One busy map for the whole schedule -> per-guide availability dots in the
-    // assign dropdown (free / overlap / busy), computed with no extra reads.
-    const busyMap = buildBusyMap_(schedule);
     allTours = schedule.filter(s => s.dateKey <= managerHorizon).map(shift => {
       const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
       const primary = shift.assigned[0] || '';
@@ -1176,8 +1195,8 @@ function apiTours_(p) {
         dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
         time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
         privIndex: shift.privIndex || 1,
-        eligible: eligibleGuidesForShift_(shift, guidesByLanguage),
-        guideOptions: guideStatusesForShift_(shift, guidesByLanguage, busyMap),
+        eligible: (guideOptsById[aid] || {}).eligible || [],
+        guideOptions: (guideOptsById[aid] || {}).guideOptions || [],
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
         sfExt: !!shift.sfExt, tourName: shift.tourName || (shift.sfExt ? 'SF' : '3h'),
