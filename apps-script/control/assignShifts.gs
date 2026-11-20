@@ -62,6 +62,11 @@ const BOOKING_SHEET_ID = "1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw";
 // can't point its ledger at production. The live ledger is normally resolved via the
 // LEDGER_ID Script Property; this constant is just the sentinel the guard refuses.
 const LIVE_LEDGER_ID = "1D-iDzVDv1uvLZ8AI6WT8kc22ZzSpXmgqk_kQ-u8Mf40";
+// The LIVE Control spreadsheet id. The portal is normally container-bound to its Control
+// (getActiveSpreadsheet), but a STANDALONE copy (so info can run the portal in its own
+// account) sets the CONTROL_ID Script Property to open one by id instead. This constant is
+// the sentinel the staging fail-closed guard refuses, so a copy can't point at production.
+const LIVE_CONTROL_ID = "1A8RrqIoWw-HpxCLDRGVJLcflja8tSGEOgaXd-2sSkLs";
 // A non-production COPY of this project (a staging clone) sets the Script Property
 // ENV=staging. In that mode, FAIL-CLOSED: every external sheet id MUST be overridden by its
 // own Script Property pointing at a COPY sheet — if one is missing we THROW rather than

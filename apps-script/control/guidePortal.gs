@@ -2312,7 +2312,33 @@ function apiHealth_() {
  * 4. CONTROL_V1 READERS  (guides, rates, schedule)
  ******************************************************/
 
-function control_() { return SpreadsheetApp.getActiveSpreadsheet(); }   // already-open handle, no round-trip — not worth memoising
+// The Control spreadsheet. Container-bound by default: getActiveSpreadsheet() is the
+// already-open Control (no round-trip), which is how live Portal A and a bound staging copy
+// run. A STANDALONE copy of the portal — so info can run it in its OWN account against the
+// live (or a copy) Control — instead sets the CONTROL_ID Script Property and we open that by
+// id. Memoised per request so the property read happens at most once. A staging copy may not
+// point CONTROL_ID at the live Control (fail-closed), and a standalone script with neither a
+// CONTROL_ID nor a bound sheet refuses rather than guess.
+function control_() {
+  // Resolve the CONTROL_ID override once per request (cheap, memoised).
+  if (__RRX.controlId === undefined) {
+    var cid = null;
+    try { cid = PropertiesService.getScriptProperties().getProperty('CONTROL_ID') || null; } catch (e) {}
+    __RRX.controlId = cid;
+  }
+  if (__RRX.controlId) {
+    if (__RRX.controlSS) return __RRX.controlSS;                 // memoise only the by-id open (the costly path)
+    if (isCopyEnv_() && __RRX.controlId === LIVE_CONTROL_ID) {
+      throw new Error('Non-production copy (ENV=staging): CONTROL_ID points at the LIVE Control — refusing.');
+    }
+    return (__RRX.controlSS = SpreadsheetApp.openById(__RRX.controlId));
+  }
+  // Container-bound default: the already-open Control, fetched fresh so it always reflects
+  // the active spreadsheet (the test harness swaps it between cases).
+  var active = SpreadsheetApp.getActiveSpreadsheet();
+  if (active) return active;
+  throw new Error('Standalone portal needs the CONTROL_ID Script Property set (no bound spreadsheet).');
+}
 
 // Read the Guides tab, once per load (the __RRX memo, since findGuideByName_ hits it
 // repeatedly) and cached across loads. The tab changes rarely — only a direct sheet
