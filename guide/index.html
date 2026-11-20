@@ -306,6 +306,11 @@
 
 /* ================== CONFIG ================== */
 const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hcjuNZ_Z7J8zu7iI5ZPq9P4Ag6rZ19-XYgx_qWjFLohAa7iEf/exec";
+// Backup deployment URL (empty = none). At the two-account cutover, PORTAL_URL becomes the
+// info deployment and this becomes the OLD main deployment (same live data). Then if the
+// primary is dead / wrong / asking to sign in, api() automatically fails over to this one —
+// so a broken cutover self-heals with no manual rollback. Empty today, so it's a no-op.
+const BACKUP_PORTAL_URL = "";
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
@@ -332,11 +337,12 @@ async function checkForUpdate(){
    JSONP cannot. If fetch itself is blocked (old browser, extension), we fall
    back to the classic JSONP script tag. */
 console.log("R&R guide portal front-end v3");
-function buildUrl(action, params){
+function buildUrl(action, params, base){
   // _ = cache-buster: forces a fresh response so the portal never shows a
-  // browser-cached copy of the BookingSheet/schedule data.
+  // browser-cached copy of the BookingSheet/schedule data. `base` lets a call target the
+  // BACKUP deployment on failover; it defaults to the primary PORTAL_URL.
   const q = Object.assign({action, _: Date.now()}, params||{});
-  return PORTAL_URL + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
+  return (base||PORTAL_URL) + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
 }
 function mkErr(kind,msg){ const e=new Error(msg); e.kind=kind; return e; }
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
@@ -348,6 +354,14 @@ function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 async function api(action, params){
   try{ return await apiCall(action, params); }
   catch(err){
+    // FAILOVER: if the PRIMARY deployment is dead, wrong, or asking for a Google sign-in
+    // (i.e. misconfigured — NOT merely slow), try the BACKUP deployment, which points at the
+    // SAME live data. This makes a broken two-account cutover self-heal with no manual
+    // rollback. A TIMEOUT does NOT fail over (the server is alive but overloaded; the backup
+    // reads the same sheets, so piling on helps nothing). No-op while BACKUP_PORTAL_URL is "".
+    if(BACKUP_PORTAL_URL && err && (err.kind==="auth"||err.kind==="badresp"||err.kind==="network")){
+      try{ return await apiCall(action, params, BACKUP_PORTAL_URL); }catch(_){}
+    }
     // Retry ONCE for a genuine transient drop (a freshly-created deployment 404s
     // for a minute; a request occasionally drops). Do NOT retry an auth error (a
     // real config problem) or a TIMEOUT: a timeout means the server is overloaded,
@@ -358,8 +372,8 @@ async function api(action, params){
     return await apiCall(action, params);
   }
 }
-async function apiCall(action, params){
-  const url = buildUrl(action, params);
+async function apiCall(action, params, base){
+  const url = buildUrl(action, params, base);
   let timedOut = false;
   try{
     // Abort a hung request after 60s. NOT 30s: a load can legitimately take ~35s
@@ -390,14 +404,14 @@ async function apiCall(action, params){
       throw mkErr("timeout","TIMEOUT");
     // A genuine fetch/network/CORS failure (not a timeout): some environments block
     // cross-origin fetch, so fall back to JSONP once.
-    try{ return await apiJsonp(action, params); }
+    try{ return await apiJsonp(action, params, base); }
     catch(err2){ throw err2; }
   }
 }
-function apiJsonp(action, params){
+function apiJsonp(action, params, base){
   return new Promise((resolve,reject)=>{
     const cb = "cb_"+Math.random().toString(36).slice(2);
-    const url = buildUrl(action, Object.assign({callback:cb}, params||{}));
+    const url = buildUrl(action, Object.assign({callback:cb}, params||{}), base);
     const s = document.createElement("script");
     let done=false;
     window[cb]=(data)=>{ done=true; cleanup(); resolve(data); };
