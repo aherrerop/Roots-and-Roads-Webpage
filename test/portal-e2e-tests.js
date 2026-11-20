@@ -237,9 +237,20 @@ const selfKey = shiftKeyFull_({ dateKey: DATE, minutes: 720, language: 'English'
 const selfSt = guideStatusesForShift_({ dateKey: DATE, minutes: 720, language: 'English' },
   { English: ['Carlos'] }, { carlos: [{ ms: shiftStartMs_(DATE, 720), k: selfKey }] });
 check('a guide assigned to THIS shift is NOT marked busy by their own assignment', selfSt[0].status === 'free', selfSt);
-// The live payload carries guideOptions on manager tours.
-const anyShift = (rt.allTours || []).find(s => (s.guideOptions || []).length);
-check('apiTours_ attaches guideOptions [{name,status}] to manager tours', !!anyShift && anyShift.guideOptions.every(o => o.name && ['free','overlap','busy'].indexOf(o.status) !== -1), anyShift && anyShift.guideOptions);
+// Dots are now LAZY: the tours payload no longer computes them for every card (that was the
+// 4-6s mgrOpts cost); each card carries guideOptions = [] and its eligible list, and the
+// on-demand action=guideopts returns the dots for ONE shift when a manager opens its dropdown.
+const someTour = (rt.allTours || [])[0];
+check('tours payload no longer eager-computes dots (guideOptions empty, eligible present)',
+  !!someTour && Array.isArray(someTour.guideOptions) && someTour.guideOptions.length === 0 && Array.isArray(someTour.eligible),
+  someTour && { go: someTour.guideOptions, el: someTour.eligible });
+const goResp = apiGuideOpts_({ token: token, dateKey: someTour.dateKey, time: someTour.time,
+  language: someTour.language, sfExt: someTour.sfExt ? 1 : '', isPrivate: someTour.isPrivate ? 1 : '', privIndex: someTour.privIndex || 1 });
+check('action=guideopts returns [{name,status}] dots for ONE shift on demand',
+  goResp && goResp.ok && Array.isArray(goResp.guideOptions) &&
+  goResp.guideOptions.every(o => o.name && ['free','overlap','busy','unavailable','vacation'].indexOf(o.status) !== -1),
+  goResp && goResp.guideOptions);
+check('action=guideopts is manager-only (a bad token is rejected)', apiGuideOpts_({ token: 'nope' }).ok === false, null);
 
 console.log('--- Manager window: near tours load first, far tours behind "Load more" ---');
 const FAR = dayKey(40);

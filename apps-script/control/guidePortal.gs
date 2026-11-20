@@ -282,6 +282,7 @@ function doGet(e) {
     switch (p.action) {
       case 'login':  out = apiLogin_(p); break;
       case 'tours':  out = apiTours_(p); break;
+      case 'guideopts': out = apiGuideOpts_(p); break;
       case 'save':   out = apiSave_(p);  break;
       case 'assign': out = apiAssign_(p); break;
       case 'move':   out = apiMoveBooking_(p); break;
@@ -1153,30 +1154,9 @@ function apiTours_(p) {
   let guidesByLanguage = null;
   let guideTourTypes = null;   // { name: {threeH, sf} } — lets the client's "Open a schedule" forms offer the right guides per type
   if (isManager) _t('mgrGuides', function () {
-    guidesByLanguage = {};
-    guideTourTypes = {};
-    const seniorityOf = {};
-    const raw = readGuidesRaw_();
-    const cols = guideColumns_(raw.header);
-    raw.rows.forEach(row => {
-      const g = parseGuideRow_(row, cols);
-      if (!g.name || !g.active) return;
-      seniorityOf[g.name] = g.seniority;
-      guideTourTypes[g.name] = g.tourTypes;
-      Object.keys(g.languages).forEach(l => {
-        if (g.languages[l] === true) {
-          (guidesByLanguage[l] = guidesByLanguage[l] || []).push(g.name);
-        }
-      });
-    });
-    // Most senior first (then alphabetical), so the assign list's top choice is
-    // the guide management would usually pick — often a one-tap decision. Every
-    // guide who speaks the language is offered (overlaps allowed), so there is no
-    // "busy" filtering to compute here any more.
-    Object.keys(guidesByLanguage).forEach(l => {
-      guidesByLanguage[l].sort((a, b) =>
-        (seniorityOf[a] - seniorityOf[b]) || a.localeCompare(b));
-    });
+    const mg = managerGuidesByLanguage_();
+    guidesByLanguage = mg.byLang;
+    guideTourTypes = mg.tourTypes;
     return 0;
   });
   // The manager "All tours" list is windowed too: build up to windowDays ahead, and
@@ -1184,35 +1164,13 @@ function apiTours_(p) {
   // offer "Load more" (a wider request regenerates the further-out slots + bookings).
   const managerHorizon = addDaysKey_(today, windowDays);
   const hasMore = windowDays < PORTAL.UPCOMING_DAYS;
-  // The assign-dropdown options (eligible guides + their free / overlap / busy / vacation /
-  // unavailable dots) depend only on ASSIGNMENTS + the guide roster + availability — never
-  // on check-ins — so compute them for every manager shift ONCE and cache them, keyed on
-  // the global version (an assign/move bumps it) plus the config version (a guide or
-  // availability edit). A routine manager poll (check-ins only) then REUSES this instead of
-  // recomputing O(shifts x guides) dropdown statuses every time: that recompute was the
-  // heavy half of the old per-poll mgrTours cost that serialized against — and timed out —
-  // the guides' own loads during a busy assign period.
-  const guideOptsById = isManager ? _t('mgrOpts', function () {
-    return cachedRead_('gopts:' + managerHorizon + ':' + configVersion_(), PORTAL.CACHE_TTL, function () {
-      const busyMap = buildBusyMap_(schedule);
-      const m = {};
-      schedule.filter(s => s.dateKey <= managerHorizon).forEach(shift => {
-        const aid = shiftKey_(shift.dateKey, shift.minutes, shift.language) + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
-        // Only a tour that has GUESTS or an assigned guide gets its per-guide status DOTS
-        // computed here. An empty, unassigned offer card — most of them, since availability is
-        // open all day in every language — just carries its cheap eligible-guide list; the
-        // client falls back to that list (no dots) for its dropdown. Computing a dot for every
-        // guide on every empty offer shift was the mgrOpts cost that ran 4-6s under CPU
-        // throttling on a manager poll. The dots reappear the moment a booking or guide lands.
-        const live = (shift.assigned && shift.assigned.length) || bookingsForShift_(bookingsByKey, shift).length > 0;
-        m[aid] = {
-          eligible: eligibleGuidesForShift_(shift, guidesByLanguage),
-          guideOptions: live ? guideStatusesForShift_(shift, guidesByLanguage, busyMap) : []
-        };
-      });
-      return m;
-    });
-  }) : {};
+  // The assign-dropdown's per-guide availability DOTS (free / overlap / busy / vacation /
+  // unavailable) are NO LONGER computed here for every card. Computing a dot for every guide
+  // on every shift — a wall of empty offer cards, all languages, every day — was the mgrOpts
+  // cost that ran 4-6s on a manager poll under CPU throttling. Instead each card carries only
+  // its cheap eligible-guide LIST (built inline below), and the client fetches the dots for ONE
+  // card ON DEMAND (action=guideopts, apiGuideOpts_) the moment the manager opens that card's
+  // assign dropdown. Same information, computed only for the card actually being assigned.
   if (isManager) _t('mgrTours', function () {
     // Check-ins come from the targeted ledger read above, so a check-in shows no
     // matter which assigned guide on the tour tapped it.
@@ -1250,8 +1208,8 @@ function apiTours_(p) {
         dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
         time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
         privIndex: shift.privIndex || 1,
-        eligible: (guideOptsById[aid] || {}).eligible || [],
-        guideOptions: (guideOptsById[aid] || {}).guideOptions || [],
+        eligible: eligibleGuidesForShift_(shift, guidesByLanguage),   // cheap: just the language's guides
+        guideOptions: [],                                             // dots fetched on demand (action=guideopts)
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
         sfExt: !!shift.sfExt, tourName: shift.tourName || (shift.sfExt ? 'SF' : '3h'),
@@ -1281,6 +1239,67 @@ function apiTours_(p) {
   // version keys in respKey, so it can never serve a stale assignment or check-in.
   toursResponseCachePut_(respKey, resp);
   return resp;
+}
+
+// action=guideopts — MANAGER ONLY. The assign dropdown's per-guide availability DOTS
+// (free / overlap / busy / vacation / unavailable) for ONE shift, fetched ON DEMAND the moment
+// a manager opens that card's assign dropdown — so the dots are never computed for every card
+// on every poll (that was the old mgrOpts 4-6s cost). Cheap: it reuses the SAME warm 'asm:'
+// schedule cache a tours poll fills, builds the busy map once, and scores just this one shift.
+//   params: token, dateKey, time, language, sfExt, isPrivate, privIndex
+function apiGuideOpts_(p) {
+  __RRX = {};
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me || !me.manager) return { ok: false, error: 'Managers only' };
+  const dateKey = String(p.dateKey || '').trim();
+  const language = String(p.language || '').trim();
+  const time = normTime24_(String(p.time || ''));
+  const isSf = String(p.sfExt || '') === '1';
+  const isPriv = !isSf && String(p.isPrivate || '') === '1';
+  const privIndex = Number(p.privIndex) || 1;
+  if (!dateKey || !language || !time) return { ok: false, error: 'Missing shift info' };
+  const minutes = timeToMinutes_(time);
+
+  // The assembled schedule (only for the busy-overlap check) — the SAME cache key a manager
+  // tours poll fills, so this is a cache hit in the normal case; a miss cold-builds it once.
+  const horizon = PORTAL.MANAGER_WINDOW_DAYS;
+  const schedule = cachedRead_('asm:' + horizon, PORTAL.CACHE_TTL, function () {
+    const feed = readPortalFeed_();
+    if (feed) return assembleSchedule_(feed, horizon);
+    const s = readSchedule_();
+    appendWeeklyScheduleShifts_(s, horizon);
+    applyClearedOverlay_(s); applyWeeklyDefaults_(s); applySecondGuideOverlay_(s); applyNoShowOverlay_(s); sortSchedule_(s);
+    return s;
+  });
+  const busyMap = buildBusyMap_(schedule);
+  const guidesByLanguage = managerGuidesByLanguage_().byLang;
+  const shift = { dateKey: dateKey, minutes: minutes, time: time, language: language, sfExt: isSf, private: isPriv, privIndex: privIndex };
+  const id = shiftKey_(dateKey, minutes, language) + '|' + variantKey_(isSf, isPriv, privIndex);
+  return { ok: true, id: id, guideOptions: guideStatusesForShift_(shift, guidesByLanguage, busyMap) };
+}
+
+// Active guides grouped by language (most-senior first) + each guide's tour types. Shared by
+// the manager tours path (mgrGuides) and the on-demand guideopts action so the two can't drift.
+// Memoised per request; reads the Guides tab once.
+function managerGuidesByLanguage_() {
+  if (__RRX.mgrGuides) return __RRX.mgrGuides;
+  const byLang = {}, tourTypes = {}, seniorityOf = {};
+  const raw = readGuidesRaw_();
+  const cols = guideColumns_(raw.header);
+  raw.rows.forEach(function (row) {
+    const g = parseGuideRow_(row, cols);
+    if (!g.name || !g.active) return;
+    seniorityOf[g.name] = g.seniority;
+    tourTypes[g.name] = g.tourTypes;
+    Object.keys(g.languages).forEach(function (l) { if (g.languages[l] === true) (byLang[l] = byLang[l] || []).push(g.name); });
+  });
+  // Most senior first (then alphabetical) — the assign list's top choice is usually the pick.
+  Object.keys(byLang).forEach(function (l) {
+    byLang[l].sort(function (a, b) { return (seniorityOf[a] - seniorityOf[b]) || a.localeCompare(b); });
+  });
+  return (__RRX.mgrGuides = { byLang: byLang, tourTypes: tourTypes });
 }
 
 
