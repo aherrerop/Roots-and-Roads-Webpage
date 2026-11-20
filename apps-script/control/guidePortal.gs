@@ -1190,9 +1190,16 @@ function apiTours_(p) {
       const m = {};
       schedule.filter(s => s.dateKey <= managerHorizon).forEach(shift => {
         const aid = shiftKey_(shift.dateKey, shift.minutes, shift.language) + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex);
+        // Only a tour that has GUESTS or an assigned guide gets its per-guide status DOTS
+        // computed here. An empty, unassigned offer card — most of them, since availability is
+        // open all day in every language — just carries its cheap eligible-guide list; the
+        // client falls back to that list (no dots) for its dropdown. Computing a dot for every
+        // guide on every empty offer shift was the mgrOpts cost that ran 4-6s under CPU
+        // throttling on a manager poll. The dots reappear the moment a booking or guide lands.
+        const live = (shift.assigned && shift.assigned.length) || bookingsForShift_(bookingsByKey, shift).length > 0;
         m[aid] = {
           eligible: eligibleGuidesForShift_(shift, guidesByLanguage),
-          guideOptions: guideStatusesForShift_(shift, guidesByLanguage, busyMap)
+          guideOptions: live ? guideStatusesForShift_(shift, guidesByLanguage, busyMap) : []
         };
       });
       return m;
