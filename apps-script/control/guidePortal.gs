@@ -884,6 +884,14 @@ function apiTours_(p) {
   // frees the serialized runtime for loads that actually have changes. `now` is re-stamped
   // so the phone's "Updated" time stays truthful. (We read both versions ONCE here; this
   // execution is read-only and the runtime is serialized, so they can't change under us.)
+  // ⚠ WHAT MIGHT FAIL: this serves a WHOLE prior response, so correctness rests entirely on
+  // the key. It is safe ONLY while every change that alters the response bumps one of these
+  // two versions: a portal assign/move/close/no-show bumps cacheVersion_, a check-in/uncheckin
+  // bumps feedCacheVersion_. A change that bumps NEITHER would be served stale for up to
+  // RESP_CACHE_TTL (25 s). (A NEW BOOKING arriving from the Booking project writes the shared
+  // BookingSheet without bumping these — but that was already true of the bk:/asm: caches, and
+  // the 25 s TTL bounds it; the manager sees it within the minute.) If you add a mutation,
+  // bump a version in it or add a term here.
   const respKey = 'resp:' + normName_(name) + ':' + windowDays + ':' + cacheVersion_() + ':' + feedCacheVersion_();
   const respHit = toursResponseCacheGet_(respKey);
   if (respHit) {
@@ -2285,14 +2293,17 @@ function apiHealth_() {
   // The EXACT spreadsheets this deployment reads/writes, resolved the same way the real
   // read/write paths do (control_/bookingSheetId_/ledgerSS_/…). This is the isolation
   // check: on STAGING every one of these must be a COPY id, never the live sheet.
+  // Public endpoint: show only the LAST 6 chars of each id — enough to tell a COPY from the
+  // live sheet when verifying a deployment, without publishing the full (semi-sensitive) id.
+  var tail6 = function (id) { id = String(id || ''); return id.length > 6 ? '…' + id.slice(-6) : id; };
   try {
     out.sheets = {
-      control: control_().getId(),
-      booking: bookingSheetId_(),
-      guide3h: guideFileId_(),
-      guideSf: sfGuideFileId_()
+      control: tail6(control_().getId()),
+      booking: tail6(bookingSheetId_()),
+      guide3h: tail6(guideFileId_()),
+      guideSf: tail6(sfGuideFileId_())
     };
-    try { out.sheets.ledger = ledgerSS_().getId(); } catch (e) { out.sheets.ledger = '(none)'; }
+    try { out.sheets.ledger = tail6(ledgerSS_().getId()); } catch (e) { out.sheets.ledger = '(none)'; }
   } catch (e) { /* diagnostic only */ }
   try { out.env = PropertiesService.getScriptProperties().getProperty('ENV') || 'production'; } catch (e) {}
   try {
@@ -3729,6 +3740,16 @@ function assembleSchedule_(feed, horizonDays) {
 // caller falls back to a cold build and the new booking can never be hidden. Maxim: cannot
 // miss a booking.
 function reapplySnapshotMutations_(schedule, bookingsByKey, today, maxKey) {
+  // ⚠ WHAT MIGHT FAIL (this is the assignment-DISPLAY path — a bug here shows the WRONG guide,
+  // which is exactly the Nov-19 incident's symptom). The invariant: the output MUST equal a
+  // cold assembleSchedule_. It holds because (a) the guide re-derivation below is byte-for-byte
+  // the same rule as buildScheduleFromFeed_ (first feed row of the matching variant with a
+  // guide wins — placeholder rows included), and (b) the overlays are re-applied in the SAME
+  // order. The one KNOWN gap: a brand-new EMPTY offer slot added by a Weekly_Schedule edit in
+  // the last ~5 min is NOT force-rebuilt (only new BOOKING slots are, by the safety net below)
+  // — it appears on the next snapshot rebuild. That is acceptable (no booking = no one missed;
+  // a cannot-miss BOOKING slot IS guarded). If you ever add a new overlay or change the
+  // guide-pick rule in buildScheduleFromFeed_, mirror it HERE too or the fast path will drift.
   // 1. Re-derive each shift's REAL (slot-1) assignment from the fresh feed Guide column,
   //    exactly as buildScheduleFromFeed_ does (first feed row carrying a guide wins),
   //    discarding whatever the snapshot baked in. The overlays below re-add the weekly
