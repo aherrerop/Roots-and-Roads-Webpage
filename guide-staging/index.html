@@ -433,17 +433,17 @@ function parseTypedTime(raw){
    guides stay logged in (~30 days, server-enforced) and the last tour list
    renders instantly while fresh data loads. */
 const store = {
-  get token(){ return localStorage.getItem("rr_token"); },
-  set token(v){ v?localStorage.setItem("rr_token",v):localStorage.removeItem("rr_token"); },
-  get name(){ return localStorage.getItem("rr_name")||""; },
-  set name(v){ localStorage.setItem("rr_name",v||""); },
-  get cache(){ try{ return JSON.parse(localStorage.getItem("rr_tours")||"null"); }catch(e){ return null; } },
-  set cache(v){ try{ v?localStorage.setItem("rr_tours",JSON.stringify(v)):localStorage.removeItem("rr_tours"); }catch(e){} },
+  get token(){ return localStorage.getItem("rrstg_token"); },
+  set token(v){ v?localStorage.setItem("rrstg_token",v):localStorage.removeItem("rrstg_token"); },
+  get name(){ return localStorage.getItem("rrstg_name")||""; },
+  set name(v){ localStorage.setItem("rrstg_name",v||""); },
+  get cache(){ try{ return JSON.parse(localStorage.getItem("rrstg_tours")||"null"); }catch(e){ return null; } },
+  set cache(v){ try{ v?localStorage.setItem("rrstg_tours",JSON.stringify(v)):localStorage.removeItem("rrstg_tours"); }catch(e){} },
   // Which tab the user was last on ("tours" = My tours, "sched" = All tours /
   // All guides). Persisted so a reload keeps you where you were — a manager lives
   // in All tours and shouldn't be bounced back to My tours on every refresh.
-  get tab(){ return localStorage.getItem("rr_tab")||""; },
-  set tab(v){ try{ localStorage.setItem("rr_tab", v||""); }catch(e){} }
+  get tab(){ return localStorage.getItem("rrstg_tab")||""; },
+  set tab(v){ try{ localStorage.setItem("rrstg_tab", v||""); }catch(e){} }
 };
 let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={}, GUIDE_TOUR_TYPES={};
 // HISTORY view (manager-only): the last 2 days of tours, rendered read-only except
@@ -462,8 +462,8 @@ let HISTORY_OPEN_CARDS=new Set();
 // Which tour cards are EXPANDED, by tour id — so an auto-refresh (poll) never
 // collapses a card the manager is watching. Backed by localStorage so a
 // version-reload keeps it open too; self-prunes to cards still on screen.
-let OPEN_CARDS=(function(){ try{ return new Set(JSON.parse(localStorage.getItem("rr_open")||"[]")); }catch(e){ return new Set(); } })();
-function saveOpenCards(){ try{ localStorage.setItem("rr_open", JSON.stringify([...OPEN_CARDS])); }catch(e){} }
+let OPEN_CARDS=(function(){ try{ return new Set(JSON.parse(localStorage.getItem("rrstg_open")||"[]")); }catch(e){ return new Set(); } })();
+function saveOpenCards(){ try{ localStorage.setItem("rrstg_open", JSON.stringify([...OPEN_CARDS])); }catch(e){} }
 let HAS_MORE=false, WINDOW_DAYS=3, MANAGER_DAYS=0; const MORE_DAYS=3;   // default load window (both roles); "Load 3 more days"
 let LAST_FRESH="";                                                       // last successful refresh time
 let LOAD_FAILS=0;                        // consecutive failed loads — gates the "can't reach" banner
@@ -785,9 +785,9 @@ const PENDING_TTL = 90000;               // hold the optimistic value up to 90s
 /* Persisted in localStorage so it SURVIVES A FULL PAGE RELOAD — reloading right
    after assigning used to wipe the in-memory overlay and let a stale read revert
    the screen. Now the pending value is reloaded on boot and keeps holding. */
-function loadPending(){ try{ const p=JSON.parse(localStorage.getItem("rr_pending")||"{}"); const n=Date.now();
+function loadPending(){ try{ const p=JSON.parse(localStorage.getItem("rrstg_pending")||"{}"); const n=Date.now();
   Object.keys(p).forEach(k=>{ if(!p[k]||p[k].until<n) delete p[k]; }); return p; }catch(e){ return {}; } }
-function savePending(){ try{ localStorage.setItem("rr_pending", JSON.stringify(PENDING_ASSIGN)); }catch(e){} }
+function savePending(){ try{ localStorage.setItem("rrstg_pending", JSON.stringify(PENDING_ASSIGN)); }catch(e){} }
 let PENDING_ASSIGN = loadPending();      // shiftKey -> { guide, until }
 function shiftIdKey(o){
   const isPriv=(o.isPrivate==1||o.isPrivate===true||o.isPrivate==="1");
@@ -802,9 +802,9 @@ function setPendingAssign(info, guide){
    it — if it hit a lagging Sheets replica — flipped the guest back to "Check in"
    (the double-refresh). Persisted + held for the settle window, exactly like a
    pending assign. Keyed by bookingId|dateKey. */
-function loadPendingCk(){ try{ const p=JSON.parse(localStorage.getItem("rr_pendck")||"{}"); const n=Date.now();
+function loadPendingCk(){ try{ const p=JSON.parse(localStorage.getItem("rrstg_pendck")||"{}"); const n=Date.now();
   Object.keys(p).forEach(k=>{ if(!p[k]||p[k].until<n) delete p[k]; }); return p; }catch(e){ return {}; } }
-function savePendingCk(){ try{ localStorage.setItem("rr_pendck", JSON.stringify(PENDING_CHECKIN)); }catch(e){} }
+function savePendingCk(){ try{ localStorage.setItem("rrstg_pendck", JSON.stringify(PENDING_CHECKIN)); }catch(e){} }
 let PENDING_CHECKIN = loadPendingCk();
 function setPendingCheckin(bookingId, dateKey, n){ if(!bookingId) return;
   PENDING_CHECKIN[bookingId+"|"+dateKey] = { n: Math.max(0, +n||0), until: Date.now()+PENDING_TTL }; savePendingCk(); }
@@ -1525,8 +1525,8 @@ function buildTourData(tourId){
    re-sent automatically until confirmed — surviving a dropped signal and a full
    reload. So a tapped check-in is never lost; the reconciler + the union read on
    the server make sure it lands in both the feed and the ledger. */
-function ckQueueLoad(){ try{ return JSON.parse(localStorage.getItem("rr_ckqueue")||"[]"); }catch(e){ return []; } }
-function ckQueueSave(q){ try{ localStorage.setItem("rr_ckqueue", JSON.stringify(q||[])); }catch(e){} }
+function ckQueueLoad(){ try{ return JSON.parse(localStorage.getItem("rrstg_ckqueue")||"[]"); }catch(e){ return []; } }
+function ckQueueSave(q){ try{ localStorage.setItem("rrstg_ckqueue", JSON.stringify(q||[])); }catch(e){} }
 function ckEnqueue(data){ if(!data) return; const q=ckQueueLoad(); q.push({data:data, ts:Date.now()}); ckQueueSave(q); }
 /* Queue a save keyed by its TOUR, so rapid count edits keep ONE entry (the latest) instead
    of stacking — and a confirmed save can drop exactly that tour's copy. The stored payload
@@ -1559,8 +1559,8 @@ async function ckFlush(){
    LAST few changes silently vanished on the next reopen. Now a TRANSIENT failure
    is QUEUED and retried on every poll/focus/reconnect (exactly like a check-in),
    and the optimistic overlay is HELD meanwhile, so a burst of changes all land. */
-function asgQueueLoad(){ try{ return JSON.parse(localStorage.getItem("rr_asgqueue")||"[]"); }catch(e){ return []; } }
-function asgQueueSave(q){ try{ localStorage.setItem("rr_asgqueue", JSON.stringify(q||[])); }catch(e){} }
+function asgQueueLoad(){ try{ return JSON.parse(localStorage.getItem("rrstg_asgqueue")||"[]"); }catch(e){ return []; } }
+function asgQueueSave(q){ try{ localStorage.setItem("rrstg_asgqueue", JSON.stringify(q||[])); }catch(e){} }
 function asgEnqueue(info, guide){ if(!info) return; const k=shiftIdKey(info);
   const q=asgQueueLoad().filter(it=>shiftIdKey(it.info)!==k);   // a newer choice supersedes an older queued one
   q.push({info:info, guide:guide||"", ts:Date.now()}); asgQueueSave(q); }
