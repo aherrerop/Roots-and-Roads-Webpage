@@ -314,7 +314,7 @@ const BACKUP_PORTAL_URL = "";
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-11-20-lazy-dots";
+const PORTAL_VERSION = "2026-11-21-page-dots";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -459,6 +459,7 @@ const store = {
   set tab(v){ try{ localStorage.setItem("rr_tab", v||""); }catch(e){} }
 };
 let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={}, GUIDE_TOUR_TYPES={};
+let AVAIL_SLOTS=null, GUIDE_VACATIONS={}, BUSY_MAP={};   // inputs for the page-computed assign-dropdown dots
 // HISTORY view (manager-only): the last 2 days of tours, rendered read-only except
 // for the no-show + undo-check-in controls. HISTORY_RENDER is true only while the
 // history cards' HTML is being built, so the shared card helpers drop the editing
@@ -887,7 +888,10 @@ function renderAll(r){
   HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||3;
   GUIDES_BY_LANG=r.guidesByLanguage||{};
   GUIDE_TOUR_TYPES=r.guideTourTypes||{};
+  AVAIL_SLOTS=r.availSlots||null;
+  GUIDE_VACATIONS=r.guideVacations||{};
   const all=r.allTours||[];
+  BUSY_MAP=buildBusyMap(all);   // who's on what -> the assign-dropdown dots, computed on the page
   renderTours(r.tours||[], "toursPane");
   if(MANAGER){
     // Managers get three tabs — split the full list by tour type so each stays
@@ -1019,28 +1023,44 @@ function guidesForType(names, isSf){
     return isSf ? !!t.sf : !!t.threeH;
   });
 }
-/* Availability DOTS are fetched ON DEMAND (action=guideopts), per card, the moment the
-   manager opens that card's assign dropdown — so the server never computes a dot for every
-   guide on every card on every poll (that was the 4-6s mgrOpts cost). Cached per shift id for
-   the session; cleared on an assign (assignments change who's busy). The dropdown always works
-   from the plain eligible list; the dots enhance it when they arrive. */
-let GUIDE_OPTS_CACHE = {};   // shiftId -> [{name,status}]
-const ASG_DOT={free:"🟢",overlap:"🟡",busy:"🔴",unavailable:"⚪",vacation:"🌴"};
-function applyGuideDots(sel, opts){
-  const byName={}; (opts||[]).forEach(o=>{ byName[o.name]=o.status; });
-  [].forEach.call(sel.options, op=>{ if(!op.value) return; const d=ASG_DOT[byName[op.value]]; op.textContent=(d?d+" ":"")+op.value; });
+/* The assign-dropdown availability DOTS are computed ON THE PAGE, from data every load already
+   carries: who ticked availability (AVAIL_SLOTS), each guide's vacation ranges (GUIDE_VACATIONS)
+   and who is on what (BUSY_MAP, built from allTours). So the dots show INSTANTLY on every card —
+   empty cards included — with ZERO per-card server work (that per-poll server compute was the
+   4-6s overload cost). This is a 1:1 mirror of the server's guideStatusesForShift_; if that
+   rule changes, change this too. */
+function _dotMins(time){ const m=String(time||"").match(/(\d{1,2}):(\d{2})/); return m?(+m[1]*60 + +m[2]):0; }
+function _dotMs(dateKey, time){ const d=new Date(String(dateKey)+"T00:00:00"); return isNaN(d)?0:(d.getTime()+_dotMins(time)*60000); }
+function _dotVariant(t){ return t.sfExt ? "SF" : (t.isPrivate ? "P"+(t.privIndex||1) : "R"); }
+function _dotKey(t){ return t.dateKey+"|"+_dotMins(t.time)+"|"+String(t.language||"").toLowerCase()+"|"+_dotVariant(t); }
+function _dotSlotKey(t){ return t.sfExt ? t.dateKey+"|SF" : t.dateKey+"|"+(_dotMins(t.time)<840?"AM":"PM"); }
+function buildBusyMap(allTours){
+  const m={};
+  (allTours||[]).forEach(t=>{ const ms=_dotMs(t.dateKey,t.time), k=_dotKey(t);
+    (t.assigned||[]).forEach(n=>{ const nk=String(n||"").trim().toLowerCase(); if(nk)(m[nk]=m[nk]||[]).push({ms:ms,k:k}); }); });
+  return m;
 }
-async function loadGuideDots(sel){
-  if(!sel || sel._dotsDone || sel._dotsLoading) return;
-  let info; try{ info=JSON.parse(sel.dataset.assign); }catch(e){ return; }
-  const key=sel.dataset.shiftid||"";
-  if(key && GUIDE_OPTS_CACHE[key]){ applyGuideDots(sel, GUIDE_OPTS_CACHE[key]); sel._dotsDone=true; return; }
-  sel._dotsLoading=true;
-  try{
-    const r=await api("guideopts", {dateKey:info.dateKey, time:info.time, language:info.language, isPrivate:info.isPrivate, privIndex:info.privIndex, sfExt:info.sfExt});
-    if(r && r.ok && Array.isArray(r.guideOptions)){ if(r.id) GUIDE_OPTS_CACHE[r.id]=r.guideOptions; applyGuideDots(sel, r.guideOptions); sel._dotsDone=true; }
-  }catch(e){ /* keep the plain list — dots are optional info */ }
-  sel._dotsLoading=false;
+function guideStatus(t, name){
+  const nk=String(name||"").trim().toLowerCase();
+  // On vacation this date -> 🌴 (still selectable; the dot is info only).
+  const vac=(GUIDE_VACATIONS||{})[name]||[];
+  for(let i=0;i<vac.length;i++){ if(t.dateKey>=vac[i].from && t.dateKey<=vac[i].to) return "vacation"; }
+  // Did not tick availability for this slot -> ⚪ (only when we actually have data for the date).
+  const av=AVAIL_SLOTS;
+  if(av && av.fromKey && t.dateKey>=av.fromKey && t.dateKey<=av.toKey){
+    const set=(av.bySlot||{})[_dotSlotKey(t)]||{}; if(!set[nk]) return "unavailable";
+  }
+  // busy (same time 🔴) / overlap (a tour within 5h 🟡) / free 🟢.
+  const st=_dotMs(t.dateKey,t.time), thisKey=_dotKey(t), sepMs=5*3600000;
+  const slots=(BUSY_MAP||{})[nk]||[]; let status="free";
+  for(let i=0;i<slots.length;i++){
+    if(slots[i].k===thisKey) continue;                 // their own assignment here doesn't count
+    if(t.sfExt && /\|SF$/.test(slots[i].k)) continue;   // SF is stackable, no clash SF-vs-SF
+    const d=Math.abs(slots[i].ms-st);
+    if(d===0){ status="busy"; break; }
+    else if(d<sepMs) status="overlap";
+  }
+  return status;
 }
 
 /* Manager-only: dropdown of guides who SPEAK the tour's language. Picking one
@@ -1056,20 +1076,17 @@ function assignSelect(t, slot){
   //   for this slot) · vacation 🌴 (on their blocked/vacation dates). Falls back to
   //   the plain eligible list if guideOptions is absent.
   const DOT={free:"🟢",overlap:"🟡",busy:"🔴",unavailable:"⚪",vacation:"🌴"};
-  // Prefer dots already fetched for this card (cache); else the server's (now empty) eager
-  // list; else the plain eligible list. The dots load on open (loadGuideDots) and the next
-  // render picks them up from the cache.
-  const cachedDots = GUIDE_OPTS_CACHE[t.id];
-  let opts = (cachedDots && cachedDots.length) ? cachedDots.slice()
-    : (Array.isArray(t.guideOptions)&&t.guideOptions.length) ? t.guideOptions.slice()
-    : (t.eligible||guidesForType(GUIDES_BY_LANG[t.language]||[], t.sfExt)).map(n=>({name:n,status:""}));
+  // The eligible guides for this tour's language + type, each with its availability dot
+  // computed ON THE PAGE (guideStatus) — instant, no fetch, shown on every card.
+  let opts = (t.eligible||guidesForType(GUIDES_BY_LANG[t.language]||[], t.sfExt))
+    .map(n=>({name:n, status: guideStatus(t, n)}));
   const g1=(t.assigned&&t.assigned[0])||"", g2=t.secondGuide||"";
   const cur = slot===2 ? g2 : g1;
   const other = slot===2 ? g1 : g2;               // already on the other slot -> not offered here
   if(other) opts=opts.filter(o=>o.name!==other);
   if(cur && !opts.some(o=>o.name===cur)) opts=[{name:cur,status:""}].concat(opts);
   const legend="🟢 available · 🟡 overlapping tour (within 5h) · 🔴 already on a tour this time · ⚪ did not mark availability · 🌴 on vacation — you can still pick anyone";
-  let html='<select class="asgsel" title="'+esc(legend)+'" data-shiftid="'+esc(t.id||"")+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",slot:slot}))+'\'>';
+  let html='<select class="asgsel" title="'+esc(legend)+'" data-assign=\''+esc(JSON.stringify({dateKey:t.dateKey,time:t.time,language:t.language,isPrivate:t.isPrivate?1:"",privIndex:t.privIndex||1,sfExt:t.sfExt?1:"",slot:slot}))+'\'>';
   html+='<option value=""'+(cur?'':' selected')+'>Not assigned</option>';
   opts.forEach(o=>{ const d=DOT[o.status]?DOT[o.status]+" ":""; html+='<option value="'+esc(o.name)+'"'+(o.name===cur?' selected':'')+'>'+d+esc(o.name)+'</option>'; });
   return html+'</select>';
@@ -1283,13 +1300,8 @@ function bindTours(tours){
   });
   // Manager assign dropdowns.
   document.querySelectorAll(".asgsel").forEach(sel=>{
-    // Fetch THIS card's availability dots the moment it's opened (mouse or keyboard) — the
-    // server no longer sends dots for every card, so they load on demand, per card.
-    sel.addEventListener("mousedown", ()=>loadGuideDots(sel));
-    sel.addEventListener("focus", ()=>loadGuideDots(sel));
     sel.onchange=async ()=>{
       let info; try{ info=JSON.parse(sel.dataset.assign); }catch(e){ return; }
-      GUIDE_OPTS_CACHE={};                 // an assignment just changed who's busy -> dots are stale
       const newGuide=sel.value;
       MUTATING++; LAST_EDIT=Date.now();
       // SECOND GUIDE (slot 2): a portal overlay — immediately consistent, so no

@@ -1168,9 +1168,13 @@ function apiTours_(p) {
   // unavailable) are NO LONGER computed here for every card. Computing a dot for every guide
   // on every shift — a wall of empty offer cards, all languages, every day — was the mgrOpts
   // cost that ran 4-6s on a manager poll under CPU throttling. Instead each card carries only
-  // its cheap eligible-guide LIST (built inline below), and the client fetches the dots for ONE
-  // card ON DEMAND (action=guideopts, apiGuideOpts_) the moment the manager opens that card's
-  // assign dropdown. Same information, computed only for the card actually being assigned.
+  // its cheap eligible-guide LIST (built inline below), and the DOTS are computed ON THE PAGE
+  // from three small inputs we send ONCE per load — availSlots (who ticked which slot),
+  // guideVacations, and the tours themselves (who is already assigned where). The client's
+  // guideStatus() is a 1:1 mirror of guideStatusesForShift_ below, so a dot shows instantly on
+  // every card (empty ones included) with zero per-poll server cost and nothing to fetch.
+  // apiGuideOpts_ (action=guideopts) still computes the same dots server-side and stays as a
+  // verified fallback, but the live client no longer calls it.
   if (isManager) _t('mgrTours', function () {
     // Check-ins come from the targeted ledger read above, so a check-in shows no
     // matter which assigned guide on the tour tapped it.
@@ -1209,7 +1213,7 @@ function apiTours_(p) {
         time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
         privIndex: shift.privIndex || 1,
         eligible: eligibleGuidesForShift_(shift, guidesByLanguage),   // cheap: just the language's guides
-        guideOptions: [],                                             // dots fetched on demand (action=guideopts)
+        guideOptions: [],                                             // dots computed ON THE PAGE (guideStatus) from availSlots/guideVacations/tours
         assigned: shift.assigned, guide: primary, coGuides: shift.assigned, status: shift.status,
         isPrivate: !!shift.private,
         sfExt: !!shift.sfExt, tourName: shift.tourName || (shift.sfExt ? 'SF' : '3h'),
@@ -1229,6 +1233,11 @@ function apiTours_(p) {
 
   const resp = { ok: true, guide: name, manager: isManager, tours,
            schedule: scheduleView, allTours, guidesByLanguage, guideTourTypes,
+           // Inputs for the CLIENT to compute the assign-dropdown dots itself (who ticked
+           // availability per date+half-day, and each guide's vacation ranges). Sent once per
+           // load; the page derives the busy/overlap dots from allTours. Manager-only.
+           availSlots: isManager ? availBySlot_() : null,
+           guideVacations: isManager ? (managerGuidesByLanguage_().vacations || {}) : null,
            hasMore: hasMore, windowDays: windowDays,
            timings: T,   // per-phase ms (tok/sched/book/assemble/me/backfill/closed/mine/mgrGuides/mgrTours)
            // Freshness: the server's own clock at the moment this data was built,
@@ -1285,7 +1294,7 @@ function apiGuideOpts_(p) {
 // Memoised per request; reads the Guides tab once.
 function managerGuidesByLanguage_() {
   if (__RRX.mgrGuides) return __RRX.mgrGuides;
-  const byLang = {}, tourTypes = {}, seniorityOf = {};
+  const byLang = {}, tourTypes = {}, seniorityOf = {}, vacations = {};
   const raw = readGuidesRaw_();
   const cols = guideColumns_(raw.header);
   raw.rows.forEach(function (row) {
@@ -1293,13 +1302,14 @@ function managerGuidesByLanguage_() {
     if (!g.name || !g.active) return;
     seniorityOf[g.name] = g.seniority;
     tourTypes[g.name] = g.tourTypes;
+    if (g.vacations && g.vacations.length) vacations[g.name] = g.vacations;   // for the client dot
     Object.keys(g.languages).forEach(function (l) { if (g.languages[l] === true) (byLang[l] = byLang[l] || []).push(g.name); });
   });
   // Most senior first (then alphabetical) — the assign list's top choice is usually the pick.
   Object.keys(byLang).forEach(function (l) {
     byLang[l].sort(function (a, b) { return (seniorityOf[a] - seniorityOf[b]) || a.localeCompare(b); });
   });
-  return (__RRX.mgrGuides = { byLang: byLang, tourTypes: tourTypes });
+  return (__RRX.mgrGuides = { byLang: byLang, tourTypes: tourTypes, vacations: vacations });
 }
 
 

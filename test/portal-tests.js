@@ -214,9 +214,32 @@ check('one Move applies BOTH language and time in a single call', /api\("move",\
 check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime && \(!dateSel \|\| dateSel\.value===info\.fromDate\)\)/.test(html), null);
 // Assign dropdown shows an availability dot per guide (info only) but every guide
 // stays assignable; the option VALUE is still the plain name so assign sends it.
-check('the assign dropdown renders a status dot per guide from guideOptions', /DOT=\{free:"🟢",overlap:"🟡",busy:"🔴",unavailable:"⚪",vacation:"🌴"\}/.test(html) && /Array\.isArray\(t\.guideOptions\)/.test(html), null);
+check('the assign dropdown computes a status dot per guide ON THE PAGE (guideStatus)', /DOT=\{free:"🟢",overlap:"🟡",busy:"🔴",unavailable:"⚪",vacation:"🌴"\}/.test(html) && /status:\s*guideStatus\(t, ?n\)/.test(html), null);
 check('a guide with no availability shows the ⚪ grey dot (no explanatory legend — managers know)', /unavailable:"⚪"/.test(html) && !/not marked avail/.test(html), null);
 check('a guide on vacation shows the 🌴 dot (and stays selectable)', /vacation:"🌴"/.test(html) && /on vacation — you can still pick anyone/.test(html), null);
+
+// Client-side dot computation (guideStatus) — must match the server's guideStatusesForShift_.
+// Extract the REAL functions (no copy) and feed them the module vars they read.
+(function(){
+  const s = html.indexOf('function _dotMins(time){');
+  const e = html.indexOf('/* Manager-only: dropdown of guides who SPEAK');
+  if (s < 0 || e < 0 || e < s) { check('could locate the client dot block', false, [s,e]); return; }
+  const mk = new Function('GUIDE_VACATIONS','AVAIL_SLOTS','BUSY_MAP',
+    html.slice(s, e) + '\nreturn { guideStatus:guideStatus, buildBusyMap:buildBusyMap };');
+  const D = '2027-06-15';
+  const shift = { dateKey:D, time:'12:00', language:'English', sfExt:false, isPrivate:false, privIndex:1 };
+  const busy = mk({},null,{}).buildBusyMap([
+    { dateKey:D, time:'12:00', language:'French',  assigned:['Carlos'] },   // DIFFERENT tour, SAME time -> busy
+    { dateKey:D, time:'14:00', language:'English', assigned:['Albert'] }    // 2h later -> overlap
+  ]);
+  check('client dot: a SAME-time guide is busy',    mk({},null,busy).guideStatus(shift,'Carlos')==='busy', null);
+  check('client dot: a within-5h guide is overlap', mk({},null,busy).guideStatus(shift,'Albert')==='overlap', null);
+  check('client dot: a guide with no tours is free',mk({},null,busy).guideStatus(shift,'Polina')==='free', null);
+  check('client dot: a guide on vacation -> vacation', mk({Carlos:[{from:D,to:D}]},null,{}).guideStatus(shift,'Carlos')==='vacation', null);
+  check('client dot: availability data present but no tick -> unavailable', mk({},{fromKey:D,toKey:D,bySlot:{}},{}).guideStatus(shift,'Polina')==='unavailable', null);
+  const self = mk({},null,{}).buildBusyMap([{ dateKey:D, time:'12:00', language:'English', assigned:['Carlos'] }]);
+  check('client dot: own assignment on THIS shift does not mark busy', mk({},null,self).guideStatus(shift,'Carlos')==='free', null);
+})();
 check('the assign option value stays the plain guide name (dot is display-only)', /value="'\+esc\(o\.name\)\+'"[\s\S]*?>'\+d\+esc\(o\.name\)/.test(html), null);
 check('a day move is offered (date input) and passed to the move call', /class="mvsel mv-date"/.test(html) && /toDate: dateChange\? toDate : ""/.test(html), null);
 check('guides (not managers) get a green tour with guests, red when empty', /const peopleCls = MANAGER \? '' : \(Number\(t\.bookedGuests\)>0 \? ' has-people' : ' no-people'\)/.test(html) && /\.tour\.has-people\{/.test(html) && /\.tour\.no-people\{/.test(html), null);
