@@ -5286,8 +5286,20 @@ function gygGuests_(text) {
 function gygParticipants_(text) {
   const s = String(text || '');
 
-  // Private: the "(N Personas)" figure is the whole group.
-  const priv = s.match(/\([\s*_]*(\d+)[\s*_]*(?:personas?|personen|people|guests?|pax)[\s*_]*\)/i);
+  // Private tour, "Group up to" product: GYG writes
+  //   "Number of participants  1 x Group up to 7 (3 Persons)"
+  // where "7" is the option's MAX capacity and "(3 Persons)" is the REAL party size —
+  // the head-count management needs (e.g. how many metro tickets to buy). Read the
+  // parenthetical count right after "Group up to N (", language-agnostic (any word inside
+  // the parens), so "(3 Persons)"/"(3 Personas)" both give 3. (Was showing 1: the old
+  // parenthetical regex below knew "personas/people/pax" but not English "Persons", so it
+  // missed, and the per-line fallback then read the leading "1 x".)
+  const grp = s.match(/group up to\s+\d+\s*\(\s*(\d+)\s*[^)\d]*\)/i);
+  if (grp) return { adults: Number(grp[1]), children: 0, infants: 0 };
+
+  // Private (other phrasings): a bare "(N <person-word>)" figure is the whole group. The
+  // word may be in any of the languages we run, so match them all (incl. English person/s).
+  const priv = s.match(/\([\s*_]*(\d+)[\s*_]*(?:persons?|personas?|personnes?|persone|personen|pessoas?|people|gente|guests?|pax)[\s*_]*\)/i);
   if (priv) return { adults: Number(priv[1]), children: 0, infants: 0 };
 
   // Window of lines after the participants label (label + up to 5 lines).

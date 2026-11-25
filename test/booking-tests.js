@@ -333,6 +333,26 @@ check('GYG main-account Ultimate PRIVATE: source "GetYourGuide" AND Private, 3 g
      'Main customer John Doe Phone: +34600 Language: Spanish','Tour language Español','Price € 90.00'].join('\n'),
     {to:'rootsandroadstours@gmail.com'}),'confirm');
     return b && b.source===RNR.SOURCE.GYG && /Private/.test(b.notes||'') && b.guests===3; })(), null);
+// NEW real format (Nov 2026): the Ultimate PRIVATE "Group up to" option carries the real
+// party size in the parenthetical — "1 x Group up to 7 (3 Persons)" = 3 people (7 is the
+// option's max capacity, "1 x" is one booking of it). Must read 3, not 1, or management
+// buys the wrong number of metro tickets.
+check('GYG Ultimate PRIVATE "Group up to 7 (3 Persons)" -> 3 guests (not 1)',
+  (function(){ const b=parseGygMessage_(makeFakeMsg_('Booking - S779080 - GYGZGZMR54V4',
+    ['Your offer has been booked:','Barcelona Ultimate Tour: Sagrada Familia, Gaudí & Old Town Private Tour',
+     'Reference number GYGZGZMR54V4','Date November 27, 2026, 10:30 AM','Number of participants 1 x Group up to 7 (3 Persons)',
+     'Main customer Melodee Phone: +16196039683 Language: English','Tour language English (Live tour guide)','Price € 180.00'].join('\n'),
+    {to:'rootsandroadstours@gmail.com'}),'confirm');
+    return b && b.source===RNR.SOURCE.GYG && /Private/.test(b.notes||'') && b.guests===3; })(), null);
+// Regression guard: the per-person PRIVATE format must STILL read its own count (the
+// Group-up-to fix must not hijack "2 x Adults").
+check('GYG PRIVATE per-person "2 x Adults" still -> 2 guests (fix did not break it)',
+  (function(){ const b=parseGygMessage_(makeFakeMsg_('Booking - S809442 - GYGX7M59H9FA',
+    ['Your offer has been booked:','Barcelona 3-in-1 Tour: Sagrada Família, Gaudí & Old Town Private tour',
+     'Reference number GYGX7M59H9FA','Date October 9, 2026, 10:30 AM','Number of participants 2 x Adults (Age 15 - 99)',
+     'Main customer Maria Phone: +34644055627 Language: Spanish','Tour language English (Live tour guide)','Price € 50.00'].join('\n'),
+    {to:'destinationstewards@gmail.com'}),'confirm');
+    return b && b.guests===2 && /Private/.test(b.notes||''); })(), null);
 check('a REGULAR 3-in-1 (not private) is NOT flagged Private',
   !/Private/.test((threeB&&threeB.notes)||''), threeB&&threeB.notes);
 
