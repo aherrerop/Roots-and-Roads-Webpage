@@ -360,6 +360,53 @@ check('Remove confirms first, then calls api("removeBooking") and reloads',
   /api\("removeBooking",\{token:store\.token,bookingId:info\.bookingId,language:info\.language/.test(html) &&
   /loadTours\(\);/.test(html), null);
 
+console.log('--- A deleted card STAYS deleted (no "do it twice") ---');
+// The close handler must hold the card hidden AND block polls, or a slow in-flight poll
+// (10-20s under load) returns with the card still present and re-adds it.
+check('deleting a tour sets a pending-close hold and raises MUTATING',
+  /setPendingClose\(id\);\s*\/\/ hold it hidden/.test(html) &&
+  /const r=await api\("closeShift",\{token:store\.token, id:id\}\);/.test(html) &&
+  /}\s*finally\{ MUTATING--; }/.test(html), null);
+check('a failed delete clears the hold so the card comes back',
+  /if\(!r\.ok\)\{ clearPendingClose\(id\); alert/.test(html) &&
+  /catch\(err\)\{ clearPendingClose\(id\); alert\("Network problem"\); loadTours\(\); }/.test(html), null);
+// The hold is applied on EVERY render, and persisted so a reload can't resurrect the card.
+check('applyPendingCloses runs in renderAll and drops the held ids from every list',
+  /applyPendingCloses\(r\);/.test(html) &&
+  /function applyPendingCloses\(r\)\{/.test(html) &&
+  /r\.tours=r\.tours\.filter\(keep\)/.test(html) &&
+  /r\.allTours=r\.allTours\.filter\(keep\)/.test(html) &&
+  /localStorage\.getItem\("rr_pendclose"\)/.test(html), null);
+// Maxim: never hide a booking — a closed slot that now has a real reservation re-surfaces.
+check('applyPendingCloses NEVER hides a card that has bookings (re-surfaces it)',
+  /const hasBookings=\(t\.bookings&&t\.bookings\.length\)\|\|Number\(t\.bookedGuests\)>0;/.test(html) &&
+  /if\(hasBookings\)\{ delete PENDING_CLOSE\[t\.id\]; return true; }/.test(html), null);
+check('removing a booking also holds the poll (MUTATING) so it cannot race the write',
+  /btn\.textContent="Removing…"; MUTATING\+\+/.test(html), null);
+
+// Behavioural check on the REAL applyPendingCloses (extract it, feed it mock payloads).
+(function(){
+  const s=html.indexOf('function applyPendingCloses(r){');
+  const e=html.indexOf('function renderAll(r){', s);
+  if(s<0||e<0||e<s){ check('could locate applyPendingCloses', false, [s,e]); return; }
+  const mk=new Function('PENDING_CLOSE', 'function savePendingClose(){}\n'+html.slice(s,e)+'\nreturn applyPendingCloses;');
+  const ID='2027-06-15|720|english|R', now=Date.now();
+  // held + EMPTY -> dropped
+  let r1={ allTours:[{id:ID,bookings:[],bookedGuests:0},{id:'OTHER',bookings:[]}] };
+  mk({[ID]:{until:now+90000}})(r1);
+  check('a just-deleted EMPTY card is dropped from the payload', r1.allTours.length===1 && r1.allTours[0].id==='OTHER', r1.allTours.map(t=>t.id));
+  // held but NOW has a booking -> kept, and the hold is cleared (maxim: never hide a booking)
+  let pc={[ID]:{until:now+90000}};
+  let r2={ tours:[{id:ID,bookings:[{bookingId:'b1'}],bookedGuests:2}] };
+  mk(pc)(r2);
+  check('a held card that now has a booking is KEPT (re-surfaces)', r2.tours.length===1, r2.tours.length);
+  check('and its hold is cleared so it is never hidden again', !pc[ID], JSON.stringify(pc));
+  // expired hold -> no effect
+  let r3={ tours:[{id:ID,bookings:[],bookedGuests:0}] };
+  mk({[ID]:{until:now-1}})(r3);
+  check('an expired close-hold stops hiding the card', r3.tours.length===1, r3.tours.length);
+})();
+
 console.log('--- Auto-refresh never interrupts a mid-action user (no wiped forms) ---');
 check('the poll pauses while the "Open a schedule" form is open', /details\.openform\[open\]"\)\) return false;/.test(html), null);
 check('choosing in a SELECT also holds the poll', /INPUT\|TEXTAREA\|SELECT/.test(html), null);

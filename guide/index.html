@@ -314,7 +314,7 @@ const BACKUP_PORTAL_URL = "";
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-11-21-page-dots";
+const PORTAL_VERSION = "2026-11-25-delete-sticks";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -822,6 +822,20 @@ function savePendingCk(){ try{ localStorage.setItem("rr_pendck", JSON.stringify(
 let PENDING_CHECKIN = loadPendingCk();
 function setPendingCheckin(bookingId, dateKey, n){ if(!bookingId) return;
   PENDING_CHECKIN[bookingId+"|"+dateKey] = { n: Math.max(0, +n||0), until: Date.now()+PENDING_TTL }; savePendingCk(); }
+/* The SAME optimistic hold for a DELETED (closed) tour CARD. Closing has no replica-lag,
+   but under load a poll that STARTED before the delete can return 10-20s LATER still
+   carrying the card and re-add it — the "I delete it and it comes back, I have to do it
+   twice" bug. So we remember the ids just deleted and DROP those cards from every render
+   for the settle window. EXCEPTION (maxim: never hide a booking): a card the server returns
+   with real bookings has been re-surfaced by a guest booking the freed slot, so it is shown
+   and its hold dropped at once. Keyed by the tour id (t.id), persisted so a reload can't
+   resurrect the card either. */
+function loadPendingClose(){ try{ const p=JSON.parse(localStorage.getItem("rr_pendclose")||"{}"); const n=Date.now();
+  Object.keys(p).forEach(k=>{ if(!p[k]||p[k].until<n) delete p[k]; }); return p; }catch(e){ return {}; } }
+function savePendingClose(){ try{ localStorage.setItem("rr_pendclose", JSON.stringify(PENDING_CLOSE)); }catch(e){} }
+let PENDING_CLOSE = loadPendingClose();
+function setPendingClose(id){ if(!id) return; PENDING_CLOSE[id] = { until: Date.now()+PENDING_TTL }; savePendingClose(); }
+function clearPendingClose(id){ if(!id) return; delete PENDING_CLOSE[id]; savePendingClose(); }
 /* Overlay pending assignments onto a tours payload, in place. Holds the value
    you just set for the whole settle window, then lets the server value through. */
 function applyPendingAssigns(r){
@@ -880,9 +894,28 @@ function applyPendingCheckins(r){
   }));
   mark(r.tours); mark(r.allTours);
 }
+/* Drop just-deleted cards from the payload for the settle window, so a slow in-flight
+   poll (started before the delete) can't re-add a card the manager already removed. Never
+   hides a card that now has real bookings — that one re-surfaces (never hide a booking). */
+function applyPendingCloses(r){
+  const now=Date.now();
+  Object.keys(PENDING_CLOSE).forEach(k=>{ if(PENDING_CLOSE[k].until<now) delete PENDING_CLOSE[k]; });
+  if(!Object.keys(PENDING_CLOSE).length){ savePendingClose(); return; }
+  const keep=t=>{
+    if(!t || !PENDING_CLOSE[t.id]) return true;                        // not just-deleted -> keep
+    const hasBookings=(t.bookings&&t.bookings.length)||Number(t.bookedGuests)>0;
+    if(hasBookings){ delete PENDING_CLOSE[t.id]; return true; }        // a guest booked the freed slot -> show it, drop the hold
+    return false;                                                      // empty + just-deleted -> hide for the settle window
+  };
+  if(r.tours)    r.tours=r.tours.filter(keep);
+  if(r.allTours) r.allTours=r.allTours.filter(keep);
+  if(r.schedule) r.schedule=r.schedule.filter(keep);
+  savePendingClose();
+}
 function renderAll(r){
   applyPendingAssigns(r);                // stale reads can never undo your last action
   applyPendingCheckins(r);               // a queued (offline) check-in still shows ✓ ⏳ after a reload
+  applyPendingCloses(r);                 // a slow in-flight poll can't resurrect a card you just deleted
   MANAGER=!!r.manager;
   const hb=$("historyBtn"); if(hb) hb.classList.remove("hidden");   // History: managers see all tours, guides see their own (read-only)
   HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||3;
@@ -1417,12 +1450,13 @@ function bindTours(tours){
       let info={}; try{ info=JSON.parse(btn.dataset.bkill||"{}"); }catch(_){}
       if(!info.bookingId) return;
       if(!confirm("Remove "+(info.name||"this booking")+" from the tour?\n\nUse this for a cancellation that didn’t arrive automatically. The guest is removed and will NOT be counted. This can’t be undone here.")) return;
-      const old=btn.textContent; btn.disabled=true; btn.textContent="Removing…";
+      const old=btn.textContent; btn.disabled=true; btn.textContent="Removing…"; MUTATING++;
       try{
         const r=await api("removeBooking",{token:store.token,bookingId:info.bookingId,language:info.language,name:info.name});
         if(r && r.ok){ if(r.warning) alert(r.warning); loadTours(); }
         else { alert((r && r.error) || "Could not remove the booking"); btn.disabled=false; btn.textContent=old; }
       }catch(err){ alert("Network error — try again"); btn.disabled=false; btn.textContent=old; }
+      finally{ MUTATING--; }
     };
   });
   document.querySelectorAll(".bnotesave").forEach(b=>{
@@ -1448,11 +1482,14 @@ function bindTours(tours){
       if(!confirm("Delete this tour? The guide is freed and the empty column is removed. It won't come back on its own.")) return;
       const id=btn.dataset.close; btn.disabled=true; LAST_EDIT=Date.now();
       const card=btn.closest(".tour"); if(card) card.remove();
+      setPendingClose(id);                 // hold it hidden so a slow in-flight poll can't bring it back
+      MUTATING++;                          // and don't fire new polls while the delete is in flight
       try{
         const r=await api("closeShift",{token:store.token, id:id});
-        if(!r.ok){ alert(r.error||"Could not delete it"); loadTours(); return; }
-        setTimeout(loadTours,700);
-      }catch(err){ alert("Network problem"); loadTours(); }
+        if(!r.ok){ clearPendingClose(id); alert(r.error||"Could not delete it"); loadTours(); }
+        else { setTimeout(loadTours,700); }
+      }catch(err){ clearPendingClose(id); alert("Network problem"); loadTours(); }
+      finally{ MUTATING--; }
     };
   });
   // FULL NO-SHOW: flag a tour where nobody turned up (the guide is still paid), or undo it.
