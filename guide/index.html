@@ -318,7 +318,7 @@ const BACKUP_PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4T
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-11-26-no-silent-drops";
+const PORTAL_VERSION = "2026-11-26-note-instant-newnote";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -1531,9 +1531,19 @@ function bindTours(tours){
           const wrap=panel&&panel.parentElement, val=r.note||"";
           if(wrap){
             let inline=wrap.querySelector(".bnote.mnote");
-            if(val){ if(!inline){ inline=document.createElement("div"); inline.className="bnote mnote"; wrap.insertBefore(inline, wrap.querySelector(".bnotebtn")||panel); } inline.textContent=val; }
-            else if(inline){ inline.remove(); }
-            const nb=wrap.querySelector(".bnotebtn"); if(nb) nb.classList.toggle("has", !!val);
+            const nb=wrap.querySelector(".bnotebtn");        // the post-it button, inside the name row
+            if(val){
+              if(!inline){
+                inline=document.createElement("div"); inline.className="bnote mnote";
+                // Insert into the SAME parent as the post-it (the name row), right before it —
+                // matching where the server render puts it. (The old code inserted relative to
+                // the panel's parent, where .bnotebtn is not a direct child, so it threw.)
+                if(nb && nb.parentNode) nb.parentNode.insertBefore(inline, nb);
+                else wrap.insertBefore(inline, panel);
+              }
+              inline.textContent=val;
+            } else if(inline){ inline.remove(); }
+            if(nb) nb.classList.toggle("has", !!val);
             if(panel) panel.hidden=true;
           }
         }catch(_){}
