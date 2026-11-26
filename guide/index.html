@@ -305,16 +305,20 @@
    ============================================================================ */
 
 /* ================== CONFIG ================== */
-const PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hcjuNZ_Z7J8zu7iI5ZPq9P4Ag6rZ19-XYgx_qWjFLohAa7iEf/exec";
+// TWO-ACCOUNT CUTOVER (2026-11-26): the portal is now served by the inforootsandroads
+// account's web app (its own execution lane, off the overloaded main account). If that
+// deployment is ever dead/wrong/unauthorized, api() auto-fails-over to BACKUP_PORTAL_URL
+// (the ORIGINAL main deployment, kept alive). Rollback = swap these two back.
+const PORTAL_URL = "https://script.google.com/macros/s/AKfycbzxc5F8I9uzGxX6UNC5eZXfaS0DavKQOnwn32P4MBo-VuMvtZeeOjqXwvsxQ135_ilI/exec";
 // Backup deployment URL (empty = none). At the two-account cutover, PORTAL_URL becomes the
 // info deployment and this becomes the OLD main deployment (same live data). Then if the
 // primary is dead / wrong / asking to sign in, api() automatically fails over to this one —
 // so a broken cutover self-heals with no manual rollback. Empty today, so it's a no-op.
-const BACKUP_PORTAL_URL = "";
+const BACKUP_PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4Tln9H3hcjuNZ_Z7J8zu7iI5ZPq9P4Ag6rZ19-XYgx_qWjFLohAa7iEf/exec";
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-11-25-delete-sticks";
+const PORTAL_VERSION = "2026-11-26-two-account";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
