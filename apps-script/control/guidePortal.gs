@@ -302,6 +302,7 @@ function doGet(e) {
       case 'buildreadmodel': out = buildReadModelFile_(); break;       // Stage 1: write the private read-model file
       case 'readmodelcheck': out = readModelCheck_(); break;           // Stage 1: verify the file (no PII)
       case 'rmset': out = rmSet_(p); break;                            // Stage 2: toggle READMODEL flags (staging only)
+      case 'toursbench': out = toursBench_(p); break;                  // Stage 2: time apiTours_ file-path vs sheet-path (staging)
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
     }
   } catch (err) {
@@ -4104,6 +4105,41 @@ function rmSet_(p) {
   let built = null;
   if (p && String(p.build || '') === '1') { try { built = buildReadModelFile_(); } catch (e) { built = { ok: false, error: String(e) }; } }
   return { ok: true, READMODEL_FILE: props.getProperty('READMODEL_FILE'), READMODEL_READ: props.getProperty('READMODEL_READ'), built: built };
+}
+
+// action=toursbench — STAGING-ONLY (ENV-guarded): run the REAL apiTours_ once reading the FILE and
+// once reading the SHEETS, and return the timing phases + a parity check. Mints a manager token so
+// no login is needed. Returns NO guest PII (only counts + phase ms).
+function toursBench_(p) {
+  const props = PropertiesService.getScriptProperties();
+  if (String(props.getProperty('ENV') || '') !== 'staging') return { ok: false, error: 'staging only' };
+  const name = (p && p.guide) || 'Albert';
+  const g = findGuideByName_(name);
+  if (!g) return { ok: false, error: 'no such guide: ' + name };
+  const token = makeToken_(name);
+  const days = Number((p && p.days) || 3);
+  const out = { ok: true, guide: name, manager: !!g.manager, days: days };
+  const wasRead = props.getProperty('READMODEL_READ');
+  // 1) WITH the file
+  try {
+    props.setProperty('READMODEL_READ', 'ON'); try { buildReadModelFile_(); } catch (e) {}
+    const t = Date.now(); const r = apiTours_({ token: token, days: days });
+    const T = r.timings || {};
+    out.withFile = { ms: Date.now() - t, tours: (r.allTours && r.allTours.length) || (r.tours && r.tours.length) || 0,
+      rmfile: T.rmfile, rmslice: T['rm.slice'], book: T.book, asmBuild: T['asm.build'],
+      usedFile: (T.rmfile != null && T['rm.slice'] != null && T.book == null && T['asm.build'] == null) };
+  } catch (e) { out.withFile = { error: String(e).slice(0, 150) }; }
+  // 2) WITHOUT the file (force a cold assemble for a fair read-source comparison)
+  try {
+    props.setProperty('READMODEL_READ', 'OFF'); bumpCacheVersion_();
+    const t = Date.now(); const r = apiTours_({ token: token, days: days });
+    const T = r.timings || {};
+    out.withoutFile = { ms: Date.now() - t, tours: (r.allTours && r.allTours.length) || (r.tours && r.tours.length) || 0,
+      book: T.book, asmBuild: T['asm.build'] };
+  } catch (e) { out.withoutFile = { error: String(e).slice(0, 150) }; }
+  props.setProperty('READMODEL_READ', wasRead || 'ON'); try { buildReadModelFile_(); } catch (e) {}
+  out.parity = !!(out.withFile && out.withoutFile && out.withFile.tours === out.withoutFile.tours);
+  return out;
 }
 
 function buildReadModelFile_(schedule, feed) {
