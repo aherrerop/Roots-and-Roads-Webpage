@@ -395,6 +395,7 @@ function bumpCacheVersion_() {
     const p = PropertiesService.getScriptProperties();
     p.setProperty('PORTAL_CACHE_VER', String((Number(p.getProperty('PORTAL_CACHE_VER')) || 0) + 1));
   } catch (e) { /* best-effort; a missed bump only means <=TTL staleness */ }
+  bumpRespVersion_();   // a schedule change also invalidates the per-user whole-response view
 }
 // A SEPARATE version just for the Portal Feed read. A check-in changes ONLY the
 // feed (M/N) — not the schedule / guides / weekly — so it bumps this, refreshing
@@ -409,6 +410,24 @@ function bumpFeedCacheVersion_() {
   try {
     const p = PropertiesService.getScriptProperties();
     p.setProperty('PORTAL_FEED_VER', String((Number(p.getProperty('PORTAL_FEED_VER')) || 0) + 1));
+  } catch (e) { /* best-effort */ }
+  bumpRespVersion_();   // a feed change (check-in/move/note) also invalidates the per-user view
+}
+// PLAN A — a LIGHTWEIGHT "view version" for the whole-response (per-user) cache ONLY.
+// Today the response cache is keyed on cacheVersion_+feedCacheVersion_, so a write both
+// invalidates the per-user view AND discards the warm shared schedule/feed caches, forcing
+// a cold rebuild. This version separates the two: bumping it invalidates only the per-user
+// view, so a later stage can PATCH the shared caches in place and bump ONLY this — the view
+// refreshes with NO cold rebuild. Stage 1 keeps behaviour identical: the two bumps above
+// also bump this, so the response cache invalidates exactly when it used to.
+function respVersion_() {
+  try { return PropertiesService.getScriptProperties().getProperty('PORTAL_RESP_VER') || '0'; }
+  catch (e) { return '0'; }
+}
+function bumpRespVersion_() {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    p.setProperty('PORTAL_RESP_VER', String((Number(p.getProperty('PORTAL_RESP_VER')) || 0) + 1));
   } catch (e) { /* best-effort */ }
 }
 // A THIRD version, for CONFIG reads (the Guides tab, the Closed_Shifts tab) that an
@@ -893,7 +912,7 @@ function apiTours_(p) {
   // BookingSheet without bumping these — but that was already true of the bk:/asm: caches, and
   // the 25 s TTL bounds it; the manager sees it within the minute.) If you add a mutation,
   // bump a version in it or add a term here.
-  const respKey = 'resp:' + normName_(name) + ':' + windowDays + ':' + cacheVersion_() + ':' + feedCacheVersion_();
+  const respKey = 'resp:' + normName_(name) + ':' + windowDays + ':' + respVersion_();
   const respHit = toursResponseCacheGet_(respKey);
   if (respHit) {
     respHit.now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss');
