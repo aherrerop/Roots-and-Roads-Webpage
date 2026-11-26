@@ -306,6 +306,14 @@ function doGet(e) {
   // Measure how long the whole request took; the branches below record it.
   const ms = Date.now() - t0;
 
+  // PLAN A — after ANY successful feed-writing mutation, pre-warm the feed cache with a FRESH
+  // read, so the NEXT load serves a warm feed instead of re-reading the whole Portal Feed cold
+  // (~1-3s). This is a fresh read (never a structural patch), so it is always correct; it runs
+  // AFTER the handler (post-flush) and OUTSIDE its lock, so it never lengthens the lock hold.
+  if (out && out.ok && (PORTAL_MUTATIONS[p.action] || p.action === 'removeBooking' || p.action === 'moveTime')) {
+    try { prewarmFeedCache_(); } catch (e) { /* best-effort; next load just re-reads */ }
+  }
+
   // A data-changing action gets a Portal Log line: what it touched, whether it
   // worked, and (for save) a per-phase breakdown of where the write spent its time.
   if (PORTAL_MUTATIONS[p.action]) {
@@ -2307,7 +2315,6 @@ function apiSave_(p) {
   // reads the new check-in immediately, while the schedule/guides/weekly caches stay
   // warm so the load right after a check-in isn't needlessly slow.
   bumpFeedCacheVersion_();
-  prewarmFeedCache_();   // Stage 2: store the fresh feed under the new key so the next load doesn't re-read it cold
   return { ok: true, saved: savedCount, guide: targetGuide, timings: ST };
 }
 
