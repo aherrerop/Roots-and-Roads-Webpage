@@ -171,6 +171,7 @@ check('read-model: NO guest NAME leaks to the public blob', pmJson.indexOf('Jane
 check('read-model: NO guest PHONE leaks to the public blob', pmJson.indexOf('600123456') === -1, null);
 check('read-model: no name/phone/note/bookings KEYS on any tour', pmModel.tours.every(t => !('name' in t) && !('phone' in t) && !('bookings' in t) && !('note' in t)), Object.keys(pmModel.tours[0]));
 check('read-model: still carries the assignment + flags needed to render', pmModel.tours[0].guide === 'Carlos' && pmModel.tours[0].status === 'OK' && pmModel.tours[0].isPrivate === false && pmModel.tours[0].sfExt === false, pmModel.tours[0]);
+check('read-model: carries a guidesByLanguage roster object (guide names only, not guest PII)', pmModel.guidesByLanguage && typeof pmModel.guidesByLanguage === 'object' && JSON.stringify(pmModel.guidesByLanguage).indexOf('Jane Secret') === -1, Object.keys(pmModel.guidesByLanguage || {}));
 
 console.log('--- Fail-closed staging guard: a non-prod copy must override every sheet id or REFUSE ---');
 delete __mock.PROPS['ENV']; delete __mock.PROPS['TESTSHEETKEY'];

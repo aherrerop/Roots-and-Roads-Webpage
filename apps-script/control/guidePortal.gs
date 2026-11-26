@@ -4071,9 +4071,14 @@ function portalPublicReadModel_(schedule, bookingsByKey, today, horizonDays) {
         secondGuide: shift.secondGuide || '', noShow: !!shift.noShow, noShowGuide: shift.noShowGuide || ''
       };
     });
+  // The active-guide ROSTER per language (names only — NOT PII; the same names already appear in
+  // `assigned`). The client needs it to populate the manager's assign / "open a schedule" guide
+  // dropdowns from the static feed without a server call.
+  let roster = {};
+  try { roster = managerGuidesByLanguage_().byLang || {}; } catch (e) {}
   return { v: 1, builtAt: Date.now(),
            builtAtText: Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'),
-           horizonDays: horizonDays, tours: tours };
+           horizonDays: horizonDays, guidesByLanguage: roster, tours: tours };
 }
 
 // Publish the model to GitHub via the Contents API, on a dedicated branch (default portal-feed),

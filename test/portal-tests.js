@@ -434,7 +434,7 @@ check('a version-check hard-reload will not fire mid-action', /openform\[open\]"
 check('a move holds the poll (MUTATING) so it cannot race the write', /go\.textContent="Moving…"; MUTATING\+\+/.test(html), null);
 check('an OPEN tour card stays open across a poll re-render (OPEN_CARDS restore)',
   /OPEN_CARDS\.has\(card\.dataset\.tour\)/.test(html) && /b\.style\.display = open \? "" : "none"/.test(html), null);
-check('toggling a card updates the remembered open set', /nowOpen\) OPEN_CARDS\.add\(card\.dataset\.tour\); else OPEN_CARDS\.delete\(card\.dataset\.tour\)/.test(html), null);
+check('toggling a card updates the remembered open set', /nowOpen\)\{ OPEN_CARDS\.add\(card\.dataset\.tour\)[\s\S]*?\} else OPEN_CARDS\.delete\(card\.dataset\.tour\)/.test(html), null);
 
 console.log('--- Typed tour time: bare afternoon hours read as PM (4:30 = 16:30) ---');
 const ptStart = html.indexOf('function parseTypedTime(raw){');
@@ -461,6 +461,30 @@ check('a tour starting in 5 min -> nearTourNow true, poll uses the 15s fast inte
 const _N2 = makeNear([{dateKey:_dk(_far), time:_t24(_far)}], 30000);
 check('far from any tour -> normal cadence (30s)', _N2.nearTourNow()===false && _N2.pollDelayMs()===30000, _N2.pollDelayMs());
 check('the fast interval never goes below the server-adaptive floor when it is tighter', makeNear([{dateKey:_dk(_soon), time:_t24(_soon)}], 12000).pollDelayMs()===12000, null);
+
+console.log('--- Static read path (Stage 2): staticToPayload turns the counts-only feed into the r-shape ---');
+// Extract the PURE marked block and exercise the real function (no copy, no drift).
+const spStart = html.indexOf('/* @static-pure-start');
+const spEnd = html.indexOf('/* @static-pure-end */');
+if (spStart < 0 || spEnd < 0) { console.error('Could not locate the static-pure block in guide/index.html'); process.exit(1); }
+const SP = (new Function(html.slice(spStart, spEnd) + '\n;return { staticToPayload };'))();
+const sModel = { v:1, builtAtText:'2026-11-26 09:30:00', horizonDays:45,
+  guidesByLanguage:{ English:['Carlos','Albert'] },
+  tours:[
+    { id:'2026-11-26|600|english|R', dateKey:'2026-11-26', dateText:'Nov 26', day:'Thursday', time:'10:00', timeLabel:'10:00 AM',
+      language:'English', privIndex:1, assigned:['Carlos'], guide:'Carlos', status:'OK', isPrivate:false, sfExt:false,
+      tourName:'3h', bookedGuests:4, bookedChildren:1, checkedGuests:2, booked:2, full:false, needsSecondGuide:false },
+    { id:'2026-11-26|900|german|R', dateKey:'2026-11-26', dateText:'Nov 26', day:'Thursday', time:'15:00', timeLabel:'3:00 PM',
+      language:'German', privIndex:1, assigned:['Albert'], guide:'Albert', status:'OK', isPrivate:false, sfExt:false, tourName:'3h', bookedGuests:3, bookedChildren:0, checkedGuests:0, booked:1 }
+  ] };
+const mgrR = SP.staticToPayload(sModel, 'Carlos', true);
+check('manager payload: allTours has every tour, counts preserved', mgrR.allTours.length===2 && mgrR.allTours[0].bookedGuests===4 && mgrR.allTours[0].checkedGuests===2, mgrR.allTours.map(t=>t.id));
+check('every static tour is marked lazyGuests with an EMPTY bookings list (guests fetched on open)', mgrR.allTours.every(t=>t.lazyGuests===true && Array.isArray(t.bookings) && t.bookings.length===0), null);
+check('the assign dropdown eligible list comes from the feed roster', mgrR.allTours[0].eligible.join()==='Carlos,Albert', mgrR.allTours[0].eligible);
+check('manager "My tours" = only the tours assigned to me (Carlos)', mgrR.tours.length===1 && mgrR.tours[0].guide==='Carlos', mgrR.tours.map(t=>t.guide));
+check('payload is flagged static and carries the roster', mgrR.static===true && mgrR.guidesByLanguage.English.length===2, null);
+const guideR = SP.staticToPayload(sModel, 'Albert', false);
+check('guide payload: tours = only the guide\'s own, allTours stays empty', guideR.tours.length===1 && guideR.tours[0].guide==='Albert' && guideR.allTours.length===0, guideR.tours.map(t=>t.guide));
 
 console.log('=================================');
 console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
