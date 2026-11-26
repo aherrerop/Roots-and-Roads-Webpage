@@ -2836,38 +2836,6 @@ function parseFeedSheet_(sh) {
   return index;
 }
 
-// Write a check-in onto the Portal Feed row for a booking — columns M (Checked-in) and
-// N (Check-in time), which belong to the portal alone. The 5-minute rebuild writes only
-// the reservation columns (A-L) and preserves M/N by Booking ID, so the two writers
-// touch DISJOINT columns and can't clobber each other. Updates an existing row only; a
-// booking not yet in the feed is covered by the ledger + union read until the next
-// rebuild gives it a row. Best-effort.
-function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
-  try {
-    const id = String(bookingId || '').trim();
-    if (!id) return false;
-    const sh = bookingSS_().getSheetByName('Portal Feed');
-    if (!sh || sh.getLastRow() < 2) return false;
-    const rng = sh.getRange(2, 10, sh.getLastRow() - 1, 5).getValues();   // cols J..N
-    for (let i = 0; i < rng.length; i++) {
-      if (String(rng[i][0] || '').trim() === id) {
-        const curCount = Number(rng[i][3] || 0);           // M (col 13)
-        const curTime  = String(rng[i][4] || '').trim();   // N (col 14)
-        // Never downgrade a check-in, and keep the FIRST time it was recorded —
-        // so a later save (another guest, a reload, the manager on another
-        // device) can't reset an earlier check-in's count or time. Mirrors the
-        // ledger merge so the two stores agree.
-        const finalCount = Math.max(curCount, Number(checkedIn || 0));
-        const finalTime  = curTime || String(checkedAt || '');
-        sh.getRange(i + 2, 14, 1, 1).setNumberFormat('@');                 // time as text
-        sh.getRange(i + 2, 13, 1, 2).setValues([[finalCount, finalTime]]); // M=count, N=time
-        return true;
-      }
-    }
-    return false;
-  } catch (e) { return false; }
-}
-
 // Mirror MANY check-ins onto the Portal Feed in ONE read + ONE write: one read of J..N
 // and one write of M:N for the whole tour. The count is AUTHORITATIVE — it matches the
 // save exactly (the ledger upsert already does), so a manager or guide can CORRECT how
@@ -4496,42 +4464,6 @@ function readLedgerForGuides_(names) {
       if (!prev || updated >= prev._u) {
         out.checkins[ckKey] = { n: Number(r[LEDGER_CHECKEDIN_COL] || 0),
                                 at: hhmmFromStamp_(r[LEDGER_UPDATED_COL]), _u: updated };
-      }
-    });
-  });
-  return out;
-}
-
-// For the MANAGER HISTORY view: scan every named guide's ledger tab for rows on/after
-// loKey and return (a) the check-ins keyed shiftKey|bookingId, and (b) which guide ran
-// each shift (the tab the rows live in). The ledger is the money truth and the only
-// reliable record of who was checked in on a PAST tour. A history open is a rare manual
-// action, so reading the tabs is fine. Synthetic 'No-show' rows set the guide (they ran
-// it) but are not guest check-ins.
-function readLedgerHistory_(guides, loKey) {
-  const out = { checkins: {}, guideByShift: {} };
-  let ss; try { ss = ledgerSS_(); } catch (e) { return out; }
-  (guides || []).filter(Boolean).forEach(name => {
-    const sh = ss.getSheetByName(String(name).substring(0, 90));
-    if (!sh || sh.getLastRow() < 2) return;
-    const v = sh.getRange(2, 1, sh.getLastRow() - 1, LEDGER_HEADERS.length).getValues();
-    v.forEach(r => {
-      const dateKey = toDateKey_(r[0]);
-      if (!dateKey || (loKey && dateKey < loKey)) return;            // window: on/after loKey
-      const minutes = timeToMinutes_(normTime24_(r[2]));
-      const language = String(r[3] || '').trim();
-      const bookingId = String(r[LEDGER_BOOKINGID_COL] || '').trim();
-      if (!bookingId) return;
-      const key = shiftKey_(dateKey, minutes, language);
-      out.guideByShift[key] = name;                                  // this guide ran the shift
-      if (/^NOSHOW\|/.test(bookingId)) return;                       // pay row, not a guest check-in
-      const n = Number(r[LEDGER_CHECKEDIN_COL] || 0);
-      if (n <= 0) return;
-      const ckKey = key + '|' + bookingId;
-      const updated = String(r[LEDGER_UPDATED_COL] || '');
-      const prev = out.checkins[ckKey];
-      if (!prev || updated >= prev._u) {
-        out.checkins[ckKey] = { n: n, at: hhmmFromStamp_(r[LEDGER_UPDATED_COL]), _u: updated };
       }
     });
   });
