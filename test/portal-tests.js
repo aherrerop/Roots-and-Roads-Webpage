@@ -210,7 +210,7 @@ check('the freshness indicator stays plain (no "busy" text appended)', !/server 
 // the load), and again after each render — so a reload never flashes "My tours".
 check('showDash restores the last tab early, guarded so it cannot block the load', /try\{ restoreTab\(\); \}catch\(e\)\{\}/.test(html), null);
 check('a move reconciles with loadTours whether it succeeds OR fails', /\.mvbox[\s\S]*?loadTours\(\);\s+\/\/ reconcile either way/.test(html), null);
-check('one Move applies BOTH language and time in a single call', /api\("move",\{[\s\S]*?toLanguage:toLanguage,[\s\S]*?toTime: timeChange/.test(html), null);
+check('one Move applies BOTH language and time in a single call', /api(?:Busy)?\("move",\{[\s\S]*?toLanguage:toLanguage,[\s\S]*?toTime: timeChange/.test(html), null);
 check('the Move button shows only after a dropdown is changed', /go\.hidden = \(langSel\.value===info\.fromLanguage && timeSel\.value===info\.fromTime && \(!dateSel \|\| dateSel\.value===info\.fromDate\)\)/.test(html), null);
 // Assign dropdown shows an availability dot per guide (info only) but every guide
 // stays assignable; the option VALUE is still the plain name so assign sends it.
@@ -274,7 +274,7 @@ check('a full no-show control offers "Total no-show" and undo, with no € amoun
   /if\(!t\.bookedGuests \|\| t\.checkedGuests>0 \|\| !nsGuide\) return "";/.test(html) &&
   /if\(tour && tour\.noShow\) return '';/.test(html), null);
 check('the no-show control posts action=noshow (set + clear) and shows a badge',
-  /api\("noshow",Object\.assign\(\{token:store\.token\},extra,info\)\)/.test(html) &&
+  /api(?:Busy)?\("noshow",Object\.assign\(\{token:store\.token\},extra,info\)\)/.test(html) &&
   /noShowCall\(btn, \{clear:1\}, "Undoing"\)/.test(html) && /\.chip\.noshowchip\{/.test(html), null);
 
 console.log('--- HISTORY (manager: last 2 days) — mark no-shows + undo check-ins after a tour ran ---');
@@ -307,7 +307,7 @@ check('history keeps no-show + undo live: stepper read-only, check-in button und
   /const dis = HISTORY_RENDER \? \(!done \|\| !MANAGER \|\| !HISTORY_EDITABLE\) :/.test(html) &&
   /const dis = HISTORY_RENDER \? ' disabled' : '';/.test(html) &&
   /root\.querySelectorAll\("\.ckin\.done:not\(\[disabled\]\)"\)/.test(html) &&
-  /api\("uncheckin",\{token:store\.token,bookingId:b\.bookingId\}\)/.test(html), null);
+  /api(?:Busy)?\("uncheckin",\{token:store\.token,bookingId:b\.bookingId\}\)/.test(html), null);
 check('history lets management REMOVE a no-show (explicit label, bound undo)',
   /const undoLabel = HISTORY_RENDER \? 'Remove no-show' : 'Undo';/.test(html) &&
   /root\.querySelectorAll\("\.noshowundo"\)\.forEach\(btn=>\{ btn\.onclick=\(e\)=>\{ e\.stopPropagation\(\); noShowCall\(btn,\{clear:1\},"Undoing"\)/.test(html), null);
@@ -357,8 +357,27 @@ check('the move panel holds a Remove option (not a new top-level row button)',
 check('Remove confirms first, then calls api("removeBooking") and reloads',
   /document\.querySelectorAll\("\.bmvremove"\)\.forEach/.test(html) &&
   /if\(!confirm\(/.test(html) &&
-  /api\("removeBooking",\{token:store\.token,bookingId:info\.bookingId,language:info\.language/.test(html) &&
+  /api(?:Busy)?\("removeBooking",\{token:store\.token,bookingId:info\.bookingId,language:info\.language/.test(html) &&
   /loadTours\(\);/.test(html), null);
+
+console.log('--- No user action is silently dropped (queue the refresh, retry the write) ---');
+// A refresh asked for WHILE one is in flight must be remembered + run, not swallowed (the
+// "note took several Updating cycles to show" bug). A passive poll/focus is still skipped.
+check('a refresh requested mid-load is QUEUED (PENDING_RELOAD), not dropped',
+  /if\(LOADING\)\{ if\(nav!=="poll" && nav!=="focus"\) PENDING_RELOAD=true; return; }/.test(html) &&
+  /function drainPendingReload\(\)\{ if\(PENDING_RELOAD\)/.test(html) &&
+  (html.match(/drainPendingReload\(\);/g)||[]).length>=2, null);
+check('Load more waits for an in-flight load instead of being swallowed (one tap works)',
+  /for\(let i=0;i<40 && LOADING;i\+\+\)\{ await new Promise/.test(html) && /loadTours\("more"\)/.test(html), null);
+// Every non-queued mutation retries a transient "Server busy" (lock timeout), so the user
+// never has to redo it; a real (non-busy) error still returns at once.
+check('mutations auto-retry a transient "Server busy" via apiBusy',
+  /async function apiBusy\(action, params, tries\)\{/.test(html) &&
+  /if\(!\/busy\/i\.test\(\(r&&r\.error\)\|\|""\)\) return r;/.test(html), null);
+check('move / removeBooking / noshow / uncheckin / 2nd-guide assign all route through apiBusy',
+  /apiBusy\("move"/.test(html) && /apiBusy\("removeBooking"/.test(html) &&
+  /apiBusy\("noshow"/.test(html) && /apiBusy\("uncheckin"/.test(html) &&
+  /apiBusy\("assign",Object\.assign\(\{token:store\.token, guide:newGuide\}/.test(html), null);
 
 console.log('--- A deleted card STAYS deleted (no "do it twice") ---');
 // The close handler must hold the card hidden AND block polls, or a slow in-flight poll

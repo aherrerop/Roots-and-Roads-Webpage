@@ -318,7 +318,7 @@ const BACKUP_PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4T
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-11-26-loadmore-note-inline";
+const PORTAL_VERSION = "2026-11-26-no-silent-drops";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -707,6 +707,28 @@ function startAutoRefresh(){
 // look like they "didn't stick, then kicked in later".
 let LOAD_SEQ = 0;
 let LOADING = false;   // one tours request at a time — never let polls pile up
+// A refresh requested WHILE one is in flight used to be dropped (if(LOADING) return),
+// so a post-action refresh could wait until the next poll — the note "took several cycles
+// to show". We never DROP a requested refresh now: we remember it and run it the moment the
+// current load finishes. (A passive poll/focus is still skipped, not queued — stacking those
+// is what we must avoid.)
+let PENDING_RELOAD = false;
+function drainPendingReload(){ if(PENDING_RELOAD){ PENDING_RELOAD=false; setTimeout(()=>loadTours("sync"), 150); } }
+// Run a one-shot mutation and auto-RETRY it through a transient "Server busy" (a lock
+// timeout under load), so the user never has to redo an action that was only momentarily
+// blocked. Safe to retry: "busy" means the lock was never acquired, so nothing was written.
+// Anything that is NOT a busy error returns immediately. (Check-ins and guide assignments
+// already have their own persistent offline queues; this covers every other mutation.)
+async function apiBusy(action, params, tries){
+  let r=null;
+  for(let i=0;i<(tries||4);i++){
+    try{ r=await api(action, params); }catch(e){ r={ok:false, error:(e&&e.message)||"Network problem"}; }
+    if(r && r.ok) return r;
+    if(!/busy/i.test((r&&r.error)||"")) return r;
+    await new Promise(res=>setTimeout(res, 1500));
+  }
+  return r;
+}
 let POLL_MS = 30000;   // passive-refresh interval; the server adjusts it via r.pollHint under load
 // Around a tour's START, last-minute sign-ups are still landing on the BookingSheet,
 // so refresh FASTER — a guide should see everyone who signed up right as the tour
@@ -732,7 +754,7 @@ async function loadTours(nav){
   // events) must NOT start a second one while the first is still running, or
   // requests stack up, serialize on the server, and each gets slower — which is
   // exactly what turned ~8s loads into 60-120s ones. Skip if one is in flight.
-  if(LOADING) return;
+  if(LOADING){ if(nav!=="poll" && nav!=="focus") PENDING_RELOAD=true; return; }   // queue a requested refresh, never drop it
   if(RETRY_TIMER){ clearTimeout(RETRY_TIMER); RETRY_TIMER=null; }
   LOADING = true; LOAD_NAV = nav||"poll"; LOAD_START = Date.now();
   setFresh("loading");
@@ -764,6 +786,7 @@ async function loadTours(nav){
   setFresh("ok", r.now);
   store.cache=r;
   renderAll(r);
+  drainPendingReload();                      // if a refresh was requested mid-load, run it now
 }
 /* One miss shouldn't slap "Can't reach the server" over good data — a mobile
    blip or a single slow response is normal. Keep the last list, retry quietly in
@@ -792,6 +815,7 @@ function onLoadFailed(err){
   const cachedWin = Number(store.cache.windowDays)||0;
   if(cachedWin>0 && MANAGER_DAYS>cachedWin) MANAGER_DAYS = cachedWin;
   renderAll(store.cache);
+  drainPendingReload();                      // a refresh requested mid-load still runs after a failed one
 }
 /* ---- Pending assignments: the real fix for the "reverts to Albert" bug ----
    After you assign Carlos, Google's Sheets backend may still serve the very
@@ -1356,7 +1380,7 @@ function bindTours(tours){
       // optimistic hold and no conflict path (two guides on one tour is always OK).
       if(info.slot===2){
         let msg="";
-        try{ const r=await api("assign",Object.assign({token:store.token, guide:newGuide},info));
+        try{ const r=await apiBusy("assign",Object.assign({token:store.token, guide:newGuide},info));
           if(!r||!r.ok) msg=(r&&r.error)||"Could not set the second guide"; }
         catch(err){ msg=err.message||"Network problem — try again"; }
         MUTATING--;
@@ -1433,7 +1457,7 @@ function bindTours(tours){
       }
       go.disabled=true; go.textContent="Moving…"; MUTATING++; LAST_EDIT=Date.now();
       try{
-        const r=await api("move",{token:store.token, bookingId:info.bookingId, fromLanguage:info.fromLanguage, toLanguage:toLanguage, toTime: timeChange? toTime : "", toDate: dateChange? toDate : ""});
+        const r=await apiBusy("move",{token:store.token, bookingId:info.bookingId, fromLanguage:info.fromLanguage, toLanguage:toLanguage, toTime: timeChange? toTime : "", toDate: dateChange? toDate : ""});
         if(!r.ok) alert(r.error||"Could not move");
       }catch(err){
         alert("Couldn't confirm the move just now — reloading to show the current state. If it didn't take, try again.");
@@ -1467,7 +1491,7 @@ function bindTours(tours){
       if(!confirm("Remove "+(info.name||"this booking")+" from the tour?\n\nUse this for a cancellation that didn’t arrive automatically. The guest is removed and will NOT be counted. This can’t be undone here.")) return;
       const old=btn.textContent; btn.disabled=true; btn.textContent="Removing…"; MUTATING++;
       try{
-        const r=await api("removeBooking",{token:store.token,bookingId:info.bookingId,language:info.language,name:info.name});
+        const r=await apiBusy("removeBooking",{token:store.token,bookingId:info.bookingId,language:info.language,name:info.name});
         if(r && r.ok){ if(r.warning) alert(r.warning); loadTours(); }
         else { alert((r && r.error) || "Could not remove the booking"); btn.disabled=false; btn.textContent=old; }
       }catch(err){ alert("Network error — try again"); btn.disabled=false; btn.textContent=old; }
@@ -1543,7 +1567,7 @@ function bindTours(tours){
     let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(e){ return; }
     btn.disabled=true; btn.textContent=verb+"…"; MUTATING++; LAST_EDIT=Date.now();
     let msg="";
-    try{ const r=await api("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
+    try{ const r=await apiBusy("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
     catch(err){ msg=err.message||"Network problem — try again"; }
     MUTATING--; try{ await loadTours(); }catch(e){} if(msg) alert(msg);
   };
@@ -1602,7 +1626,7 @@ function bindTours(tours){
       const old=btn.textContent; btn.disabled=true; btn.textContent="Undoing…";
       MUTATING++; LAST_EDIT=Date.now();
       let ok=false, errMsg="";
-      try{ const r=await api("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
+      try{ const r=await apiBusy("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
       catch(err){ errMsg=err.message||"Network problem — try again"; }
       MUTATING--;
       if(ok){ b.checked=false; b.checkedAt=""; b.checkedIn=b.guests;
@@ -1862,7 +1886,7 @@ function bindHistoryCards(){
     let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(e){ return; }
     btn.disabled=true; btn.textContent=verb+"…"; MUTATING++;
     let msg="";
-    try{ const r=await api("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
+    try{ const r=await apiBusy("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
     catch(err){ msg=err.message||"Network problem — try again"; }
     MUTATING--; await historyRefresh(); if(msg) alert(msg);
   };
@@ -1883,7 +1907,7 @@ function bindHistoryCards(){
       if(!confirm("Undo the check-in for "+(b.name||"this guest")+"?\nThis removes it from the ledger and the feed.")) return;
       const old=btn.textContent; btn.disabled=true; btn.textContent="Undoing…"; MUTATING++;
       let ok=false, errMsg="";
-      try{ const r=await api("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
+      try{ const r=await apiBusy("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
       catch(err){ errMsg=err.message||"Network problem — try again"; }
       MUTATING--;
       if(ok){ await historyRefresh(); }
