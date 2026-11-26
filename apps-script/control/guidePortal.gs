@@ -3819,6 +3819,13 @@ function reapplySnapshotMutations_(schedule, bookingsByKey, today, maxKey) {
   // brand-new EMPTY offer slot (e.g. a Weekly_Schedule edit in the last few min) still waits
   // for the next snapshot rebuild — no booking, so no one is missed (unchanged behaviour).
   // ⚠ If you change the shift shape or guide-pick in buildScheduleFromFeed_, mirror it here.
+  // KILL-SWITCH: Script Property PLANA_BUILDIN=OFF reverts to the proven pre-Stage-2b
+  // behaviour — do NOT build a new slot in; instead bail to a full cold rebuild (return
+  // false) the moment a booking slot the snapshot lacks is seen. Instant rollback with no
+  // deploy: set the property, the very next load uses the safe path. Default ON.
+  var buildIn = true;
+  try { buildIn = String(PropertiesService.getScriptProperties().getProperty('PLANA_BUILDIN') || 'ON').toUpperCase() !== 'OFF'; } catch (e) {}
+  var bailNew = false;
   const have = {};
   schedule.forEach(s => { have[shiftKey_(s.dateKey, s.minutes, s.language) + '|' + variantKey_(s.sfExt, s.private, s.privIndex)] = true; });
   const added = {};
@@ -3835,6 +3842,7 @@ function reapplySnapshotMutations_(schedule, bookingsByKey, today, maxKey) {
       const isPriv = !isSf && /privat/i.test(r.note || '');
       const kk = sk + '|' + variantKey_(isSf, isPriv, 1);
       if (have[kk]) return;                                              // snapshot already has this variant
+      if (!buildIn) { bailNew = true; return; }                          // kill-switch OFF: cold-rebuild instead of building in
       let sh = added[kk];
       if (!sh) {
         sh = added[kk] = { dateKey, minutes, time, timeLabel: to12h_(time), language,
@@ -3845,15 +3853,34 @@ function reapplySnapshotMutations_(schedule, bookingsByKey, today, maxKey) {
       if (r.feedGuide && !sh.assigned.length) { sh.assigned = [r.feedGuide]; sh.status = 'OK'; }
     });
   });
+  // Kill-switch OFF and a new booking slot was seen -> let the caller cold-rebuild (cannot miss it).
+  if (bailNew) return false;
   applyClearedOverlay_(schedule);
   applyWeeklyDefaults_(schedule);
   applySecondGuideOverlay_(schedule);
   applyNoShowOverlay_(schedule);
   sortSchedule_(schedule);
-  // New booking slots are now BUILT IN above (not bailed on), so the fast path always wins —
-  // no more "return false -> full cold rebuild" on a fresh booking. (An empty offer slot the
-  // snapshot still lacks is simply not shown until the next rebuild, as before.)
+  // New booking slots are BUILT IN above, so the fast path wins for a fresh booking — UNLESS the
+  // PLANA_BUILDIN kill-switch is OFF, in which case we bailed to a cold rebuild above (safe path).
+  // (An empty offer slot the snapshot still lacks is simply not shown until the next rebuild.)
   return true;
+}
+
+// KILL-SWITCH for the Plan A fast-path build-in (reapplySnapshotMutations_). Run EITHER of these
+// from the Apps Script editor's Run menu — no deploy needed, effective on the very next load:
+//   rollbackPlanAFastPath()  -> PLANA_BUILDIN=OFF: on a brand-new booking slot the portal reverts
+//                               to the proven cold rebuild (slower by ~1 load, but byte-identical
+//                               to the pre-Plan-A behaviour). Use if the fast path ever misbehaves.
+//   restorePlanAFastPath()   -> PLANA_BUILDIN=ON (default): fast path active again.
+function rollbackPlanAFastPath() {
+  PropertiesService.getScriptProperties().setProperty('PLANA_BUILDIN', 'OFF');
+  try { bumpCacheVersion_(); } catch (e) {}   // force the next load to re-assemble under the new flag
+  return 'Plan A build-in OFF — portal cold-rebuilds on a new booking slot (safe path). Run restorePlanAFastPath() to re-enable.';
+}
+function restorePlanAFastPath() {
+  PropertiesService.getScriptProperties().setProperty('PLANA_BUILDIN', 'ON');
+  try { bumpCacheVersion_(); } catch (e) {}
+  return 'Plan A build-in ON — fast path active.';
 }
 
 // --- Near-future Portal feed (pre-built shift structure) --------------------

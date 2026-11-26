@@ -579,6 +579,18 @@ check('Stage 2b: a NEW booking the snapshot lacks is BUILT IN (it appears)', !!n
 check('Stage 2b: it used the FAST path — no cold asm.build (old code would cold-rebuild here)', nf2b.timings && nf2b.timings['asm.build'] === undefined && typeof nf2b.timings['nfpf.reapply'] === 'number', nf2b.timings);
 check('Stage 2b: the built-in shift matches a cold build (English 3h, Not assigned, carries its booking)', nf2bShift && nf2bShift.language === 'English' && !nf2bShift.sfExt && !nf2bShift.private && (nf2bShift.assigned || []).length === 0, nf2bShift && [nf2bShift.language, nf2bShift.sfExt, nf2bShift.private, nf2bShift.assigned]);
 deleteSelfTestArtifacts_({ time24: '18:45', langs: ['English'] });
+// KILL-SWITCH: with Script Property PLANA_BUILDIN=OFF the fast path must NOT build a new slot
+// in — it bails to a full cold rebuild (asm.build present). The booking STILL appears (cannot
+// miss it); only the code path differs. This is the instant, no-deploy rollback of Stage 2b.
+PropertiesService.getScriptProperties().setProperty('PLANA_BUILDIN', 'OFF');
+createTestBookingRow_('English', DATE, '7:15 PM', 'KillSwitch', 'GYGKILL1', 2, false);
+bumpCacheVersion_();
+const nfKill = apiTours_({ token: token, days: 10 });
+const nfKillShift = (nfKill.allTours || []).find(s => s.dateKey === DATE && s.time === '19:15' && s.language === 'English' && (s.bookings || []).some(b => b.bookingId === 'GYGKILL1'));
+check('kill-switch OFF: the new booking STILL appears (never missed)', !!nfKillShift, nfKillShift && nfKillShift.bookings.map(b => b.bookingId));
+check('kill-switch OFF: it took the COLD path (asm.build present — build-in was bypassed)', nfKill.timings && typeof nfKill.timings['asm.build'] === 'number', nfKill.timings);
+PropertiesService.getScriptProperties().setProperty('PLANA_BUILDIN', 'ON');
+deleteSelfTestArtifacts_({ time24: '19:15', langs: ['English'] });
 
 console.log('--- Unstaffed-tour alarm: a tour tomorrow with guests but NO guide emails management (subject only) ---');
 const TOM = dayKey(1);

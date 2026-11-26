@@ -128,13 +128,27 @@ feed = { [SK('2027-06-15', 930, 'Italian')]: [{ source: 'Website', note: '', fee
 reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18');
 check('an unassigned shift (no feed guide) clears to Not assigned', sched[0].assigned.length === 0 && sched[0].status === 'Not assigned', sched[0]);
 
-// 4. Safety net: a NEW BOOKING on a slot the snapshot lacks -> reapply returns false (caller cold-builds, booking never hidden).
+// 4. Stage 2b: a NEW BOOKING on a slot the snapshot lacks is BUILT IN (reapply returns true and
+//    the slot appears) instead of forcing a cold rebuild. The booking is never hidden.
 sched = [mkShift('Francesca')];
 feed = {
   [SK('2027-06-15', 930, 'Italian')]: [{ source: 'Website', note: '', feedGuide: 'Francesca', rowType: 'booking', bookingId: 'B1' }],
   [SK('2027-06-15', 660, 'English')]: [{ source: 'Website', note: '', feedGuide: '', rowType: 'booking', bookingId: 'B2' }]
 };
-check('a brand-new booking slot the snapshot lacks forces a cold build (false)', reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18') === false, null);
+let built = reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18');
+let newSlot = sched.find(s => s.language === 'English' && s.minutes === 660);
+check('Stage 2b: a new booking slot the snapshot lacks is BUILT IN (returns true, slot appears)', built === true && !!newSlot && newSlot.status === 'Not assigned', [built, newSlot && newSlot.status]);
+
+// 4b. KILL-SWITCH: PLANA_BUILDIN=OFF reverts to the safe cold-build bail (returns false) on a new
+//     booking slot — the instant, no-deploy rollback. The caller then cold-builds (never misses it).
+__mock.PROPS['PLANA_BUILDIN'] = 'OFF';
+sched = [mkShift('Francesca')];
+feed = {
+  [SK('2027-06-15', 930, 'Italian')]: [{ source: 'Website', note: '', feedGuide: 'Francesca', rowType: 'booking', bookingId: 'B1' }],
+  [SK('2027-06-15', 660, 'English')]: [{ source: 'Website', note: '', feedGuide: '', rowType: 'booking', bookingId: 'B2' }]
+};
+check('kill-switch OFF: a new booking slot forces the cold build again (returns false)', reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18') === false, null);
+delete __mock.PROPS['PLANA_BUILDIN'];
 
 // 5. ...but a bare placeholder on a missing slot is NOT a booking, so it does not force a cold build.
 sched = [mkShift('Francesca')];
