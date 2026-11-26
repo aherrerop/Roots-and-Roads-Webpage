@@ -7111,9 +7111,14 @@ function reparseActiveRowsFromEmail() {
     console.log('--- corrections ---');
     changes.forEach(c => console.log('  ' + c));
   }
+  // The portal reads the Portal Feed, NOT the BookingSheet — so a sheet correction is
+  // invisible until the feed is rebuilt. Always rebuild it here so a reparse propagates
+  // all the way to the portal in one run (idempotent; also covers the case where an
+  // earlier reparse already fixed the sheet but the feed stayed stale).
+  if (checked) safeRebuildPortalFeed_();
   // Return a summary (not just the count) so the admin-run endpoint can report
   // exactly which rows it corrected — e.g. "GYG… : guests 1 -> 3".
-  return { fixed: fixed, checked: checked, unchanged: unchanged, noEmail: noEmail, changes: changes };
+  return { fixed: fixed, checked: checked, unchanged: unchanged, noEmail: noEmail, changes: changes, feedRebuilt: !!checked };
 }
 
 // One-off (run from the editor): re-tag any active booking whose GetYourGuide email

@@ -429,7 +429,11 @@ function websiteAdminRun_(e) {
     // scheduled audit firings.
     const allowed = {
       runBookingSystem: runBookingSystem,
-      runBookingAudit: function () { runBookingAudit(true); },
+      // The owner's "Run booking audit" button now ALSO re-reads every active row from its
+      // own confirmation email and rebuilds the Portal Feed — so a parser fix reaches the
+      // portal via the button they already have (no editor, no key). Audit first
+      // (recover/reconcile), then reparse (fix counts) which rebuilds the feed.
+      runBookingAudit: function () { runBookingAudit(true); return reparseActiveRowsFromEmail(); },
       // Re-read every active row from its own confirmation email and rewrite the rows
       // whose guests/children the email now parses differently (idempotent, preserves
       // manual notes). This is how an existing row picks up a parser fix — e.g. a GYG
