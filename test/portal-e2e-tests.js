@@ -567,6 +567,18 @@ const nfTours2 = apiTours_({ token: token, days: 10 });
 const nfShift2 = (nfTours2.allTours || []).find(s => s.dateKey === DATE && s.time === '10:00' && s.language === 'English' && (s.bookings || []).some(b => b.bookingId === 'GYGE2E001'));
 check('after a change the snapshot is self-corrected (not discarded); the tour still returns', !!nfShift2, nfShift2 && nfShift2.bookings.map(b => b.bookingId));
 check('a change is reflected via reapply on the fast path, with NO cold rebuild', nfTours2.timings && typeof nfTours2.timings['nfpf.reapply'] === 'number' && nfTours2.timings['asm.build'] === undefined, nfTours2.timings);
+// PLAN A Stage 2b: a NEW booking on a slot the snapshot LACKS is now BUILT IN on the fast
+// path instead of forcing a full cold rebuild. Add a booking at a brand-new time the snapshot
+// (built above) doesn't have, bump the version (asm miss, like a real mutation), then load —
+// it must appear with NO cold asm.build (the OLD code returned false here -> cold build).
+createTestBookingRow_('English', DATE, '6:45 PM', 'NewBooking 2b', 'GYG2BNEW1', 2, false);
+bumpCacheVersion_();
+const nf2b = apiTours_({ token: token, days: 10 });
+const nf2bShift = (nf2b.allTours || []).find(s => s.dateKey === DATE && s.time === '18:45' && s.language === 'English' && (s.bookings || []).some(b => b.bookingId === 'GYG2BNEW1'));
+check('Stage 2b: a NEW booking the snapshot lacks is BUILT IN (it appears)', !!nf2bShift, nf2bShift && nf2bShift.bookings.map(b => b.bookingId));
+check('Stage 2b: it used the FAST path — no cold asm.build (old code would cold-rebuild here)', nf2b.timings && nf2b.timings['asm.build'] === undefined && typeof nf2b.timings['nfpf.reapply'] === 'number', nf2b.timings);
+check('Stage 2b: the built-in shift matches a cold build (English 3h, Not assigned, carries its booking)', nf2bShift && nf2bShift.language === 'English' && !nf2bShift.sfExt && !nf2bShift.private && (nf2bShift.assigned || []).length === 0, nf2bShift && [nf2bShift.language, nf2bShift.sfExt, nf2bShift.private, nf2bShift.assigned]);
+deleteSelfTestArtifacts_({ time24: '18:45', langs: ['English'] });
 
 console.log('--- Unstaffed-tour alarm: a tour tomorrow with guests but NO guide emails management (subject only) ---');
 const TOM = dayKey(1);
