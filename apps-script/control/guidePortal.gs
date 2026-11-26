@@ -299,6 +299,8 @@ function doGet(e) {
       case 'health': out = apiHealth_(); break;
       case 'timings': out = apiTimings_(p); break;
       case 'refreshstaging': out = refreshStagingToLive_(p); break;   // STAGING-ONLY one-shot (ENV-guarded)
+      case 'buildreadmodel': out = buildReadModelFile_(); break;       // Stage 1: write the private read-model file
+      case 'readmodelcheck': out = readModelCheck_(); break;           // Stage 1: verify the file (no PII)
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
     }
   } catch (err) {
@@ -4046,7 +4048,76 @@ function rebuildNearFuturePortalFeed_() {
   // client can later read the schedule directly (reads off Apps Script). No-op and never throws
   // until the owner arms STATIC_FEED_PUBLISH=ON + a GH_TOKEN property.
   try { publishReadModelToGitHub_(portalPublicReadModel_(schedule, feed, todayKey_(), PORTAL.UPCOMING_DAYS)); } catch (e) {}
+  // Stage 1 (private-file read-model): also write the FULL read-model to a private Drive JSON file
+  // — the fast store the portal will read instead of the Sheets. Flag-gated READMODEL_FILE=ON; one
+  // writer (this rebuild); never throws. Reuses the schedule/feed we just built (no extra reads).
+  try { if (String(PropertiesService.getScriptProperties().getProperty('READMODEL_FILE') || '').toUpperCase() === 'ON') buildReadModelFile_(schedule, feed); } catch (e) {}
   return { ok: true, n: schedule.length, ver: ver };
+}
+
+// --- Private-file read-model (Stage 1) ------------------------------------------------------
+// Build the WHOLE read-model (assembled schedule + the full feed with bookings/guests + ledger
+// check-ins + the roster/avail inputs) and write it to ONE private Drive JSON file. A file read
+// then replaces the portal's sheet reads + assemble + ledger read (benchmarked ~0.4s vs ~2.3s).
+// The file is PRIVATE (only this account reads it), so it can hold guest names. ONE writer (the
+// rebuild), so there is nothing to clobber — the Sheets stay the source of truth.
+var READMODEL_FNAME = 'portal-readmodel.json';
+function buildReadModelFile_(schedule, feed) {
+  if (!feed) feed = readPortalFeed_();
+  if (!feed) return { ok: false, error: 'no Portal Feed' };
+  if (!schedule) schedule = assembleSchedule_(feed, PORTAL.UPCOMING_DAYS);
+  const mg = managerGuidesByLanguage_();
+  // Ledger check-ins (the same backstop apiTours_ uses), keyed "shiftKey|bookingId".
+  let checkins = {};
+  try {
+    const names = {};
+    Object.keys(mg.byLang || {}).forEach(function (l) { (mg.byLang[l] || []).forEach(function (n) { names[n] = 1; }); });
+    const list = Object.keys(names);
+    if (list.length) checkins = (readLedgerForGuides_(list) || {}).checkins || {};
+  } catch (e) { /* degrade to feed-only check-ins */ }
+  const model = {
+    ver: String(cacheVersion_()),
+    builtAt: Date.now(),
+    builtAtText: Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'),
+    horizonDays: PORTAL.UPCOMING_DAYS,
+    schedule: schedule,
+    feed: feed,
+    checkins: checkins,
+    guidesByLanguage: mg.byLang || {},
+    guideTourTypes: mg.tourTypes || {},
+    availSlots: availBySlot_(),
+    guideVacations: mg.vacations || {}
+  };
+  const json = JSON.stringify(model);
+  const it = DriveApp.getFilesByName(READMODEL_FNAME);
+  let f = it.hasNext() ? it.next() : null;
+  if (f) f.setContent(json); else f = DriveApp.createFile(READMODEL_FNAME, json, 'application/json');
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('READMODEL_FILE_ID', f.getId());
+  props.setProperty('READMODEL_META', JSON.stringify({ ver: model.ver, builtAt: model.builtAt, bytes: json.length, shifts: schedule.length }));
+  return { ok: true, fileId: f.getId(), bytes: json.length, shifts: schedule.length, checkins: Object.keys(checkins).length };
+}
+
+// action=readmodelcheck — DIAGNOSTIC: read the file back and summarise it WITHOUT guest PII
+// (counts + one sample shift's structure + the read time), to confirm Stage 1 wrote a usable file.
+function readModelCheck_() {
+  try {
+    const id = PropertiesService.getScriptProperties().getProperty('READMODEL_FILE_ID');
+    if (!id) return { ok: false, error: 'no READMODEL_FILE_ID — build it first (action=buildreadmodel)' };
+    const t = Date.now();
+    const m = JSON.parse(DriveApp.getFileById(id).getBlob().getDataAsString());
+    const readMs = Date.now() - t;
+    let sample = null;
+    (m.schedule || []).some(function (s) {
+      const rows = (m.feed[shiftKey_(s.dateKey, s.minutes, s.language)] || []);
+      const real = rows.filter(function (r) { return (r.rowType || 'booking') !== 'shift'; });
+      if (real.length) { sample = { date: s.dateKey, time: s.time, lang: s.language, guide: (s.assigned || [])[0] || '', bookings: real.length, ppl: real.reduce(function (a, b) { return a + Number(b.guests || 0); }, 0) }; return true; }
+      return false;
+    });
+    return { ok: true, readMs: readMs, shifts: (m.schedule || []).length, feedKeys: Object.keys(m.feed || {}).length,
+             checkins: Object.keys(m.checkins || {}).length, roster: Object.keys(m.guidesByLanguage || {}),
+             builtAt: m.builtAtText, bytes: JSON.stringify(m).length, sample: sample };
+  } catch (e) { return { ok: false, error: String(e).slice(0, 200) }; }
 }
 
 // Read the pre-built tab -> { schedule, ver } (the version it was built at), or null when
