@@ -158,6 +158,20 @@ feed = {
 };
 check('a bare placeholder on a missing slot does NOT force a cold build (true)', reapplySnapshotMutations_(sched, feed, '2027-06-15', '2027-06-18') === true, null);
 
+console.log('--- Static read path (Stage 1): the PUBLIC read-model must be PII-FREE ---');
+let pmSched = [mkShift('Carlos')];
+let pmFeed = { [SK('2027-06-15', 930, 'Italian')]: [
+  { source: 'Website', note: '', feedGuide: 'Carlos', rowType: 'booking', bookingId: 'B9',
+    name: 'Jane Secret', phone: '+34600123456', guests: 3, children: 1, feedCheckedIn: 2 }
+] };
+let pmModel = portalPublicReadModel_(pmSched, pmFeed, '2027-06-14', 3);
+let pmJson = JSON.stringify(pmModel);
+check('read-model: the tour appears with correct head-counts (counts only, no who)', pmModel.tours.length === 1 && pmModel.tours[0].bookedGuests === 3 && pmModel.tours[0].bookedChildren === 1 && pmModel.tours[0].checkedGuests === 2 && pmModel.tours[0].booked === 1, pmModel.tours[0]);
+check('read-model: NO guest NAME leaks to the public blob', pmJson.indexOf('Jane Secret') === -1, pmJson.slice(0, 140));
+check('read-model: NO guest PHONE leaks to the public blob', pmJson.indexOf('600123456') === -1, null);
+check('read-model: no name/phone/note/bookings KEYS on any tour', pmModel.tours.every(t => !('name' in t) && !('phone' in t) && !('bookings' in t) && !('note' in t)), Object.keys(pmModel.tours[0]));
+check('read-model: still carries the assignment + flags needed to render', pmModel.tours[0].guide === 'Carlos' && pmModel.tours[0].status === 'OK' && pmModel.tours[0].isPrivate === false && pmModel.tours[0].sfExt === false, pmModel.tours[0]);
+
 console.log('--- Fail-closed staging guard: a non-prod copy must override every sheet id or REFUSE ---');
 delete __mock.PROPS['ENV']; delete __mock.PROPS['TESTSHEETKEY'];
 check('production (ENV unset): extSheetId_ falls back to the live default', extSheetId_('TESTSHEETKEY', 'LIVE_DEFAULT') === 'LIVE_DEFAULT', null);

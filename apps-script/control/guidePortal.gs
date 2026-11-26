@@ -3922,6 +3922,10 @@ function rebuildNearFuturePortalFeed_() {
     PropertiesService.getScriptProperties().setProperty('NFPF_BUILT',
       JSON.stringify({ ver: ver, at: Date.now(), n: schedule.length }));
   } catch (e) { /* stamp best-effort */ }
+  // Stage 1 (static read path): also publish the PII-FREE public read-model to GitHub so the
+  // client can later read the schedule directly (reads off Apps Script). No-op and never throws
+  // until the owner arms STATIC_FEED_PUBLISH=ON + a GH_TOKEN property.
+  try { publishReadModelToGitHub_(portalPublicReadModel_(schedule, feed, todayKey_(), PORTAL.UPCOMING_DAYS)); } catch (e) {}
   return { ok: true, n: schedule.length, ver: ver };
 }
 
@@ -3939,6 +3943,98 @@ function readNearFuturePortalFeed_() {
     try { meta = JSON.parse(PropertiesService.getScriptProperties().getProperty('NFPF_BUILT') || 'null'); } catch (e) {}
     return { schedule: schedule, ver: meta ? String(meta.ver) : null };
   } catch (e) { return null; }
+}
+
+// --- STATIC READ PATH (Stage 1: publisher only) --------------------------------------------
+// The ~5-min rebuild ALSO publishes a world-readable, guest-PII-FREE read-model of the schedule
+// to a GitHub branch, which the client will later fetch DIRECTLY (reads never run Apps Script).
+// HARD RULE: this blob is public, so it carries NO guest name / phone / note — only the grid the
+// portal draws (times, languages, guides, head-counts, status, flags). Guest detail stays behind
+// Apps Script, fetched per card on demand. Everything here is flag-gated and never throws, so it
+// ships dark until the owner arms it. See STATIC_READ_PATH_PLAN.md.
+
+// Build the PII-free read-model from the SAME inputs the manager grid uses (so the counts match
+// the portal exactly) MINUS the per-guest `bookings` array — the only PII source. Returns counts
+// only: bookedGuests / bookedChildren / checkedGuests / booked (how many bookings), never who.
+function portalPublicReadModel_(schedule, bookingsByKey, today, horizonDays) {
+  const maxKey = addDaysKey_(today, horizonDays);
+  const overloaded = overloadedShiftKeys_(schedule, bookingsByKey);
+  const tours = schedule
+    .filter(s => s.dateKey >= today && s.dateKey <= maxKey && !shiftIsOver_(s.dateKey, s.minutes))
+    .map(shift => {
+      const key = shiftKey_(shift.dateKey, shift.minutes, shift.language);
+      const rows = bookingsForShift_(bookingsByKey, shift);
+      const real = rows.filter(r => (r.rowType || 'booking') !== 'shift');   // drop bare placeholder rows
+      const bGuests = real.reduce((s, b) => s + Number(b.guests || 0), 0);
+      const bChildren = real.reduce((s, b) => s + Number(b.children || 0), 0);
+      const checkedGuests = real.reduce((s, b) => s + (b.feedCheckedIn != null ? Number(b.feedCheckedIn) : 0), 0);
+      const full = !shift.private && !!overloaded[shiftKeyFull_(shift)];
+      return {
+        id: key + '|' + variantKey_(shift.sfExt, shift.private, shift.privIndex),
+        dateKey: shift.dateKey, dateText: shift.dateText, day: shift.day,
+        time: shift.time, timeLabel: shift.timeLabel, language: shift.language,
+        privIndex: shift.privIndex || 1,
+        assigned: shift.assigned || [], guide: (shift.assigned || [])[0] || '',
+        status: shift.status, isPrivate: !!shift.private,
+        sfExt: !!shift.sfExt, tourName: shift.tourName || (shift.sfExt ? 'SF' : '3h'),
+        bookedGuests: bGuests, bookedChildren: bChildren, checkedGuests: checkedGuests,
+        booked: real.length,
+        full: full, needsSecondGuide: full && (shift.assigned || []).length < 2,
+        secondGuide: shift.secondGuide || '', noShow: !!shift.noShow, noShowGuide: shift.noShowGuide || ''
+      };
+    });
+  return { v: 1, builtAt: Date.now(),
+           builtAtText: Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'),
+           horizonDays: horizonDays, tours: tours };
+}
+
+// Publish the model to GitHub via the Contents API, on a dedicated branch (default portal-feed),
+// so main's history stays clean. Change-detected (an identical schedule is NOT re-committed, so
+// a quiet 5-min cycle costs nothing), flag-gated by STATIC_FEED_PUBLISH + GH_TOKEN, never throws.
+// Config via Script Properties: GH_TOKEN (fine-grained PAT, contents:write), GH_REPO, GH_BRANCH,
+// GH_PATH. The client (Stage 2) will read raw.githubusercontent.com/<repo>/<branch>/<path>.
+function publishReadModelToGitHub_(model) {
+  const props = PropertiesService.getScriptProperties();
+  try {
+    if (String(props.getProperty('STATIC_FEED_PUBLISH') || '').toUpperCase() !== 'ON') return { ok: false, skipped: 'flag off' };
+    const token = props.getProperty('GH_TOKEN');
+    if (!token) return { ok: false, skipped: 'no GH_TOKEN' };
+    const repo   = props.getProperty('GH_REPO')   || 'aherrerop/Roots-and-Roads-Webpage';
+    const branch = props.getProperty('GH_BRANCH') || 'portal-feed';
+    const path   = props.getProperty('GH_PATH')   || 'feed.json';
+    // Change-detection on the TOURS only (ignore the timestamp) — skip an identical blob.
+    const sig = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, JSON.stringify(model.tours)));
+    if (props.getProperty('STATIC_FEED_SIG') === sig) return { ok: true, skipped: 'unchanged' };
+    const api = 'https://api.github.com/repos/' + repo + '/contents/' + path;
+    const headers = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+    const content = Utilities.base64Encode(JSON.stringify(model), Utilities.Charset.UTF_8);
+    const putOnce = function (sha) {
+      return UrlFetchApp.fetch(api, { method: 'put', contentType: 'application/json', muteHttpExceptions: true, headers: headers,
+        payload: JSON.stringify({ message: 'portal feed ' + model.builtAtText, content: content, branch: branch, sha: sha || undefined }) });
+    };
+    let resp = putOnce(props.getProperty('STATIC_FEED_SHA') || null);
+    let code = resp.getResponseCode();
+    // A stale/missing sha returns 409/422 — fetch the current one and retry once.
+    if (code === 409 || code === 422) {
+      const get = UrlFetchApp.fetch(api + '?ref=' + encodeURIComponent(branch), { method: 'get', muteHttpExceptions: true, headers: headers });
+      if (get.getResponseCode() === 200) { resp = putOnce(JSON.parse(get.getContentText()).sha); code = resp.getResponseCode(); }
+    }
+    if (code >= 200 && code < 300) {
+      try { props.setProperty('STATIC_FEED_SHA', JSON.parse(resp.getContentText()).content.sha); } catch (e) {}
+      props.setProperty('STATIC_FEED_SIG', sig);
+      return { ok: true, code: code };
+    }
+    return { ok: false, code: code, body: String(resp.getContentText() || '').slice(0, 180) };
+  } catch (e) { return { ok: false, error: String(e).slice(0, 180) }; }
+}
+
+// Manual one-shot for the editor: build + publish the read-model right now (ignores the 5-min
+// trigger). Returns the publish result so the owner can see it worked. Still flag/token-gated.
+function publishPortalFeedNow() {
+  const feed = readPortalFeed_();
+  if (!feed) return { ok: false, error: 'no Portal Feed to build from' };
+  const schedule = assembleSchedule_(feed, PORTAL.UPCOMING_DAYS);
+  return publishReadModelToGitHub_(portalPublicReadModel_(schedule, feed, todayKey_(), PORTAL.UPCOMING_DAYS));
 }
 
 // Install the ~5-min rebuild trigger (run once from the editor). Safe to re-run.

@@ -51,9 +51,33 @@ committing to Firebase.
 - **Stage 0 — Decide A (schema) + B (host).** Define the PII-free read-model schema =
   exactly what a card needs to render without guests. Add a test asserting the published
   blob contains no PII fields.
-- **Stage 1 — Publisher (write side only), flag-gated, no client change.**
-  The rebuild (and mutations) also write the read-model to the front door, behind
-  `STATIC_FEED_PUBLISH`. Verify the blob matches the assembled schedule. Zero user-facing change.
+- **Stage 1 — Publisher (write side only), flag-gated, no client change. ✅ CODE DONE (ships dark).**
+  The ~5-min rebuild also writes the PII-free read-model to a GitHub branch, behind
+  `STATIC_FEED_PUBLISH` + a `GH_TOKEN`. No-op and never throws until armed.
+  Functions in `guidePortal.gs`: `portalPublicReadModel_` (builds the counts-only model from the
+  same inputs as the grid), `publishReadModelToGitHub_` (change-detected PUT to the branch),
+  `publishPortalFeedNow()` (editor one-shot). PII guard: 5 tests in `cache-tests.js` assert no
+  guest name/phone/note/bookings ever appear in the blob.
+
+  **To ARM it (owner, ~5 min, one time):**
+  1. Create a **fine-grained GitHub PAT** on the `aherrerop/Roots-and-Roads-Webpage` repo with
+     **Contents: Read and write** (nothing else). Copy the token.
+  2. In the Apps Script editor → Project Settings → Script Properties, add:
+     - `GH_TOKEN` = the PAT
+     - `STATIC_FEED_PUBLISH` = `ON`
+     - (optional, defaults shown) `GH_REPO`=`aherrerop/Roots-and-Roads-Webpage`,
+       `GH_BRANCH`=`portal-feed`, `GH_PATH`=`feed.json`
+  3. Run `publishPortalFeedNow()` from the Run menu once → it should return `{ ok: true }`.
+  4. Confirm the blob is live and PII-free:
+     `https://raw.githubusercontent.com/aherrerop/Roots-and-Roads-Webpage/portal-feed/feed.json`
+     (the `portal-feed` branch is pre-created). Then the 5-min trigger keeps it fresh.
+  **Rollback:** set `STATIC_FEED_PUBLISH`=`OFF` (or delete `GH_TOKEN`). The branch is never served
+  by GitHub Pages (only the client fetches it via raw), so nothing user-facing changes until Stage 2.
+
+  Note on hosting: we publish to a **branch read via `raw.githubusercontent.com`**, not a
+  Pages-built path, because GitHub Pages rebuilds are rate-limited (~10/hr) and could not keep a
+  5-min cadence; raw serves the committed file directly (CDN-cached ~5 min, which matches our
+  update granularity). A cache-buster query gives the client a fresher copy when needed.
 - **Stage 2 — Client reads the static schedule, lazily fetches guests, flag-gated.**
   Client renders the grid from the static blob; opening a card fetches that card's guests from
   Apps Script. Behind a client flag so it A/B's against the current `PORTAL_URL` path.
