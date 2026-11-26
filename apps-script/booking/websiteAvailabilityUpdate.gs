@@ -427,7 +427,15 @@ function websiteAdminRun_(e) {
     // The manual "Run booking audit" button forces a FULL re-read (the owner ran it
     // on purpose), bypassing the once-per-day downgrade that only trims EXTRA
     // scheduled audit firings.
-    const allowed = { runBookingSystem: runBookingSystem, runBookingAudit: function () { runBookingAudit(true); } };
+    const allowed = {
+      runBookingSystem: runBookingSystem,
+      runBookingAudit: function () { runBookingAudit(true); },
+      // Re-read every active row from its own confirmation email and rewrite the rows
+      // whose guests/children the email now parses differently (idempotent, preserves
+      // manual notes). This is how an existing row picks up a parser fix — e.g. a GYG
+      // private that showed 1 person before the "Group up to N (K Persons)" fix.
+      reparseActiveRowsFromEmail: reparseActiveRowsFromEmail
+    };
 
     if (!key) out = { ok: false, error: 'ADMIN_KEY not configured' };
     else if (given !== key) out = { ok: false, error: 'Bad key' };
@@ -438,7 +446,7 @@ function websiteAdminRun_(e) {
       out = { ok: true, ran: fn, trashed: n };
     }
     else if (!allowed[fn]) out = { ok: false, error: 'Function not allowed: ' + fn };
-    else { allowed[fn](); out = { ok: true, ran: fn }; }
+    else { const result = allowed[fn](); out = { ok: true, ran: fn, result: result }; }
   } catch (err) {
     out = { ok: false, error: String(err && err.message ? err.message : err) };
   }

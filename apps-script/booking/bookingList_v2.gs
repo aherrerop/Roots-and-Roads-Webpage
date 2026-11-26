@@ -7111,7 +7111,9 @@ function reparseActiveRowsFromEmail() {
     console.log('--- corrections ---');
     changes.forEach(c => console.log('  ' + c));
   }
-  return fixed;
+  // Return a summary (not just the count) so the admin-run endpoint can report
+  // exactly which rows it corrected — e.g. "GYG… : guests 1 -> 3".
+  return { fixed: fixed, checked: checked, unchanged: unchanged, noEmail: noEmail, changes: changes };
 }
 
 // One-off (run from the editor): re-tag any active booking whose GetYourGuide email
