@@ -21,16 +21,29 @@ GitHub, so it survives even a local disk loss.
 
 ## 2026-11-26 — dead-function cleanup (Control project, `guidePortal.gs`)
 
-Removed two private helpers that no longer had any caller because a newer implementation
-replaced them. Both removals are **behaviour-neutral** (dead code — nothing called them),
-confirmed by the full test suite (153 passed) and `check-references`.
+Removed ONE private helper that no longer had any caller because a newer implementation
+replaced it. Behaviour-neutral, confirmed by the full suite and `check-references`.
 
 | Removed | What it did | Replaced by | Why it was dead |
 |---|---|---|---|
-| `writeFeedCheckin_(bookingId, checkedIn, checkedAt)` | Wrote ONE check-in onto a Portal Feed row (cols M/N), one read + one write per booking. | `writeFeedCheckins_(updates, at)` — mirrors MANY check-ins in ONE read + ONE write per tour. | The batched version (commit `1fccc5c`) took over the check-in→feed write; the single-booking writer was left with no callers. |
-| `readLedgerHistory_(guides, loKey)` | Old manager-history reader: scanned each guide's ledger tab for check-ins since a cutoff. | The month-history path (`monthBoundsKeys_` + the ledger-feed helpers) that `apiHistory_` uses for the month-picker History view. | Superseded when History gained the any-month picker; the old fixed-window reader was left unreferenced. |
+| `readLedgerHistory_(guides, loKey)` | Old manager-history reader: scanned each guide's ledger tab for check-ins since a cutoff. | The month-history path (`monthBoundsKeys_` + the ledger-feed helpers) that `apiHistory_` uses for the month-picker History view. | Superseded when History gained the any-month picker; the old fixed-window reader was left unreferenced (no refs in source OR tests). |
 
 Restore source: `known-good-2026-11-26-planA-live` (or any commit at/before `b7ad8de`).
+
+### ⚠️ Correction (2026-11-26): `writeFeedCheckin_` was RESTORED — it was NOT dead
+I first removed `writeFeedCheckin_` too, thinking the batched `writeFeedCheckins_` superseded it.
+It had no caller in `guidePortal.gs`, but **the feed-check-in tests call it directly**
+(`portal-e2e-tests.js`, `tests6.js`) because it has **distinct semantics**: the singular NEVER
+downgrades a count (`Math.max`) and keeps the first time, whereas the batched plural is
+AUTHORITATIVE (a count can be corrected DOWN). They are not interchangeable. Removing it crashed
+those suites. It is restored, with a comment saying to keep it.
+
+**Two lessons (now habits):**
+1. A dead-code scan must grep the **`test/`** directory too, not just the source — a test-only
+   caller still means the function is referenced.
+2. Verify the suite by the runner's **exit code** (`npm test; echo $?` → must be `0`), never by
+   summing the per-file "RESULT:" lines — a suite that *crashes* prints no RESULT line, so the
+   hand-sum looks green while a suite is actually failing.
 
 ### What was deliberately KEPT (looks unused, but isn't)
 

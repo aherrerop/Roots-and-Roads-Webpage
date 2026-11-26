@@ -283,6 +283,7 @@ function doGet(e) {
       case 'login':  out = apiLogin_(p); break;
       case 'tours':  out = apiTours_(p); break;
       case 'guideopts': out = apiGuideOpts_(p); break;
+      case 'guests': out = apiShiftGuests_(p); break;
       case 'save':   out = apiSave_(p);  break;
       case 'assign': out = apiAssign_(p); break;
       case 'move':   out = apiMoveBooking_(p); break;
@@ -1314,6 +1315,57 @@ function apiGuideOpts_(p) {
   const shift = { dateKey: dateKey, minutes: minutes, time: time, language: language, sfExt: isSf, private: isPriv, privIndex: privIndex };
   const id = shiftKey_(dateKey, minutes, language) + '|' + variantKey_(isSf, isPriv, privIndex);
   return { ok: true, id: id, guideOptions: guideStatusesForShift_(shift, guidesByLanguage, busyMap) };
+}
+
+// action=guests (static read path, Stage 2) — fetch ONE shift's guest list on demand. The public
+// feed is counts-only, so names / phones / per-guest check-in marks are fetched HERE only when a
+// card is opened. Manager, or a guide assigned to the shift. Check-in state comes from the FEED
+// (writeFeedCheckins_ writes it on every check-in), so it matches what the card showed before.
+function apiShiftGuests_(p) {
+  __RRX = {};
+  const name = requireToken_(p.token);
+  if (!name) return { ok: false, error: 'Session expired, please log in again' };
+  const me = findGuideByName_(name);
+  if (!me) return { ok: false, error: 'Unknown guide' };
+  const dateKey = String(p.dateKey || '').trim();
+  const language = String(p.language || '').trim();
+  const time = normTime24_(String(p.time || ''));
+  const isSf = String(p.sfExt || '') === '1';
+  const isPriv = !isSf && String(p.isPrivate || '') === '1';
+  const privIndex = Number(p.privIndex) || 1;
+  if (!dateKey || !language || !time) return { ok: false, error: 'Missing shift info' };
+  const minutes = timeToMinutes_(time);
+  const key = shiftKey_(dateKey, minutes, language);
+  const shift = { dateKey: dateKey, minutes: minutes, time: time, language: language, sfExt: isSf, private: isPriv, privIndex: privIndex };
+  const feed = readPortalFeed_() || {};
+  // Authorize a non-manager: they must be the guide assigned to this shift (feed Guide col, or
+  // the assembled schedule's weekly-default / overlay assignment).
+  if (!me.manager) {
+    let allowed = (feed[key] || []).some(r => String(r.feedGuide || '').trim() === name);
+    if (!allowed) {
+      const horizon = PORTAL.MANAGER_WINDOW_DAYS;
+      const sched = cachedRead_('asm:' + horizon, PORTAL.CACHE_TTL, function () { const f = readPortalFeed_(); return f ? assembleSchedule_(f, horizon) : []; });
+      const sh = (sched || []).find(s => s.dateKey === dateKey && s.minutes === minutes && s.language === language && !!s.sfExt === isSf && !!s.private === isPriv && (s.privIndex || 1) === privIndex);
+      allowed = !!sh && (sh.assigned || []).indexOf(name) !== -1;
+    }
+    if (!allowed) return { ok: false, error: 'Not your tour' };
+  }
+  const g2ck = checkinGuide2Set_();
+  const rows = bookingsForShift_(feed, shift).filter(r => (r.rowType || 'booking') !== 'shift');
+  const guests = rows.map(function (b) {
+    const feedCk = (b.feedCheckedIn != null);
+    return {
+      bookingId: b.bookingId, name: b.name, phone: b.phone, source: b.source, guests: b.guests,
+      children: Number(b.children || 0), infants: Number(b.infants || 0),
+      paid: isPaidSource_(b.source), isPrivate: /privat/i.test(b.note || ''),
+      note: String(b.note || ''), manualNote: String(b.manualNote || ''),
+      checked: feedCk, checkedIn: feedCk ? Number(b.feedCheckedIn) : Number(b.guests || 0),
+      checkedAt: feedCk ? String(b.feedCheckedAt || '') : '',
+      guideIndex: g2ck[b.bookingId] ? 2 : 1
+    };
+  });
+  return { ok: true, id: key + '|' + variantKey_(isSf, isPriv, privIndex), guests: guests,
+           now: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm:ss') };
 }
 
 // Active guides grouped by language (most-senior first) + each guide's tour types. Shared by
@@ -2834,6 +2886,42 @@ function parseFeedSheet_(sh) {
     });
   });
   return index;
+}
+
+// Write a check-in onto the Portal Feed row for a booking — columns M (Checked-in) and
+// N (Check-in time), which belong to the portal alone. The 5-minute rebuild writes only
+// the reservation columns (A-L) and preserves M/N by Booking ID, so the two writers
+// touch DISJOINT columns and can't clobber each other. Updates an existing row only; a
+// booking not yet in the feed is covered by the ledger + union read until the next
+// rebuild gives it a row. Best-effort.
+// NOTE: the LIVE check-in path uses the batched, AUTHORITATIVE writeFeedCheckins_ below
+// (counts can be corrected DOWN). This singular keeps the distinct NEVER-DOWNGRADE
+// semantics (count only ever rises, first time kept) and is exercised by the feed-check-in
+// tests — keep it; it is not dead code.
+function writeFeedCheckin_(bookingId, checkedIn, checkedAt) {
+  try {
+    const id = String(bookingId || '').trim();
+    if (!id) return false;
+    const sh = bookingSS_().getSheetByName('Portal Feed');
+    if (!sh || sh.getLastRow() < 2) return false;
+    const rng = sh.getRange(2, 10, sh.getLastRow() - 1, 5).getValues();   // cols J..N
+    for (let i = 0; i < rng.length; i++) {
+      if (String(rng[i][0] || '').trim() === id) {
+        const curCount = Number(rng[i][3] || 0);           // M (col 13)
+        const curTime  = String(rng[i][4] || '').trim();   // N (col 14)
+        // Never downgrade a check-in, and keep the FIRST time it was recorded —
+        // so a later save (another guest, a reload, the manager on another
+        // device) can't reset an earlier check-in's count or time. Mirrors the
+        // ledger merge so the two stores agree.
+        const finalCount = Math.max(curCount, Number(checkedIn || 0));
+        const finalTime  = curTime || String(checkedAt || '');
+        sh.getRange(i + 2, 14, 1, 1).setNumberFormat('@');                 // time as text
+        sh.getRange(i + 2, 13, 1, 2).setValues([[finalCount, finalTime]]); // M=count, N=time
+        return true;
+      }
+    }
+    return false;
+  } catch (e) { return false; }
 }
 
 // Mirror MANY check-ins onto the Portal Feed in ONE read + ONE write: one read of J..N

@@ -592,6 +592,16 @@ check('kill-switch OFF: it took the COLD path (asm.build present — build-in wa
 PropertiesService.getScriptProperties().setProperty('PLANA_BUILDIN', 'ON');
 deleteSelfTestArtifacts_({ time24: '19:15', langs: ['English'] });
 
+console.log('--- Static read path (Stage 2): action=guests fetches ONE shift\'s guests on demand ---');
+createTestBookingRow_('English', DATE, '8:15 PM', 'Guest Lazy', 'GYGLAZY1', 4, false);
+bumpCacheVersion_();
+const lz = apiShiftGuests_({ token: token, dateKey: DATE, time: '20:15', language: 'English' });
+const lzG = lz.guests && lz.guests.find(g => g.bookingId === 'GYGLAZY1');
+check('guests: returns the shift\'s guest with name + count (for the opened card)', lz.ok && !!lzG && lzG.name === 'Guest Lazy' && Number(lzG.guests) === 4, lz.guests);
+check('guests: a shift with no bookings returns an empty list, not an error', (function () { const e = apiShiftGuests_({ token: token, dateKey: DATE, time: '20:15', language: 'German' }); return e.ok && Array.isArray(e.guests) && e.guests.length === 0; })(), null);
+check('guests: a bad token is rejected (no guest data leaks)', apiShiftGuests_({ token: 'NOPE', dateKey: DATE, time: '20:15', language: 'English' }).ok === false, null);
+deleteSelfTestArtifacts_({ time24: '20:15', langs: ['English'] });
+
 console.log('--- Unstaffed-tour alarm: a tour tomorrow with guests but NO guide emails management (subject only) ---');
 const TOM = dayKey(1);
 // Append tomorrow rows to the Portal Feed (16 cols incl. O=Guide, P=Type). 13:00 is not a
