@@ -318,7 +318,7 @@ const BACKUP_PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4T
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-11-26-note-retry-delete-hold";
+const PORTAL_VERSION = "2026-11-26-loadmore-note-inline";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -1011,7 +1011,12 @@ function renderTours(tours, paneId, canAssign){
   pane.innerHTML=html;
   bindOpenForm();
   const lm=$("loadMoreBtn_"+paneId);
-  if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
+  if(lm) lm.onclick=async ()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS;
+    // A poll may be in flight; loadTours() no-ops while LOADING, which is why Load more
+    // used to need two taps. Wait for the current load to finish (bounded), then load the
+    // wider window so ONE tap always works.
+    for(let i=0;i<40 && LOADING;i++){ await new Promise(res=>setTimeout(res,150)); }
+    loadTours("more"); };
 }
 /* Manager-only: open a brand-new schedule (pick day/date, time, language and,
    optionally, a guide). Reuses the assign action, which creates the grid slot
@@ -1496,6 +1501,18 @@ function bindTours(tours){
         // Update the cache so a background refresh doesn't clobber the just-typed note.
         const parts=ref.split("~"), t=TOURS_CACHE.find(x=>x.id===parts[0]);
         if(t&&t.bookings[+parts[1]]) t.bookings[+parts[1]].manualNote=r.note;
+        // Show the saved note INLINE right away and close the editor, so it never looks
+        // like it vanished while the background reload catches up.
+        try{
+          const wrap=panel&&panel.parentElement, val=r.note||"";
+          if(wrap){
+            let inline=wrap.querySelector(".bnote.mnote");
+            if(val){ if(!inline){ inline=document.createElement("div"); inline.className="bnote mnote"; wrap.insertBefore(inline, wrap.querySelector(".bnotebtn")||panel); } inline.textContent=val; }
+            else if(inline){ inline.remove(); }
+            const nb=wrap.querySelector(".bnotebtn"); if(nb) nb.classList.toggle("has", !!val);
+            if(panel) panel.hidden=true;
+          }
+        }catch(_){}
         setTimeout(loadTours,700);
       } else {
         // Keep the text so nothing is lost; the user can just tap Save again.
@@ -1746,7 +1763,12 @@ function renderSchedule(rows){
   if(HAS_MORE) html+='<button class="loadmore" id="loadMoreBtn_sched">Load '+MORE_DAYS+' more days</button>';
   pane.innerHTML=html;
   const lm=$("loadMoreBtn_sched");
-  if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
+  if(lm) lm.onclick=async ()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS;
+    // A poll may be in flight; loadTours() no-ops while LOADING, which is why Load more
+    // used to need two taps. Wait for the current load to finish (bounded), then load the
+    // wider window so ONE tap always works.
+    for(let i=0;i<40 && LOADING;i++){ await new Promise(res=>setTimeout(res,150)); }
+    loadTours("more"); };
 }
 
 /* ================== HISTORY (manager: any month) ==================
