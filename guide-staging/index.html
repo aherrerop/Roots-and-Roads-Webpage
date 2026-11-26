@@ -447,58 +447,6 @@ function parseTypedTime(raw){
   return { t24:h+":"+mm, label:h12+":"+mm+" "+suf };
 }
 
-/* ================== STATIC READ PATH (Stage 2, flag-gated) ================== */
-/* Read the GRID from a public, PII-FREE JSON on GitHub (raw) instead of calling
-   Apps Script, so a POLL never runs the serialized server (the real speed ceiling).
-   A card's guests are fetched on demand (action=guests) only when it is opened.
-   OFF by default (localStorage rr_staticread==="1"); the FIRST load and ANY failure
-   use the normal Apps Script path, so this can never strand the portal. */
-const STATIC_FEED_URL = "https://raw.githubusercontent.com/aherrerop/Roots-and-Roads-Webpage/portal-feed-staging/feed.json";
-/* @static-pure-start — everything between the markers is a PURE function (no DOM / fetch /
-   globals) so test/portal-tests.js can extract and unit-test it against the feed shape. */
-/* STAGING: static read is ON by default (only "0" disables it) so the path is actually exercised. */
-function staticReadOn(){ try{ return localStorage.getItem("rrstg_staticread")!=="0"; }catch(e){ return false; } }
-function staticToPayload(model, meName, isManager){
-  const mk = t => ({
-    id:t.id, dateKey:t.dateKey, dateText:t.dateText, day:t.day, time:t.time, timeLabel:t.timeLabel,
-    language:t.language, privIndex:t.privIndex||1,
-    eligible:((model.guidesByLanguage||{})[t.language]||[]), guideOptions:[],
-    assigned:t.assigned||[], guide:t.guide||"", coGuides:t.assigned||[], status:t.status,
-    isPrivate:!!t.isPrivate, sfExt:!!t.sfExt, tourName:t.tourName||(t.sfExt?"SF":"3h"),
-    bookedGuests:+t.bookedGuests||0, bookedChildren:+t.bookedChildren||0, checkedGuests:+t.checkedGuests||0,
-    full:!!t.full, needsSecondGuide:!!t.needsSecondGuide, secondGuide:t.secondGuide||"",
-    noShow:!!t.noShow, noShowGuide:t.noShowGuide||"", bookings:[], lazyGuests:true
-  });
-  const all=(model.tours||[]).map(mk);
-  const mine=all.filter(t=>(t.assigned||[]).indexOf(meName)!==-1);
-  return { ok:true, manager:!!isManager, guide:meName||"",
-    tours:mine, allTours:isManager?all:[], schedule:[],
-    guidesByLanguage:model.guidesByLanguage||{}, guideTourTypes:{}, availSlots:null, guideVacations:null,
-    hasMore:false, windowDays:model.horizonDays||45,
-    now: model.builtAtText?String(model.builtAtText).slice(11,19):"", static:true };
-}
-/* @static-pure-end */
-async function fetchStaticFeed(){
-  const bust=Math.floor(Date.now()/60000);   // ~1-min cache-bust against the raw CDN
-  const res=await fetch(STATIC_FEED_URL+"?v="+bust,{cache:"no-store"});
-  if(!res.ok) throw new Error("static "+res.status);
-  const m=await res.json();
-  if(!m||!Array.isArray(m.tours)) throw new Error("static shape");
-  return m;
-}
-/* Fetch ONE card's guests on demand (when it is opened), fill the cached tour, and re-render so
-   the guest list + check-in buttons appear. Reuses renderAll, so OPEN_CARDS keeps the card open. */
-async function loadCardGuests(t){
-  if(!t||t._guestsLoaded||t._guestsLoading) return;
-  t._guestsLoading=true;
-  try{
-    const r=await api("guests",{token:store.token,dateKey:t.dateKey,time:t.time,language:t.language,
-      sfExt:t.sfExt?"1":"",isPrivate:t.isPrivate?"1":"",privIndex:t.privIndex||1});
-    if(r&&r.ok){ t.bookings=r.guests||[]; t._guestsLoaded=true; if(store.cache) renderAll(store.cache); }
-  }catch(e){ /* leave unloaded; tapping again retries */ }
-  finally{ t._guestsLoading=false; }
-}
-
 /* ================== STATE / HELPERS ================== */
 /* localStorage (not sessionStorage): survives the phone killing the tab, so
    guides stay logged in (~30 days, server-enforced) and the last tour list
@@ -813,20 +761,6 @@ async function loadTours(nav){
   LOADING = true; LOAD_NAV = nav||"poll"; LOAD_START = Date.now();
   setFresh("loading");
   const seq = ++LOAD_SEQ;
-  // STATIC READ PATH (flag-gated): once we know who we are (cached from a prior normal load), a
-  // POLL reads the public PII-free feed instead of Apps Script, so the serialized server does no
-  // work. The INITIAL load and ANY static failure use the normal path below (which also refreshes
-  // the cached identity). This can never strand the portal — a failure just falls through.
-  if(staticReadOn() && store.me && nav!=="initial"){
-    try{
-      const model=await fetchStaticFeed();
-      if(seq!==LOAD_SEQ){ LOADING=false; return; }
-      const r=staticToPayload(model, store.me.name, store.me.manager);
-      LOADING=false;
-      setFresh("ok", r.now); store.cache=r; renderAll(r); drainPendingReload();
-      return;
-    }catch(e){ /* fall through to the Apps Script load below */ }
-  }
   if(!store.cache) $("toursPane").innerHTML='<div class="spin">Loading…</div>';
   const params={token:store.token}; if(MANAGER_DAYS>0) params.days=MANAGER_DAYS;
   let r; try{ r=await api("tours",params); }
@@ -853,7 +787,6 @@ async function loadTours(nav){
   // keep it plain).
   setFresh("ok", r.now);
   store.cache=r;
-  if(r.guide) store.me={name:r.guide, manager:!!r.manager};   // cache identity so static polls know who/what to show
   renderAll(r);
   drainPendingReload();                      // if a refresh was requested mid-load, run it now
 }
@@ -1262,9 +1195,7 @@ function tourCard(t, canAssign, dayTimes){
   // Full no-show (nobody turned up): a badge even on a collapsed card.
   if(t.noShow) chips = '<span class="chip noshowchip" title="Total no-show — '+esc(t.noShowGuide||"the guide")+'">🚫 Total no-show</span>'+chips;
   let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language,t,dayTimes)).join("");
-  if(!t.bookings.length) bk = (t.lazyGuests && (+t.bookedGuests>0 || +t.booked>0))
-    ? '<div class="empty" style="padding:18px">Loading guests…</div>'   // static mode: guests fetched on open
-    : '<div class="empty" style="padding:18px">No bookings yet.</div>';
+  if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
   // Small round ✕ in the card's top-right corner — DELETES the tour (frees its guide).
   // Never in History (a past tour isn't deleted from here).
   const closeBtn=(canAssign && !HISTORY_RENDER)?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Delete this tour">✕</button>':'';
@@ -1433,11 +1364,7 @@ function bindTours(tours){
     const card=h.closest(".tour"); const b=card&&card.querySelector(".bookings"); if(!b) return;
     const nowOpen = b.style.display==="none";
     b.style.display = nowOpen ? "" : "none";
-    if(nowOpen){ OPEN_CARDS.add(card.dataset.tour);
-      // Static mode: a card's guests aren't in the feed — fetch them on first open.
-      const lt=TOURS_CACHE&&TOURS_CACHE.find(x=>x.id===card.dataset.tour);
-      if(lt&&lt.lazyGuests&&!lt._guestsLoaded) loadCardGuests(lt);
-    } else OPEN_CARDS.delete(card.dataset.tour);
+    if(nowOpen) OPEN_CARDS.add(card.dataset.tour); else OPEN_CARDS.delete(card.dataset.tour);
     saveOpenCards();
   }; });
   document.querySelectorAll(".stepper").forEach(st=>{
