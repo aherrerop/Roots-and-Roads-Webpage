@@ -10,7 +10,8 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Guide Portal — Roots &amp; Roads</title>
+<meta name="robots" content="noindex">
+<title>STAGING — Guide Portal</title>
 <link rel="icon" type="image/png" href="/images/blackWhite_Logo_v2.png?v=1">
 <style>
   :root{
@@ -306,11 +307,20 @@
    ============================================================================ */
 
 /* ================== CONFIG ================== */
+// TWO-ACCOUNT CUTOVER (2026-11-26): the portal is now served by the inforootsandroads
+// account's web app (its own execution lane, off the overloaded main account). If that
+// deployment is ever dead/wrong/unauthorized, api() auto-fails-over to BACKUP_PORTAL_URL
+// (the ORIGINAL main deployment, kept alive). Rollback = swap these two back.
 const PORTAL_URL = "https://script.google.com/macros/s/AKfycbzDLE_yaFROM_L1eqG8aH_vsnWpHRaWmjELOjnRl3xu_lEctwjPAGJjjEwjAAkh2-m9Pw/exec";
+// Backup deployment URL (empty = none). At the two-account cutover, PORTAL_URL becomes the
+// info deployment and this becomes the OLD main deployment (same live data). Then if the
+// primary is dead / wrong / asking to sign in, api() automatically fails over to this one —
+// so a broken cutover self-heals with no manual rollback. Empty today, so it's a no-op.
+const BACKUP_PORTAL_URL = "";   // staging has no failover
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-10-24-near-tour-poll";
+const PORTAL_VERSION = "2026-11-26-note-instant-newnote";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -333,11 +343,12 @@ async function checkForUpdate(){
    JSONP cannot. If fetch itself is blocked (old browser, extension), we fall
    back to the classic JSONP script tag. */
 console.log("R&R guide portal front-end v3");
-function buildUrl(action, params){
+function buildUrl(action, params, base){
   // _ = cache-buster: forces a fresh response so the portal never shows a
-  // browser-cached copy of the BookingSheet/schedule data.
+  // browser-cached copy of the BookingSheet/schedule data. `base` lets a call target the
+  // BACKUP deployment on failover; it defaults to the primary PORTAL_URL.
   const q = Object.assign({action, _: Date.now()}, params||{});
-  return PORTAL_URL + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
+  return (base||PORTAL_URL) + "?" + Object.keys(q).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(q[k])).join("&");
 }
 function mkErr(kind,msg){ const e=new Error(msg); e.kind=kind; return e; }
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
@@ -349,6 +360,14 @@ function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 async function api(action, params){
   try{ return await apiCall(action, params); }
   catch(err){
+    // FAILOVER: if the PRIMARY deployment is dead, wrong, or asking for a Google sign-in
+    // (i.e. misconfigured — NOT merely slow), try the BACKUP deployment, which points at the
+    // SAME live data. This makes a broken two-account cutover self-heal with no manual
+    // rollback. A TIMEOUT does NOT fail over (the server is alive but overloaded; the backup
+    // reads the same sheets, so piling on helps nothing). No-op while BACKUP_PORTAL_URL is "".
+    if(BACKUP_PORTAL_URL && err && (err.kind==="auth"||err.kind==="badresp"||err.kind==="network")){
+      try{ return await apiCall(action, params, BACKUP_PORTAL_URL); }catch(_){}
+    }
     // Retry ONCE for a genuine transient drop (a freshly-created deployment 404s
     // for a minute; a request occasionally drops). Do NOT retry an auth error (a
     // real config problem) or a TIMEOUT: a timeout means the server is overloaded,
@@ -359,8 +378,8 @@ async function api(action, params){
     return await apiCall(action, params);
   }
 }
-async function apiCall(action, params){
-  const url = buildUrl(action, params);
+async function apiCall(action, params, base){
+  const url = buildUrl(action, params, base);
   let timedOut = false;
   try{
     // Abort a hung request after 60s. NOT 30s: a load can legitimately take ~35s
@@ -391,14 +410,14 @@ async function apiCall(action, params){
       throw mkErr("timeout","TIMEOUT");
     // A genuine fetch/network/CORS failure (not a timeout): some environments block
     // cross-origin fetch, so fall back to JSONP once.
-    try{ return await apiJsonp(action, params); }
+    try{ return await apiJsonp(action, params, base); }
     catch(err2){ throw err2; }
   }
 }
-function apiJsonp(action, params){
+function apiJsonp(action, params, base){
   return new Promise((resolve,reject)=>{
     const cb = "cb_"+Math.random().toString(36).slice(2);
-    const url = buildUrl(action, Object.assign({callback:cb}, params||{}));
+    const url = buildUrl(action, Object.assign({callback:cb}, params||{}), base);
     const s = document.createElement("script");
     let done=false;
     window[cb]=(data)=>{ done=true; cleanup(); resolve(data); };
@@ -428,6 +447,58 @@ function parseTypedTime(raw){
   return { t24:h+":"+mm, label:h12+":"+mm+" "+suf };
 }
 
+/* ================== STATIC READ PATH (Stage 2, flag-gated) ================== */
+/* Read the GRID from a public, PII-FREE JSON on GitHub (raw) instead of calling
+   Apps Script, so a POLL never runs the serialized server (the real speed ceiling).
+   A card's guests are fetched on demand (action=guests) only when it is opened.
+   OFF by default (localStorage rr_staticread==="1"); the FIRST load and ANY failure
+   use the normal Apps Script path, so this can never strand the portal. */
+const STATIC_FEED_URL = "https://raw.githubusercontent.com/aherrerop/Roots-and-Roads-Webpage/portal-feed-staging/feed.json";
+/* @static-pure-start — everything between the markers is a PURE function (no DOM / fetch /
+   globals) so test/portal-tests.js can extract and unit-test it against the feed shape. */
+/* STAGING: static read is ON by default (only "0" disables it) so the path is actually exercised. */
+function staticReadOn(){ try{ return localStorage.getItem("rrstg_staticread")!=="0"; }catch(e){ return false; } }
+function staticToPayload(model, meName, isManager){
+  const mk = t => ({
+    id:t.id, dateKey:t.dateKey, dateText:t.dateText, day:t.day, time:t.time, timeLabel:t.timeLabel,
+    language:t.language, privIndex:t.privIndex||1,
+    eligible:((model.guidesByLanguage||{})[t.language]||[]), guideOptions:[],
+    assigned:t.assigned||[], guide:t.guide||"", coGuides:t.assigned||[], status:t.status,
+    isPrivate:!!t.isPrivate, sfExt:!!t.sfExt, tourName:t.tourName||(t.sfExt?"SF":"3h"),
+    bookedGuests:+t.bookedGuests||0, bookedChildren:+t.bookedChildren||0, checkedGuests:+t.checkedGuests||0,
+    full:!!t.full, needsSecondGuide:!!t.needsSecondGuide, secondGuide:t.secondGuide||"",
+    noShow:!!t.noShow, noShowGuide:t.noShowGuide||"", bookings:[], lazyGuests:true
+  });
+  const all=(model.tours||[]).map(mk);
+  const mine=all.filter(t=>(t.assigned||[]).indexOf(meName)!==-1);
+  return { ok:true, manager:!!isManager, guide:meName||"",
+    tours:mine, allTours:isManager?all:[], schedule:[],
+    guidesByLanguage:model.guidesByLanguage||{}, guideTourTypes:{}, availSlots:null, guideVacations:null,
+    hasMore:false, windowDays:model.horizonDays||45,
+    now: model.builtAtText?String(model.builtAtText).slice(11,19):"", static:true };
+}
+/* @static-pure-end */
+async function fetchStaticFeed(){
+  const bust=Math.floor(Date.now()/60000);   // ~1-min cache-bust against the raw CDN
+  const res=await fetch(STATIC_FEED_URL+"?v="+bust,{cache:"no-store"});
+  if(!res.ok) throw new Error("static "+res.status);
+  const m=await res.json();
+  if(!m||!Array.isArray(m.tours)) throw new Error("static shape");
+  return m;
+}
+/* Fetch ONE card's guests on demand (when it is opened), fill the cached tour, and re-render so
+   the guest list + check-in buttons appear. Reuses renderAll, so OPEN_CARDS keeps the card open. */
+async function loadCardGuests(t){
+  if(!t||t._guestsLoaded||t._guestsLoading) return;
+  t._guestsLoading=true;
+  try{
+    const r=await api("guests",{token:store.token,dateKey:t.dateKey,time:t.time,language:t.language,
+      sfExt:t.sfExt?"1":"",isPrivate:t.isPrivate?"1":"",privIndex:t.privIndex||1});
+    if(r&&r.ok){ t.bookings=r.guests||[]; t._guestsLoaded=true; if(store.cache) renderAll(store.cache); }
+  }catch(e){ /* leave unloaded; tapping again retries */ }
+  finally{ t._guestsLoading=false; }
+}
+
 /* ================== STATE / HELPERS ================== */
 /* localStorage (not sessionStorage): survives the phone killing the tab, so
    guides stay logged in (~30 days, server-enforced) and the last tour list
@@ -446,6 +517,7 @@ const store = {
   set tab(v){ try{ localStorage.setItem("rrstg_tab", v||""); }catch(e){} }
 };
 let DIRTY={}, TOURS_CACHE=[], MANAGER=false, GUIDES_BY_LANG={}, GUIDE_TOUR_TYPES={};
+let AVAIL_SLOTS=null, GUIDE_VACATIONS={}, BUSY_MAP={};   // inputs for the page-computed assign-dropdown dots
 // HISTORY view (manager-only): the last 2 days of tours, rendered read-only except
 // for the no-show + undo-check-in controls. HISTORY_RENDER is true only while the
 // history cards' HTML is being built, so the shared card helpers drop the editing
@@ -689,6 +761,28 @@ function startAutoRefresh(){
 // look like they "didn't stick, then kicked in later".
 let LOAD_SEQ = 0;
 let LOADING = false;   // one tours request at a time — never let polls pile up
+// A refresh requested WHILE one is in flight used to be dropped (if(LOADING) return),
+// so a post-action refresh could wait until the next poll — the note "took several cycles
+// to show". We never DROP a requested refresh now: we remember it and run it the moment the
+// current load finishes. (A passive poll/focus is still skipped, not queued — stacking those
+// is what we must avoid.)
+let PENDING_RELOAD = false;
+function drainPendingReload(){ if(PENDING_RELOAD){ PENDING_RELOAD=false; setTimeout(()=>loadTours("sync"), 150); } }
+// Run a one-shot mutation and auto-RETRY it through a transient "Server busy" (a lock
+// timeout under load), so the user never has to redo an action that was only momentarily
+// blocked. Safe to retry: "busy" means the lock was never acquired, so nothing was written.
+// Anything that is NOT a busy error returns immediately. (Check-ins and guide assignments
+// already have their own persistent offline queues; this covers every other mutation.)
+async function apiBusy(action, params, tries){
+  let r=null;
+  for(let i=0;i<(tries||4);i++){
+    try{ r=await api(action, params); }catch(e){ r={ok:false, error:(e&&e.message)||"Network problem"}; }
+    if(r && r.ok) return r;
+    if(!/busy/i.test((r&&r.error)||"")) return r;
+    await new Promise(res=>setTimeout(res, 1500));
+  }
+  return r;
+}
 let POLL_MS = 30000;   // passive-refresh interval; the server adjusts it via r.pollHint under load
 // Around a tour's START, last-minute sign-ups are still landing on the BookingSheet,
 // so refresh FASTER — a guide should see everyone who signed up right as the tour
@@ -714,11 +808,25 @@ async function loadTours(nav){
   // events) must NOT start a second one while the first is still running, or
   // requests stack up, serialize on the server, and each gets slower — which is
   // exactly what turned ~8s loads into 60-120s ones. Skip if one is in flight.
-  if(LOADING) return;
+  if(LOADING){ if(nav!=="poll" && nav!=="focus") PENDING_RELOAD=true; return; }   // queue a requested refresh, never drop it
   if(RETRY_TIMER){ clearTimeout(RETRY_TIMER); RETRY_TIMER=null; }
   LOADING = true; LOAD_NAV = nav||"poll"; LOAD_START = Date.now();
   setFresh("loading");
   const seq = ++LOAD_SEQ;
+  // STATIC READ PATH (flag-gated): once we know who we are (cached from a prior normal load), a
+  // POLL reads the public PII-free feed instead of Apps Script, so the serialized server does no
+  // work. The INITIAL load and ANY static failure use the normal path below (which also refreshes
+  // the cached identity). This can never strand the portal — a failure just falls through.
+  if(staticReadOn() && store.me && nav!=="initial"){
+    try{
+      const model=await fetchStaticFeed();
+      if(seq!==LOAD_SEQ){ LOADING=false; return; }
+      const r=staticToPayload(model, store.me.name, store.me.manager);
+      LOADING=false;
+      setFresh("ok", r.now); store.cache=r; renderAll(r); drainPendingReload();
+      return;
+    }catch(e){ /* fall through to the Apps Script load below */ }
+  }
   if(!store.cache) $("toursPane").innerHTML='<div class="spin">Loading…</div>';
   const params={token:store.token}; if(MANAGER_DAYS>0) params.days=MANAGER_DAYS;
   let r; try{ r=await api("tours",params); }
@@ -745,7 +853,9 @@ async function loadTours(nav){
   // keep it plain).
   setFresh("ok", r.now);
   store.cache=r;
+  if(r.guide) store.me={name:r.guide, manager:!!r.manager};   // cache identity so static polls know who/what to show
   renderAll(r);
+  drainPendingReload();                      // if a refresh was requested mid-load, run it now
 }
 /* One miss shouldn't slap "Can't reach the server" over good data — a mobile
    blip or a single slow response is normal. Keep the last list, retry quietly in
@@ -774,6 +884,7 @@ function onLoadFailed(err){
   const cachedWin = Number(store.cache.windowDays)||0;
   if(cachedWin>0 && MANAGER_DAYS>cachedWin) MANAGER_DAYS = cachedWin;
   renderAll(store.cache);
+  drainPendingReload();                      // a refresh requested mid-load still runs after a failed one
 }
 /* ---- Pending assignments: the real fix for the "reverts to Albert" bug ----
    After you assign Carlos, Google's Sheets backend may still serve the very
@@ -808,6 +919,26 @@ function savePendingCk(){ try{ localStorage.setItem("rrstg_pendck", JSON.stringi
 let PENDING_CHECKIN = loadPendingCk();
 function setPendingCheckin(bookingId, dateKey, n){ if(!bookingId) return;
   PENDING_CHECKIN[bookingId+"|"+dateKey] = { n: Math.max(0, +n||0), until: Date.now()+PENDING_TTL }; savePendingCk(); }
+/* The SAME optimistic hold for a DELETED (closed) tour CARD. Closing has no replica-lag,
+   but under load a poll that STARTED before the delete can return 10-20s LATER still
+   carrying the card and re-add it — the "I delete it and it comes back, I have to do it
+   twice" bug. So we remember the ids just deleted and DROP those cards from every render
+   for the settle window. EXCEPTION (maxim: never hide a booking): a card the server returns
+   with real bookings has been re-surfaced by a guest booking the freed slot, so it is shown
+   and its hold dropped at once. Keyed by the tour id (t.id), persisted so a reload can't
+   resurrect the card either. */
+function loadPendingClose(){ try{ const p=JSON.parse(localStorage.getItem("rrstg_pendclose")||"{}"); const n=Date.now();
+  Object.keys(p).forEach(k=>{ if(!p[k]||p[k].until<n) delete p[k]; }); return p; }catch(e){ return {}; } }
+function savePendingClose(){ try{ localStorage.setItem("rrstg_pendclose", JSON.stringify(PENDING_CLOSE)); }catch(e){} }
+let PENDING_CLOSE = loadPendingClose();
+// A deleted card must STAY gone. The server keeps it closed, but under load a poll can
+// fail and the client falls back to a stale cached list that still has the card — so the
+// hold has to outlast a transient overload, not just the 90s settle window. 20 min is
+// plenty for the server's fresh reads to take over; a card the server re-surfaces WITH a
+// booking still clears the hold immediately (never hide a booking).
+const CLOSE_HOLD_TTL = 20*60*1000;
+function setPendingClose(id){ if(!id) return; PENDING_CLOSE[id] = { until: Date.now()+CLOSE_HOLD_TTL }; savePendingClose(); }
+function clearPendingClose(id){ if(!id) return; delete PENDING_CLOSE[id]; savePendingClose(); }
 /* Overlay pending assignments onto a tours payload, in place. Holds the value
    you just set for the whole settle window, then lets the server value through. */
 function applyPendingAssigns(r){
@@ -866,15 +997,37 @@ function applyPendingCheckins(r){
   }));
   mark(r.tours); mark(r.allTours);
 }
+/* Drop just-deleted cards from the payload for the settle window, so a slow in-flight
+   poll (started before the delete) can't re-add a card the manager already removed. Never
+   hides a card that now has real bookings — that one re-surfaces (never hide a booking). */
+function applyPendingCloses(r){
+  const now=Date.now();
+  Object.keys(PENDING_CLOSE).forEach(k=>{ if(PENDING_CLOSE[k].until<now) delete PENDING_CLOSE[k]; });
+  if(!Object.keys(PENDING_CLOSE).length){ savePendingClose(); return; }
+  const keep=t=>{
+    if(!t || !PENDING_CLOSE[t.id]) return true;                        // not just-deleted -> keep
+    const hasBookings=(t.bookings&&t.bookings.length)||Number(t.bookedGuests)>0;
+    if(hasBookings){ delete PENDING_CLOSE[t.id]; return true; }        // a guest booked the freed slot -> show it, drop the hold
+    return false;                                                      // empty + just-deleted -> hide for the settle window
+  };
+  if(r.tours)    r.tours=r.tours.filter(keep);
+  if(r.allTours) r.allTours=r.allTours.filter(keep);
+  if(r.schedule) r.schedule=r.schedule.filter(keep);
+  savePendingClose();
+}
 function renderAll(r){
   applyPendingAssigns(r);                // stale reads can never undo your last action
   applyPendingCheckins(r);               // a queued (offline) check-in still shows ✓ ⏳ after a reload
+  applyPendingCloses(r);                 // a slow in-flight poll can't resurrect a card you just deleted
   MANAGER=!!r.manager;
   const hb=$("historyBtn"); if(hb) hb.classList.remove("hidden");   // History: managers see all tours, guides see their own (read-only)
   HAS_MORE=!!r.hasMore; WINDOW_DAYS=Number(r.windowDays)||3;
   GUIDES_BY_LANG=r.guidesByLanguage||{};
   GUIDE_TOUR_TYPES=r.guideTourTypes||{};
+  AVAIL_SLOTS=r.availSlots||null;
+  GUIDE_VACATIONS=r.guideVacations||{};
   const all=r.allTours||[];
+  BUSY_MAP=buildBusyMap(all);   // who's on what -> the assign-dropdown dots, computed on the page
   renderTours(r.tours||[], "toursPane");
   if(MANAGER){
     // Managers get three tabs — split the full list by tour type so each stays
@@ -951,7 +1104,12 @@ function renderTours(tours, paneId, canAssign){
   pane.innerHTML=html;
   bindOpenForm();
   const lm=$("loadMoreBtn_"+paneId);
-  if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
+  if(lm) lm.onclick=async ()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS;
+    // A poll may be in flight; loadTours() no-ops while LOADING, which is why Load more
+    // used to need two taps. Wait for the current load to finish (bounded), then load the
+    // wider window so ONE tap always works.
+    for(let i=0;i<40 && LOADING;i++){ await new Promise(res=>setTimeout(res,150)); }
+    loadTours("more"); };
 }
 /* Manager-only: open a brand-new schedule (pick day/date, time, language and,
    optionally, a guide). Reuses the assign action, which creates the grid slot
@@ -1006,6 +1164,46 @@ function guidesForType(names, isSf){
     return isSf ? !!t.sf : !!t.threeH;
   });
 }
+/* The assign-dropdown availability DOTS are computed ON THE PAGE, from data every load already
+   carries: who ticked availability (AVAIL_SLOTS), each guide's vacation ranges (GUIDE_VACATIONS)
+   and who is on what (BUSY_MAP, built from allTours). So the dots show INSTANTLY on every card —
+   empty cards included — with ZERO per-card server work (that per-poll server compute was the
+   4-6s overload cost). This is a 1:1 mirror of the server's guideStatusesForShift_; if that
+   rule changes, change this too. */
+function _dotMins(time){ const m=String(time||"").match(/(\d{1,2}):(\d{2})/); return m?(+m[1]*60 + +m[2]):0; }
+function _dotMs(dateKey, time){ const d=new Date(String(dateKey)+"T00:00:00"); return isNaN(d)?0:(d.getTime()+_dotMins(time)*60000); }
+function _dotVariant(t){ return t.sfExt ? "SF" : (t.isPrivate ? "P"+(t.privIndex||1) : "R"); }
+function _dotKey(t){ return t.dateKey+"|"+_dotMins(t.time)+"|"+String(t.language||"").toLowerCase()+"|"+_dotVariant(t); }
+function _dotSlotKey(t){ return t.sfExt ? t.dateKey+"|SF" : t.dateKey+"|"+(_dotMins(t.time)<840?"AM":"PM"); }
+function buildBusyMap(allTours){
+  const m={};
+  (allTours||[]).forEach(t=>{ const ms=_dotMs(t.dateKey,t.time), k=_dotKey(t);
+    (t.assigned||[]).forEach(n=>{ const nk=String(n||"").trim().toLowerCase(); if(nk)(m[nk]=m[nk]||[]).push({ms:ms,k:k}); }); });
+  return m;
+}
+function guideStatus(t, name){
+  const nk=String(name||"").trim().toLowerCase();
+  // On vacation this date -> 🌴 (still selectable; the dot is info only).
+  const vac=(GUIDE_VACATIONS||{})[name]||[];
+  for(let i=0;i<vac.length;i++){ if(t.dateKey>=vac[i].from && t.dateKey<=vac[i].to) return "vacation"; }
+  // Did not tick availability for this slot -> ⚪ (only when we actually have data for the date).
+  const av=AVAIL_SLOTS;
+  if(av && av.fromKey && t.dateKey>=av.fromKey && t.dateKey<=av.toKey){
+    const set=(av.bySlot||{})[_dotSlotKey(t)]||{}; if(!set[nk]) return "unavailable";
+  }
+  // busy (same time 🔴) / overlap (a tour within 5h 🟡) / free 🟢.
+  const st=_dotMs(t.dateKey,t.time), thisKey=_dotKey(t), sepMs=5*3600000;
+  const slots=(BUSY_MAP||{})[nk]||[]; let status="free";
+  for(let i=0;i<slots.length;i++){
+    if(slots[i].k===thisKey) continue;                 // their own assignment here doesn't count
+    if(t.sfExt && /\|SF$/.test(slots[i].k)) continue;   // SF is stackable, no clash SF-vs-SF
+    const d=Math.abs(slots[i].ms-st);
+    if(d===0){ status="busy"; break; }
+    else if(d<sepMs) status="overlap";
+  }
+  return status;
+}
+
 /* Manager-only: dropdown of guides who SPEAK the tour's language. Picking one
    writes it into the Schedule_<Language> grid in bold (= a management lock). */
 function assignSelect(t, slot){
@@ -1019,9 +1217,10 @@ function assignSelect(t, slot){
   //   for this slot) · vacation 🌴 (on their blocked/vacation dates). Falls back to
   //   the plain eligible list if guideOptions is absent.
   const DOT={free:"🟢",overlap:"🟡",busy:"🔴",unavailable:"⚪",vacation:"🌴"};
-  let opts = (Array.isArray(t.guideOptions)&&t.guideOptions.length)
-    ? t.guideOptions.slice()
-    : (t.eligible||guidesForType(GUIDES_BY_LANG[t.language]||[], t.sfExt)).map(n=>({name:n,status:""}));
+  // The eligible guides for this tour's language + type, each with its availability dot
+  // computed ON THE PAGE (guideStatus) — instant, no fetch, shown on every card.
+  let opts = (t.eligible||guidesForType(GUIDES_BY_LANG[t.language]||[], t.sfExt))
+    .map(n=>({name:n, status: guideStatus(t, n)}));
   const g1=(t.assigned&&t.assigned[0])||"", g2=t.secondGuide||"";
   const cur = slot===2 ? g2 : g1;
   const other = slot===2 ? g1 : g2;               // already on the other slot -> not offered here
@@ -1063,7 +1262,9 @@ function tourCard(t, canAssign, dayTimes){
   // Full no-show (nobody turned up): a badge even on a collapsed card.
   if(t.noShow) chips = '<span class="chip noshowchip" title="Total no-show — '+esc(t.noShowGuide||"the guide")+'">🚫 Total no-show</span>'+chips;
   let bk = t.bookings.map((b,i)=>bookingRow(t.id,b,i,canAssign,t.language,t,dayTimes)).join("");
-  if(!t.bookings.length) bk='<div class="empty" style="padding:18px">No bookings yet.</div>';
+  if(!t.bookings.length) bk = (t.lazyGuests && (+t.bookedGuests>0 || +t.booked>0))
+    ? '<div class="empty" style="padding:18px">Loading guests…</div>'   // static mode: guests fetched on open
+    : '<div class="empty" style="padding:18px">No bookings yet.</div>';
   // Small round ✕ in the card's top-right corner — DELETES the tour (frees its guide).
   // Never in History (a past tour isn't deleted from here).
   const closeBtn=(canAssign && !HISTORY_RENDER)?'<button class="closebtn" data-close="'+esc(t.id)+'" title="Delete this tour">✕</button>':'';
@@ -1232,7 +1433,11 @@ function bindTours(tours){
     const card=h.closest(".tour"); const b=card&&card.querySelector(".bookings"); if(!b) return;
     const nowOpen = b.style.display==="none";
     b.style.display = nowOpen ? "" : "none";
-    if(nowOpen) OPEN_CARDS.add(card.dataset.tour); else OPEN_CARDS.delete(card.dataset.tour);
+    if(nowOpen){ OPEN_CARDS.add(card.dataset.tour);
+      // Static mode: a card's guests aren't in the feed — fetch them on first open.
+      const lt=TOURS_CACHE&&TOURS_CACHE.find(x=>x.id===card.dataset.tour);
+      if(lt&&lt.lazyGuests&&!lt._guestsLoaded) loadCardGuests(lt);
+    } else OPEN_CARDS.delete(card.dataset.tour);
     saveOpenCards();
   }; });
   document.querySelectorAll(".stepper").forEach(st=>{
@@ -1250,7 +1455,7 @@ function bindTours(tours){
       // optimistic hold and no conflict path (two guides on one tour is always OK).
       if(info.slot===2){
         let msg="";
-        try{ const r=await api("assign",Object.assign({token:store.token, guide:newGuide},info));
+        try{ const r=await apiBusy("assign",Object.assign({token:store.token, guide:newGuide},info));
           if(!r||!r.ok) msg=(r&&r.error)||"Could not set the second guide"; }
         catch(err){ msg=err.message||"Network problem — try again"; }
         MUTATING--;
@@ -1327,7 +1532,7 @@ function bindTours(tours){
       }
       go.disabled=true; go.textContent="Moving…"; MUTATING++; LAST_EDIT=Date.now();
       try{
-        const r=await api("move",{token:store.token, bookingId:info.bookingId, fromLanguage:info.fromLanguage, toLanguage:toLanguage, toTime: timeChange? toTime : "", toDate: dateChange? toDate : ""});
+        const r=await apiBusy("move",{token:store.token, bookingId:info.bookingId, fromLanguage:info.fromLanguage, toLanguage:toLanguage, toTime: timeChange? toTime : "", toDate: dateChange? toDate : ""});
         if(!r.ok) alert(r.error||"Could not move");
       }catch(err){
         alert("Couldn't confirm the move just now — reloading to show the current state. If it didn't take, try again.");
@@ -1359,12 +1564,13 @@ function bindTours(tours){
       let info={}; try{ info=JSON.parse(btn.dataset.bkill||"{}"); }catch(_){}
       if(!info.bookingId) return;
       if(!confirm("Remove "+(info.name||"this booking")+" from the tour?\n\nUse this for a cancellation that didn’t arrive automatically. The guest is removed and will NOT be counted. This can’t be undone here.")) return;
-      const old=btn.textContent; btn.disabled=true; btn.textContent="Removing…";
+      const old=btn.textContent; btn.disabled=true; btn.textContent="Removing…"; MUTATING++;
       try{
-        const r=await api("removeBooking",{token:store.token,bookingId:info.bookingId,language:info.language,name:info.name});
+        const r=await apiBusy("removeBooking",{token:store.token,bookingId:info.bookingId,language:info.language,name:info.name});
         if(r && r.ok){ if(r.warning) alert(r.warning); loadTours(); }
         else { alert((r && r.error) || "Could not remove the booking"); btn.disabled=false; btn.textContent=old; }
       }catch(err){ alert("Network error — try again"); btn.disabled=false; btn.textContent=old; }
+      finally{ MUTATING--; }
     };
   });
   document.querySelectorAll(".bnotesave").forEach(b=>{
@@ -1372,15 +1578,56 @@ function bindTours(tours){
       const ref=b.dataset.bns, bookingId=b.dataset.bid, lang=b.dataset.blang, panel=b.closest(".bnotepanel");
       const ta=panel.querySelector(".bnoteta"), msg=panel.querySelector(".notemsg");
       const note=ta?ta.value:""; b.disabled=true; if(msg) msg.textContent="Saving…"; LAST_EDIT=Date.now();
+      // A note must NEVER be silently lost: a "Server busy" (lock timeout under load) is
+      // RETRIED a few times, and the typed text is kept in the box no matter what. MUTATING
+      // holds the poll so a background re-render can't wipe the textarea mid-save.
+      MUTATING++;
+      let r=null, lastErr="";
       try{
-        const r=await api("setNote",{token:store.token, bookingId:bookingId, language:lang, note:note});
-        if(!r.ok){ if(msg) msg.textContent=r.error||"Error"; b.disabled=false; return; }
+        for(let attempt=0; attempt<4; attempt++){
+          LAST_EDIT=Date.now();
+          try{ r=await api("setNote",{token:store.token, bookingId:bookingId, language:lang, note:note}); }
+          catch(err){ r=null; lastErr=(err&&err.message)||"Network problem"; }
+          if(r && r.ok) break;
+          lastErr=(r&&r.error)||lastErr||"Error";
+          if(!/busy/i.test(lastErr)) break;                 // only the transient "Server busy" is worth retrying
+          if(msg) msg.textContent="Server busy — retrying…";
+          await new Promise(res=>setTimeout(res, 1500));
+        }
+      } finally { MUTATING--; }
+      if(r && r.ok){
         if(msg) msg.textContent="Saved ✓";
         // Update the cache so a background refresh doesn't clobber the just-typed note.
         const parts=ref.split("~"), t=TOURS_CACHE.find(x=>x.id===parts[0]);
         if(t&&t.bookings[+parts[1]]) t.bookings[+parts[1]].manualNote=r.note;
+        // Show the saved note INLINE right away and close the editor, so it never looks
+        // like it vanished while the background reload catches up.
+        try{
+          const wrap=panel&&panel.parentElement, val=r.note||"";
+          if(wrap){
+            let inline=wrap.querySelector(".bnote.mnote");
+            const nb=wrap.querySelector(".bnotebtn");        // the post-it button, inside the name row
+            if(val){
+              if(!inline){
+                inline=document.createElement("div"); inline.className="bnote mnote";
+                // Insert into the SAME parent as the post-it (the name row), right before it —
+                // matching where the server render puts it. (The old code inserted relative to
+                // the panel's parent, where .bnotebtn is not a direct child, so it threw.)
+                if(nb && nb.parentNode) nb.parentNode.insertBefore(inline, nb);
+                else wrap.insertBefore(inline, panel);
+              }
+              inline.textContent=val;
+            } else if(inline){ inline.remove(); }
+            if(nb) nb.classList.toggle("has", !!val);
+            if(panel) panel.hidden=true;
+          }
+        }catch(_){}
         setTimeout(loadTours,700);
-      }catch(err){ if(msg) msg.textContent="Network problem"; b.disabled=false; }
+      } else {
+        // Keep the text so nothing is lost; the user can just tap Save again.
+        if(msg) msg.textContent=/busy/i.test(lastErr)?"Still busy — tap Save again":(lastErr||"Couldn't save");
+        b.disabled=false;
+      }
     };
   });
   // Management: close a schedule — no confirmation, it just disappears (and
@@ -1390,11 +1637,14 @@ function bindTours(tours){
       if(!confirm("Delete this tour? The guide is freed and the empty column is removed. It won't come back on its own.")) return;
       const id=btn.dataset.close; btn.disabled=true; LAST_EDIT=Date.now();
       const card=btn.closest(".tour"); if(card) card.remove();
+      setPendingClose(id);                 // hold it hidden so a slow in-flight poll can't bring it back
+      MUTATING++;                          // and don't fire new polls while the delete is in flight
       try{
         const r=await api("closeShift",{token:store.token, id:id});
-        if(!r.ok){ alert(r.error||"Could not delete it"); loadTours(); return; }
-        setTimeout(loadTours,700);
-      }catch(err){ alert("Network problem"); loadTours(); }
+        if(!r.ok){ clearPendingClose(id); alert(r.error||"Could not delete it"); loadTours(); }
+        else { setTimeout(loadTours,700); }
+      }catch(err){ clearPendingClose(id); alert("Network problem"); loadTours(); }
+      finally{ MUTATING--; }
     };
   });
   // FULL NO-SHOW: flag a tour where nobody turned up (the guide is still paid), or undo it.
@@ -1402,7 +1652,7 @@ function bindTours(tours){
     let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(e){ return; }
     btn.disabled=true; btn.textContent=verb+"…"; MUTATING++; LAST_EDIT=Date.now();
     let msg="";
-    try{ const r=await api("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
+    try{ const r=await apiBusy("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
     catch(err){ msg=err.message||"Network problem — try again"; }
     MUTATING--; try{ await loadTours(); }catch(e){} if(msg) alert(msg);
   };
@@ -1461,7 +1711,7 @@ function bindTours(tours){
       const old=btn.textContent; btn.disabled=true; btn.textContent="Undoing…";
       MUTATING++; LAST_EDIT=Date.now();
       let ok=false, errMsg="";
-      try{ const r=await api("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
+      try{ const r=await apiBusy("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
       catch(err){ errMsg=err.message||"Network problem — try again"; }
       MUTATING--;
       if(ok){ b.checked=false; b.checkedAt=""; b.checkedIn=b.guests;
@@ -1622,7 +1872,12 @@ function renderSchedule(rows){
   if(HAS_MORE) html+='<button class="loadmore" id="loadMoreBtn_sched">Load '+MORE_DAYS+' more days</button>';
   pane.innerHTML=html;
   const lm=$("loadMoreBtn_sched");
-  if(lm) lm.onclick=()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS; loadTours(); };
+  if(lm) lm.onclick=async ()=>{ lm.disabled=true; lm.textContent="Loading…"; MANAGER_DAYS=(WINDOW_DAYS||3)+MORE_DAYS;
+    // A poll may be in flight; loadTours() no-ops while LOADING, which is why Load more
+    // used to need two taps. Wait for the current load to finish (bounded), then load the
+    // wider window so ONE tap always works.
+    for(let i=0;i<40 && LOADING;i++){ await new Promise(res=>setTimeout(res,150)); }
+    loadTours("more"); };
 }
 
 /* ================== HISTORY (manager: any month) ==================
@@ -1716,7 +1971,7 @@ function bindHistoryCards(){
     let info; try{ info=JSON.parse(btn.dataset.noshow); }catch(e){ return; }
     btn.disabled=true; btn.textContent=verb+"…"; MUTATING++;
     let msg="";
-    try{ const r=await api("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
+    try{ const r=await apiBusy("noshow",Object.assign({token:store.token},extra,info)); if(!r||!r.ok) msg=(r&&r.error)||"Could not save"; }
     catch(err){ msg=err.message||"Network problem — try again"; }
     MUTATING--; await historyRefresh(); if(msg) alert(msg);
   };
@@ -1737,7 +1992,7 @@ function bindHistoryCards(){
       if(!confirm("Undo the check-in for "+(b.name||"this guest")+"?\nThis removes it from the ledger and the feed.")) return;
       const old=btn.textContent; btn.disabled=true; btn.textContent="Undoing…"; MUTATING++;
       let ok=false, errMsg="";
-      try{ const r=await api("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
+      try{ const r=await apiBusy("uncheckin",{token:store.token,bookingId:b.bookingId}); ok=!!(r&&r.ok); errMsg=(r&&r.error)||""; }
       catch(err){ errMsg=err.message||"Network problem — try again"; }
       MUTATING--;
       if(ok){ await historyRefresh(); }

@@ -78,9 +78,33 @@ committing to Firebase.
   Pages-built path, because GitHub Pages rebuilds are rate-limited (~10/hr) and could not keep a
   5-min cadence; raw serves the committed file directly (CDN-cached ~5 min, which matches our
   update granularity). A cache-buster query gives the client a fresher copy when needed.
-- **Stage 2 — Client reads the static schedule, lazily fetches guests, flag-gated.**
-  Client renders the grid from the static blob; opening a card fetches that card's guests from
-  Apps Script. Behind a client flag so it A/B's against the current `PORTAL_URL` path.
+- **Stage 2 — Client reads the static schedule, lazily fetches guests, flag-gated. ✅ CODE DONE — on branch `stage2-static-read`, being verified on STAGING (not live).**
+  Client (`guide/index.html`, flag `rr_staticread`, default OFF, failover): `staticToPayload`
+  (pure, unit-tested) turns the counts-only feed into the render shape; `fetchStaticFeed` reads
+  raw GitHub; a POLL uses the static feed once identity is cached; the INITIAL load and ANY
+  failure use Apps Script. Opening a card fetches its guests via `action=guests`
+  (`apiShiftGuests_`) and re-renders. Server read-model also carries a non-PII guide roster.
+
+  **Staging status (done):** `guide-staging/index.html` regenerated from the CURRENT live page +
+  Stage 2 + staging deltas (staging backend URL, no failover, `rrstg_*` localStorage, STAGING
+  banner, `portal-feed-staging` feed branch, static ON by default); scripts parse clean. Branch
+  server code deployed to the staging Apps Script project (`1VjPiSNHSLY…`, @7); health =
+  env=staging + COPY sheets; `action=guests` registered. `portal-feed-staging` branch created.
+
+  **To ARM STAGING (owner, then I verify):** on the STAGING project
+  (`https://script.google.com/d/1VjPiSNHSLY37qNHUlKjiR_5zyBKVdjVAo1pK85GpA9WA3QwXW-QI40xw/edit`),
+  Project Settings → Script Properties:
+  - `GH_TOKEN` = a fine-grained PAT (Contents: read+write on `aherrerop/Roots-and-Roads-Webpage`)
+  - `STATIC_FEED_PUBLISH` = `ON`
+  - `GH_BRANCH` = `portal-feed-staging`  ← separate from the live feed; cannot touch live data
+  Then run `publishPortalFeedNow()` from the Run menu (expect `{ ok: true }`).
+  I then verify `https://raw.githubusercontent.com/aherrerop/Roots-and-Roads-Webpage/portal-feed-staging/feed.json`
+  (PII-free, counts correct) and test the `guide-staging` page end-to-end (grid from static,
+  lazy guests on card open, failover). Rollback = `STATIC_FEED_PUBLISH`=`OFF`.
+
+  **Stage 4 (promote to live) — AFTER staging sign-off:** merge `stage2-static-read` → `main`
+  (deploys the live page), deploy the server to the live Control (both deployments), create/keep
+  the live `portal-feed` branch armed on the LIVE project, flip `rr_staticread` on.
 - **Stage 3 — Staging verification** with a real login; measure schedule render sub-second.
 - **Stage 4 — Mutations republish immediately** so other managers see a change in seconds,
   not ≤5 min (optional; the 5-min rebuild already covers correctness).
