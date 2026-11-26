@@ -304,6 +304,7 @@ function doGet(e) {
       case 'rmset': out = rmSet_(p); break;                            // Stage 2: toggle READMODEL flags (staging only)
       case 'toursbench': out = toursBench_(p); break;                  // Stage 2: time apiTours_ file-path vs sheet-path (staging)
       case 'loadtimes': out = loadTimes_(p); break;                    // Stage 3: the 4-scenario load benchmark (staging)
+      case 'stamptest': out = stampTest_(p); break;                    // Stage 3: new-booking stamp accept/reject test (staging)
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
     }
   } catch (err) {
@@ -4108,6 +4109,13 @@ function readOneReadModel_(id) {
     if (!m || !Array.isArray(m.schedule) || !m.feed) return null;
     if (String(m.ver) !== String(cacheVersion_())) return null;                 // an assign/move since build → fresh path
     if (String(m.feedVer || '') !== String(feedCacheVersion_())) return null;   // a CHECK-IN since build → fresh path (never hide it)
+    // Cross-project NEW-BOOKING guard: the booking system writes the feed's current signature to a
+    // tiny stamp; if it differs from the one baked into this file, a booking landed/left since the
+    // build → reject (never hide a booking). Missing stamp: reject only when REQUIRE_STAMP is ON
+    // (production), so staging/benchmarks still work before the booking project writes the stamp.
+    const stamp = readPortalFeedStamp_();
+    if (stamp) { if (String(stamp.sig) !== String(m.feedSig || '')) return null; }
+    else if (String(PropertiesService.getScriptProperties().getProperty('READMODEL_REQUIRE_STAMP') || '').toUpperCase() === 'ON') return null;
     return m;
   } catch (e) { return null; }
 }
@@ -4198,9 +4206,39 @@ function loadTimes_(p) {
   return out;
 }
 
+// --- Cross-project new-booking signal (the feed "stamp") ------------------------------------
+// A tiny signature of WHICH bookings are in the feed (count + hash of sorted Booking IDs). The
+// BOOKING project writes this to a small Drive file whenever it rebuilds the feed; the portal bakes
+// the same signature into each read-model file. On read, if the booking system's latest signature
+// differs from the file's, a booking landed/left since the build → reject the file (never hide a
+// booking). Check-ins/assigns don't change the ID set, so they don't trip this (they have their own
+// version guards). MUST match the booking project's portalFeedSig_ exactly.
+var PORTAL_FEED_STAMP_FNAME = 'portal-feed-stamp.json';
+function portalFeedSig_(feed) {
+  const ids = [];
+  Object.keys(feed || {}).forEach(function (k) {
+    (feed[k] || []).forEach(function (r) { if (r && r.bookingId) ids.push(String(r.bookingId)); });
+  });
+  ids.sort();
+  const h = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, ids.join('|')));
+  return ids.length + ':' + h;
+}
+function readPortalFeedStamp_() {
+  try {
+    const it = DriveApp.getFilesByName(PORTAL_FEED_STAMP_FNAME);
+    if (!it.hasNext()) return null;
+    return JSON.parse(it.next().getBlob().getDataAsString());
+  } catch (e) { return null; }
+}
+function writePortalFeedStamp_(sig) {
+  const body = JSON.stringify({ sig: sig, at: Date.now() });
+  const it = DriveApp.getFilesByName(PORTAL_FEED_STAMP_FNAME);
+  if (it.hasNext()) { it.next().setContent(body); } else { DriveApp.createFile(PORTAL_FEED_STAMP_FNAME, body, 'application/json'); }
+}
+
 // Parameterised writer: builds the model for `horizonDays` from `schedule`+`feed` and writes it to
 // the named Drive file. The feed is already windowed by the caller for the small file.
-function writeReadModel_(schedule, feed, horizonDays, fname, propKey, metaKey) {
+function writeReadModel_(schedule, feed, horizonDays, fname, propKey, metaKey, sigFeed) {
   const mg = managerGuidesByLanguage_();
   // Ledger check-ins (the same backstop apiTours_ uses), keyed "shiftKey|bookingId".
   let checkins = {};
@@ -4211,7 +4249,7 @@ function writeReadModel_(schedule, feed, horizonDays, fname, propKey, metaKey) {
     if (list.length) checkins = (readLedgerForGuides_(list) || {}).checkins || {};
   } catch (e) { /* degrade to feed-only check-ins */ }
   const model = {
-    ver: String(cacheVersion_()), feedVer: String(feedCacheVersion_()), builtAt: Date.now(),
+    ver: String(cacheVersion_()), feedVer: String(feedCacheVersion_()), feedSig: portalFeedSig_(sigFeed || feed), builtAt: Date.now(),
     builtAtText: Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'),
     horizonDays: horizonDays, schedule: schedule, feed: feed, checkins: checkins,
     guidesByLanguage: mg.byLang || {}, guideTourTypes: mg.tourTypes || {},
@@ -4225,6 +4263,24 @@ function writeReadModel_(schedule, feed, horizonDays, fname, propKey, metaKey) {
   props.setProperty(propKey, f.getId());
   if (metaKey) props.setProperty(metaKey, JSON.stringify({ ver: model.ver, builtAt: model.builtAt, bytes: json.length, shifts: schedule.length }));
   return { ok: true, fileId: f.getId(), bytes: json.length, shifts: schedule.length, checkins: Object.keys(checkins).length };
+}
+
+// action=stamptest — STAGING-ONLY: prove the new-booking stamp guard works. Builds the file, then
+// checks it is USED with a matching stamp and REJECTED with a changed stamp (a simulated new
+// booking), then restores the match. No PII.
+function stampTest_(p) {
+  const props = PropertiesService.getScriptProperties();
+  if (String(props.getProperty('ENV') || '') !== 'staging') return { ok: false, error: 'staging only' };
+  props.setProperty('READMODEL_READ', 'ON');
+  buildReadModelFile_(); buildReadModelSmall_();
+  const bigId = props.getProperty('READMODEL_FILE_ID');
+  const sig = portalFeedSig_(readPortalFeed_());
+  const out = { ok: true, feedSig: sig };
+  writePortalFeedStamp_(sig);                 out.matchingStamp_fileUsed = !!readOneReadModel_(bigId);   // expect true
+  writePortalFeedStamp_(sig + '-NEWBOOKING'); out.changedStamp_fileUsed = !!readOneReadModel_(bigId);    // expect false
+  writePortalFeedStamp_(sig);                 out.restoredStamp_fileUsed = !!readOneReadModel_(bigId);   // expect true
+  out.pass = (out.matchingStamp_fileUsed === true && out.changedStamp_fileUsed === false && out.restoredStamp_fileUsed === true);
+  return out;
 }
 
 // BIG file: the full-horizon model (rebuilt every ~5 min; used for "Load more").
@@ -4244,7 +4300,8 @@ function buildReadModelSmall_() {
   const maxKey = addDaysKey_(todayKey_(), SMALL_WINDOW_DAYS);
   const small = {};
   Object.keys(feed).forEach(function (k) { if (String(k).split('|')[0] <= maxKey) small[k] = feed[k]; });
-  return writeReadModel_(sched, small, SMALL_WINDOW_DAYS, READMODEL_SMALL_FNAME, 'READMODEL_SMALL_ID', 'READMODEL_SMALL_META');
+  // Store the windowed feed (tiny), but sign the FULL feed so the stamp comparison matches the big file.
+  return writeReadModel_(sched, small, SMALL_WINDOW_DAYS, READMODEL_SMALL_FNAME, 'READMODEL_SMALL_ID', 'READMODEL_SMALL_META', feed);
 }
 
 // action=readmodelcheck — DIAGNOSTIC: read the file back and summarise it WITHOUT guest PII

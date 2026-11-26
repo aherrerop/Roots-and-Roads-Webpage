@@ -3814,7 +3814,28 @@ function rebuildPortalFeed_() {
     sh.getRange(2, 14, rows.length, 1).setNumberFormat('@');   // Check-in time as text
     sh.getRange(2, 1, rows.length, H.length).setValues(rows);
   }
+  // Cross-project signal to the PORTAL: write a tiny Drive "feed stamp" = a signature of WHICH
+  // bookings are now in the feed, so the portal can tell (cheaply, without opening this sheet) that
+  // a booking landed/left since it built its cached read-model file. Best-effort; never breaks the rebuild.
+  try { writePortalFeedStamp_(portalFeedSig_(rows)); } catch (e) {}
   return rows.length;
+}
+
+// Signature of the booking SET now in the feed (count + hash of sorted Booking IDs). MUST match the
+// portal's portalFeedSig_ (guidePortal.gs) exactly. Booking IDs are at col J (index 9); 'shift'
+// placeholder rows have none and are skipped.
+var PORTAL_FEED_STAMP_FNAME = 'portal-feed-stamp.json';
+function portalFeedSig_(rows) {
+  const ids = [];
+  (rows || []).forEach(function (r) { const id = String(r[9] || '').trim(); if (id) ids.push(id); });
+  ids.sort();
+  const h = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, ids.join('|')));
+  return ids.length + ':' + h;
+}
+function writePortalFeedStamp_(sig) {
+  const body = JSON.stringify({ sig: sig, at: Date.now() });
+  const it = DriveApp.getFilesByName(PORTAL_FEED_STAMP_FNAME);
+  if (it.hasNext()) { it.next().setContent(body); } else { DriveApp.createFile(PORTAL_FEED_STAMP_FNAME, body, 'application/json'); }
 }
 
 // Maintain Past2Days — a rolling snapshot of Portal Feed rows for the last
