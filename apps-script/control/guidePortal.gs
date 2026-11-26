@@ -298,6 +298,7 @@ function doGet(e) {
       case 'clientlog': out = apiClientLog_(p); break;
       case 'health': out = apiHealth_(); break;
       case 'timings': out = apiTimings_(p); break;
+      case 'refreshstaging': out = refreshStagingToLive_(p); break;   // STAGING-ONLY one-shot (ENV-guarded)
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
     }
   } catch (err) {
@@ -2374,6 +2375,37 @@ function apiSave_(p) {
 // action=health -> a quick deployment sanity check from a phone browser: is the server
 // up, are Control / BookingSheet / Ledger reachable, is the timezone right, what's the
 // contention level. Returns no secrets, no personal data, and no sheet contents.
+// ONE-SHOT staging setup (?action=refreshstaging&confirm=REFRESH): refresh the staging COPY
+// sheets to PRESENT-DAY by making fresh Drive copies of the LIVE sheets and repointing the
+// staging Script Properties at them. HARD GUARD: refuses unless ENV=staging, so it can NEVER
+// repoint a live/production project (ENV is unset on live). Staging only; returns id tails.
+function refreshStagingToLive_(p) {
+  const props = PropertiesService.getScriptProperties();
+  if (String(props.getProperty('ENV') || '') !== 'staging') return { ok: false, error: 'refused: ENV is not "staging" — refusing to repoint a non-staging project' };
+  if (String((p && p.confirm) || '') !== 'REFRESH') return { ok: false, error: 'add &confirm=REFRESH to actually run' };
+  const LIVE = {
+    CONTROL_ID:       '1A8RrqIoWw-HpxCLDRGVJLcflja8tSGEOgaXd-2sSkLs',
+    BOOKING_SHEET_ID: '1rGCfe138BeRXrcyvx6H-9y7IGg-BTCi_-N1-AEM0BCw',
+    LEDGER_ID:        '1D-iDzVDv1uvLZ8AI6WT8kc22ZzSpXmgqk_kQ-u8Mf40',
+    GUIDE_FILE_ID:    '1ZkF0yDVE5Q7V2XUO5051ojJdTXtsvb8FA2sh15rqf-0',
+    SF_GUIDE_FILE_ID: '1XJXz3tR1aDupSbtsmWKqUd-W6Zepv-VJiAZfGw-649o'
+  };
+  const stamp = Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm');
+  const out = { ok: true, copies: {} };
+  try {
+    Object.keys(LIVE).forEach(function (k) {
+      const copy = DriveApp.getFileById(LIVE[k]).makeCopy('STAGING ' + k + ' ' + stamp);
+      props.setProperty(k, copy.getId());
+      out.copies[k] = '…' + copy.getId().slice(-6);
+    });
+    props.setProperty('ENV', 'staging');
+    try { bumpCacheVersion_(); } catch (e) {}
+    try { bumpFeedCacheVersion_(); } catch (e) {}
+    __RRX = {};
+  } catch (e) { out.ok = false; out.error = String(e).slice(0, 200); }
+  return out;
+}
+
 function apiHealth_() {
   const out = {
     ok: true,
