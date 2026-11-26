@@ -298,6 +298,7 @@ function doGet(e) {
       case 'clientlog': out = apiClientLog_(p); break;
       case 'health': out = apiHealth_(); break;
       case 'timings': out = apiTimings_(p); break;
+      case 'benchstore': out = benchStorePortal_(); break;   // DIAGNOSTIC (staging): read-source benchmark
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
     }
   } catch (err) {
@@ -2374,6 +2375,51 @@ function apiSave_(p) {
 // action=health -> a quick deployment sanity check from a phone browser: is the server
 // up, are Control / BookingSheet / Ledger reachable, is the timezone right, what's the
 // contention level. Returns no secrets, no personal data, and no sheet contents.
+// action=benchstore — DIAGNOSTIC (staging only): measure the portal's READ sources head to head
+// so we can decide if a pre-built JSON FILE (Drive) beats reading+assembling from Sheets on the
+// cold path. The file would hold the already-assembled schedule, so a file read replaces BOTH the
+// sheet read AND the assemble CPU. Returns ms only (no PII). Run a few times; ignore the first
+// (warms the context) and read the steadier later numbers.
+function benchStorePortal_() {
+  const out = { ok: true };
+  const now = function () { return Date.now(); };
+  try {
+    __RRX = {};
+    let t = now();
+    const feed = readPortalFeed_();                               // SHEET read (open booking sheet + Portal Feed tab)
+    out.sheetReadMs = now() - t;
+    t = now();
+    const schedule = assembleSchedule_(feed, PORTAL.UPCOMING_DAYS); // CPU assemble
+    out.assembleMs = now() - t;
+    out.sheetTotalMs = out.sheetReadMs + out.assembleMs;           // what a file read would replace
+    const json = JSON.stringify(schedule);
+    out.jsonBytes = json.length;
+    out.shifts = schedule.length;
+
+    // Drive file: write once, then read back + parse (the proposed cold path)
+    const fname = 'portal-readmodel-bench.json';
+    const it = DriveApp.getFilesByName(fname);
+    let f = it.hasNext() ? it.next() : null;
+    t = now();
+    if (f) f.setContent(json); else f = DriveApp.createFile(fname, json, 'application/json');
+    out.fileWriteMs = now() - t;
+    const fid = f.getId();
+    t = now();
+    const back = DriveApp.getFileById(fid).getBlob().getDataAsString();
+    const parsed = JSON.parse(back);
+    out.fileReadMs = now() - t;
+    out.fileReadOk = Array.isArray(parsed) && parsed.length === schedule.length;
+
+    // CacheService round trip (the warm path we already use) for reference
+    if (json.length < 95000) {
+      const c = CacheService.getScriptCache();
+      t = now(); c.put('bench:rm', json, 60); out.cacheWriteMs = now() - t;
+      t = now(); const cv = c.get('bench:rm'); out.cacheReadMs = now() - t; out.cacheReadOk = !!cv && cv.length === json.length;
+    } else out.cacheNote = 'JSON ' + json.length + 'B exceeds the ~95KB single-key cache cap (would need chunking)';
+  } catch (e) { out.ok = false; out.error = String(e).slice(0, 200); }
+  return out;
+}
+
 function apiHealth_() {
   const out = {
     ok: true,
