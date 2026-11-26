@@ -303,6 +303,7 @@ function doGet(e) {
       case 'readmodelcheck': out = readModelCheck_(); break;           // Stage 1: verify the file (no PII)
       case 'rmset': out = rmSet_(p); break;                            // Stage 2: toggle READMODEL flags (staging only)
       case 'toursbench': out = toursBench_(p); break;                  // Stage 2: time apiTours_ file-path vs sheet-path (staging)
+      case 'loadtimes': out = loadTimes_(p); break;                    // Stage 3: the 4-scenario load benchmark (staging)
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
     }
   } catch (err) {
@@ -950,7 +951,7 @@ function apiTours_(p) {
   // the whole read-model from the private Drive file — no feed Sheet read, no assemble. Any problem
   // (flag off, missing/unreadable, or a mutation since the build) leaves RM null and the normal
   // Sheet path below runs unchanged, so a change is never missed. (Rebuild-on-mutation = Stage 3.)
-  const RM = _t('rmfile', function () { return readModelFromFile_(); });
+  const RM = _t('rmfile', function () { return readModelFromFile_(offerHorizonDays); });
 
   const feedRead = RM ? { byKey: RM.feed, hasFeed: true } : _t('book', function () {
     return cachedRead_('bk:' + feedCacheVersion_(), PORTAL.CACHE_TTL, function () {
@@ -1034,7 +1035,9 @@ function apiTours_(p) {
     if (isManager) schedule.forEach(s => { if (s.dateKey <= today) (s.assigned || []).forEach(x => { if (x) g[x] = true; }); });
     return Object.keys(g);
   };
-  const ledger = _t('ledger', function () {
+  // File read-model: the ledger check-ins are baked into the file, so skip the cold ledger
+  // read (3-9s) entirely — the file's `checkins` are the same backstop the ledger provides.
+  const ledger = RM ? { checkins: RM.checkins || {}, reservations: {} } : _t('ledger', function () {
     // Guides go feed-only: a guide sees only their own tours, each with a feed row, so
     // the feed already carries every check-in. Skipping the ~1s ledger open keeps a
     // guide's reload fast. A manager keeps the ledger as a cross-guide backstop.
@@ -1200,7 +1203,7 @@ function apiTours_(p) {
   let guidesByLanguage = null;
   let guideTourTypes = null;   // { name: {threeH, sf} } — lets the client's "Open a schedule" forms offer the right guides per type
   if (isManager) _t('mgrGuides', function () {
-    const mg = managerGuidesByLanguage_();
+    const mg = RM ? { byLang: RM.guidesByLanguage || {}, tourTypes: RM.guideTourTypes || {}, vacations: RM.guideVacations || {} } : managerGuidesByLanguage_();
     guidesByLanguage = mg.byLang;
     guideTourTypes = mg.tourTypes;
     return 0;
@@ -1282,8 +1285,8 @@ function apiTours_(p) {
            // Inputs for the CLIENT to compute the assign-dropdown dots itself (who ticked
            // availability per date+half-day, and each guide's vacation ranges). Sent once per
            // load; the page derives the busy/overlap dots from allTours. Manager-only.
-           availSlots: isManager ? availBySlot_() : null,
-           guideVacations: isManager ? (managerGuidesByLanguage_().vacations || {}) : null,
+           availSlots: isManager ? (RM ? (RM.availSlots || null) : availBySlot_()) : null,
+           guideVacations: isManager ? (RM ? (RM.guideVacations || {}) : (managerGuidesByLanguage_().vacations || {})) : null,
            hasMore: hasMore, windowDays: windowDays,
            timings: T,   // per-phase ms (tok/sched/book/assemble/me/backfill/closed/mine/mgrGuides/mgrTours)
            // Freshness: the server's own clock at the moment this data was built,
@@ -4066,7 +4069,7 @@ function rebuildNearFuturePortalFeed_() {
   // Stage 1 (private-file read-model): also write the FULL read-model to a private Drive JSON file
   // — the fast store the portal will read instead of the Sheets. Flag-gated READMODEL_FILE=ON; one
   // writer (this rebuild); never throws. Reuses the schedule/feed we just built (no extra reads).
-  try { if (String(PropertiesService.getScriptProperties().getProperty('READMODEL_FILE') || '').toUpperCase() === 'ON') buildReadModelFile_(schedule, feed); } catch (e) {}
+  try { if (String(PropertiesService.getScriptProperties().getProperty('READMODEL_FILE') || '').toUpperCase() === 'ON') { buildReadModelFile_(schedule, feed); buildReadModelSmall_(); } } catch (e) {}
   return { ok: true, n: schedule.length, ver: ver };
 }
 
@@ -4077,20 +4080,34 @@ function rebuildNearFuturePortalFeed_() {
 // The file is PRIVATE (only this account reads it), so it can hold guest names. ONE writer (the
 // rebuild), so there is nothing to clobber — the Sheets stay the source of truth.
 var READMODEL_FNAME = 'portal-readmodel.json';
+var READMODEL_SMALL_FNAME = 'portal-readmodel-small.json';
+var SMALL_WINDOW_DAYS = 5;   // the SMALL file covers the near-future load window (default 3 + buffer)
 
-// Stage 2 — read the whole model back from the private file. Returns the parsed model, or null
-// when: the flag is off, the file is missing/unreadable, OR its version is older than the current
-// global cacheVersion (a mutation happened since the build → DON'T serve a stale assignment; fall
-// back to the Sheet path so the change is never missed). Fail-open: any problem returns null.
-function readModelFromFile_() {
+// Stage 2/3 — read the whole model back from a private file. Prefers the SMALL (near-future) file
+// for a normal-width load — it is tiny (faster read) and rebuilt more often (fresher); falls back
+// to the BIG (full-horizon) file for a wider "Load more". Returns null (→ Sheet path) when: the
+// flag is off, no file, OR the file's version is older than the current global cacheVersion (a
+// mutation happened since the build → never serve a stale assignment). Fail-open on any problem.
+function readModelFromFile_(windowDays) {
   try {
     const props = PropertiesService.getScriptProperties();
     if (String(props.getProperty('READMODEL_READ') || '').toUpperCase() !== 'ON') return null;
-    const id = props.getProperty('READMODEL_FILE_ID');
-    if (!id) return null;
+    const mode = String(props.getProperty('READMODEL_MODE') || 'auto').toLowerCase();   // auto|big|small (benchmark control)
+    if (mode !== 'big' && windowDays != null && windowDays <= SMALL_WINDOW_DAYS) {
+      const sm = readOneReadModel_(props.getProperty('READMODEL_SMALL_ID'));
+      if (sm) return sm;
+    }
+    if (mode === 'small') return null;   // small-only (clean benchmark) → no big fallback
+    return readOneReadModel_(props.getProperty('READMODEL_FILE_ID'));
+  } catch (e) { return null; }
+}
+function readOneReadModel_(id) {
+  if (!id) return null;
+  try {
     const m = JSON.parse(DriveApp.getFileById(id).getBlob().getDataAsString());
     if (!m || !Array.isArray(m.schedule) || !m.feed) return null;
-    if (String(m.ver) !== String(cacheVersion_())) return null;   // stale → let the Sheet path serve the fresh data
+    if (String(m.ver) !== String(cacheVersion_())) return null;                 // an assign/move since build → fresh path
+    if (String(m.feedVer || '') !== String(feedCacheVersion_())) return null;   // a CHECK-IN since build → fresh path (never hide it)
     return m;
   } catch (e) { return null; }
 }
@@ -4102,9 +4119,12 @@ function rmSet_(p) {
   if (String(props.getProperty('ENV') || '') !== 'staging') return { ok: false, error: 'staging only' };
   if (p && p.file) props.setProperty('READMODEL_FILE', String(p.file).toUpperCase() === 'ON' ? 'ON' : 'OFF');
   if (p && p.read) props.setProperty('READMODEL_READ', String(p.read).toUpperCase() === 'ON' ? 'ON' : 'OFF');
-  let built = null;
-  if (p && String(p.build || '') === '1') { try { built = buildReadModelFile_(); } catch (e) { built = { ok: false, error: String(e) }; } }
-  return { ok: true, READMODEL_FILE: props.getProperty('READMODEL_FILE'), READMODEL_READ: props.getProperty('READMODEL_READ'), built: built };
+  let built = null, builtSmall = null;
+  if (p && String(p.build || '') === '1') {
+    try { built = buildReadModelFile_(); } catch (e) { built = { ok: false, error: String(e) }; }
+    try { builtSmall = buildReadModelSmall_(); } catch (e) { builtSmall = { ok: false, error: String(e) }; }
+  }
+  return { ok: true, READMODEL_FILE: props.getProperty('READMODEL_FILE'), READMODEL_READ: props.getProperty('READMODEL_READ'), big: built, small: builtSmall };
 }
 
 // action=toursbench — STAGING-ONLY (ENV-guarded): run the REAL apiTours_ once reading the FILE and
@@ -4142,10 +4162,45 @@ function toursBench_(p) {
   return out;
 }
 
-function buildReadModelFile_(schedule, feed) {
-  if (!feed) feed = readPortalFeed_();
-  if (!feed) return { ok: false, error: 'no Portal Feed' };
-  if (!schedule) schedule = assembleSchedule_(feed, PORTAL.UPCOMING_DAYS);
+// action=loadtimes — STAGING-ONLY: time a real manager load in the four states Albert asked for.
+// One execution (so the ~2s cold-context WAKE is excluded — these measure the READ WORK, the part
+// the file changes). Returns ms + tour counts + a parity check.
+function loadTimes_(p) {
+  const props = PropertiesService.getScriptProperties();
+  if (String(props.getProperty('ENV') || '') !== 'staging') return { ok: false, error: 'staging only' };
+  const token = makeToken_((p && p.guide) || 'Albert');
+  const days = Number((p && p.days) || 3);
+  const wasRead = props.getProperty('READMODEL_READ'), wasMode = props.getProperty('READMODEL_MODE');
+  const timeIt = function () {
+    const t = Date.now(); const r = apiTours_({ token: token, days: days }); const T = r.timings || {};
+    return { ms: Date.now() - t, tours: (r.allTours && r.allTours.length) || (r.tours && r.tours.length) || 0,
+      rmfile: T.rmfile, book: T.book, ledger: T.ledger, asmBuild: T['asm.build'] };
+  };
+  const out = { ok: true, days: days };
+  const cold = function () { bumpCacheVersion_(); try { bumpFeedCacheVersion_(); } catch (e) {} };   // invalidate ALL caches incl. the whole-response cache, so the next load is real
+  // 1) COLD cache, from SHEETS.
+  props.setProperty('READMODEL_READ', 'OFF'); cold();
+  out.coldSheets = timeIt();
+  // 4) WARM cache, from SHEETS: load again immediately — caches (incl. whole-response) now warm.
+  out.warmSheets = timeIt();
+  // 2) COLD cache, BIG file: invalidate, rebuild the big file at the NEW version, read big only.
+  props.setProperty('READMODEL_READ', 'ON'); props.setProperty('READMODEL_MODE', 'big');
+  cold(); buildReadModelFile_();
+  out.coldBig = timeIt();
+  // 3) COLD cache, BIG + SMALL: invalidate, rebuild both at the new version, auto (prefers small).
+  props.setProperty('READMODEL_MODE', 'auto');
+  cold(); buildReadModelFile_(); buildReadModelSmall_();
+  out.coldBigSmall = timeIt();
+  // restore
+  if (wasRead) props.setProperty('READMODEL_READ', wasRead); else props.deleteProperty('READMODEL_READ');
+  if (wasMode) props.setProperty('READMODEL_MODE', wasMode); else props.deleteProperty('READMODEL_MODE');
+  out.parity = (out.coldSheets.tours === out.coldBig.tours) && (out.coldBig.tours === out.coldBigSmall.tours) && (out.coldSheets.tours === out.warmSheets.tours);
+  return out;
+}
+
+// Parameterised writer: builds the model for `horizonDays` from `schedule`+`feed` and writes it to
+// the named Drive file. The feed is already windowed by the caller for the small file.
+function writeReadModel_(schedule, feed, horizonDays, fname, propKey, metaKey) {
   const mg = managerGuidesByLanguage_();
   // Ledger check-ins (the same backstop apiTours_ uses), keyed "shiftKey|bookingId".
   let checkins = {};
@@ -4156,26 +4211,40 @@ function buildReadModelFile_(schedule, feed) {
     if (list.length) checkins = (readLedgerForGuides_(list) || {}).checkins || {};
   } catch (e) { /* degrade to feed-only check-ins */ }
   const model = {
-    ver: String(cacheVersion_()),
-    builtAt: Date.now(),
+    ver: String(cacheVersion_()), feedVer: String(feedCacheVersion_()), builtAt: Date.now(),
     builtAtText: Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'),
-    horizonDays: PORTAL.UPCOMING_DAYS,
-    schedule: schedule,
-    feed: feed,
-    checkins: checkins,
-    guidesByLanguage: mg.byLang || {},
-    guideTourTypes: mg.tourTypes || {},
-    availSlots: availBySlot_(),
-    guideVacations: mg.vacations || {}
+    horizonDays: horizonDays, schedule: schedule, feed: feed, checkins: checkins,
+    guidesByLanguage: mg.byLang || {}, guideTourTypes: mg.tourTypes || {},
+    availSlots: availBySlot_(), guideVacations: mg.vacations || {}
   };
   const json = JSON.stringify(model);
-  const it = DriveApp.getFilesByName(READMODEL_FNAME);
+  const it = DriveApp.getFilesByName(fname);
   let f = it.hasNext() ? it.next() : null;
-  if (f) f.setContent(json); else f = DriveApp.createFile(READMODEL_FNAME, json, 'application/json');
+  if (f) f.setContent(json); else f = DriveApp.createFile(fname, json, 'application/json');
   const props = PropertiesService.getScriptProperties();
-  props.setProperty('READMODEL_FILE_ID', f.getId());
-  props.setProperty('READMODEL_META', JSON.stringify({ ver: model.ver, builtAt: model.builtAt, bytes: json.length, shifts: schedule.length }));
+  props.setProperty(propKey, f.getId());
+  if (metaKey) props.setProperty(metaKey, JSON.stringify({ ver: model.ver, builtAt: model.builtAt, bytes: json.length, shifts: schedule.length }));
   return { ok: true, fileId: f.getId(), bytes: json.length, shifts: schedule.length, checkins: Object.keys(checkins).length };
+}
+
+// BIG file: the full-horizon model (rebuilt every ~5 min; used for "Load more").
+function buildReadModelFile_(schedule, feed) {
+  if (!feed) feed = readPortalFeed_();
+  if (!feed) return { ok: false, error: 'no Portal Feed' };
+  if (!schedule) schedule = assembleSchedule_(feed, PORTAL.UPCOMING_DAYS);
+  return writeReadModel_(schedule, feed, PORTAL.UPCOMING_DAYS, READMODEL_FNAME, 'READMODEL_FILE_ID', 'READMODEL_META');
+}
+
+// SMALL file: just the near-future window (default load), with the feed windowed to match, so it
+// stays tiny (faster read) and can be rebuilt FREQUENTLY (freshness) without much cost.
+function buildReadModelSmall_() {
+  const feed = readPortalFeed_();
+  if (!feed) return { ok: false, error: 'no Portal Feed' };
+  const sched = assembleSchedule_(feed, SMALL_WINDOW_DAYS);
+  const maxKey = addDaysKey_(todayKey_(), SMALL_WINDOW_DAYS);
+  const small = {};
+  Object.keys(feed).forEach(function (k) { if (String(k).split('|')[0] <= maxKey) small[k] = feed[k]; });
+  return writeReadModel_(sched, small, SMALL_WINDOW_DAYS, READMODEL_SMALL_FNAME, 'READMODEL_SMALL_ID', 'READMODEL_SMALL_META');
 }
 
 // action=readmodelcheck — DIAGNOSTIC: read the file back and summarise it WITHOUT guest PII
