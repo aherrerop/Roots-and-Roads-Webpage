@@ -2307,6 +2307,7 @@ function apiSave_(p) {
   // reads the new check-in immediately, while the schedule/guides/weekly caches stay
   // warm so the load right after a check-in isn't needlessly slow.
   bumpFeedCacheVersion_();
+  prewarmFeedCache_();   // Stage 2: store the fresh feed under the new key so the next load doesn't re-read it cold
   return { ok: true, saved: savedCount, guide: targetGuide, timings: ST };
 }
 
@@ -2765,6 +2766,22 @@ function readPortalFeed_() {
   let sh;
   try { sh = bookingSS_().getSheetByName('Portal Feed'); } catch (e) { return null; }
   return parseFeedSheet_(sh);
+}
+
+// PLAN A Stage 2 — pre-warm the feed cache right after a feed-writing mutation. A check-in /
+// move / note bumps feedCacheVersion_, so the NEXT load would otherwise re-read the whole
+// Portal Feed cold (~1-3s, the `book` phase). Here we store a FRESH read under the new key,
+// so that first load hits a warm feed instead. It is a fresh read (NOT a structural patch),
+// so it can never serve wrong data; best-effort and size-guarded — if it can't cache, the
+// next load simply re-reads as before. Runs OUTSIDE the write lock, so it never lengthens
+// the lock hold (which would worsen "Server busy").
+function prewarmFeedCache_() {
+  try {
+    const f = readPortalFeed_();
+    if (!f) return;
+    const s = JSON.stringify({ byKey: f, hasFeed: true });
+    if (s.length < 95000) CacheService.getScriptCache().put('bk:' + feedCacheVersion_(), s, PORTAL.CACHE_TTL);
+  } catch (e) { /* best-effort; the next load just re-reads the feed */ }
 }
 
 // Read the Past2Days snapshot (BookingSheet 'Past2Days' tab): the Portal Feed rows for
