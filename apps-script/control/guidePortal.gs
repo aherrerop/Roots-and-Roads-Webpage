@@ -3836,28 +3836,48 @@ function reapplySnapshotMutations_(schedule, bookingsByKey, today, maxKey) {
     s.assigned = g ? [g] : [];
     s.status = g ? 'OK' : 'Not assigned';
   });
+  // PLAN A Stage 2b — BUILD IN any new BOOKING slot the snapshot lacks, instead of bailing
+  // to a full cold rebuild. This MIRRORS buildScheduleFromFeed_ byte-for-byte (same shift
+  // shape, same "first feed row carrying a guide wins" pick), and the new shifts are pushed
+  // BEFORE the overlays below, so after the SAME overlays the result equals a cold assemble
+  // for that slot. Only slots carrying a REAL booking are added (a cannot-miss booking); a
+  // brand-new EMPTY offer slot (e.g. a Weekly_Schedule edit in the last few min) still waits
+  // for the next snapshot rebuild — no booking, so no one is missed (unchanged behaviour).
+  // ⚠ If you change the shift shape or guide-pick in buildScheduleFromFeed_, mirror it here.
+  const have = {};
+  schedule.forEach(s => { have[shiftKey_(s.dateKey, s.minutes, s.language) + '|' + variantKey_(s.sfExt, s.private, s.privIndex)] = true; });
+  const added = {};
+  Object.keys(bookingsByKey).forEach(sk => {
+    const parts = sk.split('|');
+    const dateKey = parts[0], minutes = Number(parts[1]), langLower = parts[2] || '';
+    if (!dateKey || !Number.isFinite(minutes) || dateKey < today || dateKey > maxKey || shiftIsOver_(dateKey, minutes)) return;
+    const rows = bookingsByKey[sk] || [];
+    if (!rows.some(r => (r.rowType || 'booking') !== 'shift')) return;   // only build-in a slot with a REAL booking
+    const language = LANGUAGES.find(l => l.toLowerCase() === langLower) || (langLower.charAt(0).toUpperCase() + langLower.slice(1));
+    const time = Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0');
+    rows.forEach(r => {
+      const isSf = isSfExtSource_(r.source);
+      const isPriv = !isSf && /privat/i.test(r.note || '');
+      const kk = sk + '|' + variantKey_(isSf, isPriv, 1);
+      if (have[kk]) return;                                              // snapshot already has this variant
+      let sh = added[kk];
+      if (!sh) {
+        sh = added[kk] = { dateKey, minutes, time, timeLabel: to12h_(time), language,
+          day: dayNameFromKey_(dateKey), dateText: prettyDate_(dateKey),
+          private: isPriv, privIndex: 1, sfExt: isSf, tourName: isSf ? 'SF' : '3h', assigned: [], status: 'Not assigned' };
+        schedule.push(sh);
+      }
+      if (r.feedGuide && !sh.assigned.length) { sh.assigned = [r.feedGuide]; sh.status = 'OK'; }
+    });
+  });
   applyClearedOverlay_(schedule);
   applyWeeklyDefaults_(schedule);
   applySecondGuideOverlay_(schedule);
   applyNoShowOverlay_(schedule);
   sortSchedule_(schedule);
-  // 2. Safety net: a brand-new booking on a slot the snapshot lacks must force a cold build.
-  const have = {};
-  schedule.forEach(s => { have[shiftKey_(s.dateKey, s.minutes, s.language) + '|' + variantKey_(s.sfExt, s.private, s.privIndex)] = true; });
-  const keys = Object.keys(bookingsByKey);
-  for (let i = 0; i < keys.length; i++) {
-    const parts = keys[i].split('|');
-    const dk = parts[0], min = Number(parts[1]);
-    if (!dk || dk < today || dk > maxKey || !Number.isFinite(min) || shiftIsOver_(dk, min)) continue;
-    const rows = bookingsByKey[keys[i]] || [];
-    for (let j = 0; j < rows.length; j++) {
-      const r = rows[j];
-      if ((r.rowType || 'booking') === 'shift') continue;   // a bare placeholder is not a booking
-      const isSf = isSfExtSource_(r.source);
-      const isPriv = !isSf && /privat/i.test(r.note || '');
-      if (!have[keys[i] + '|' + variantKey_(isSf, isPriv, 1)]) return false;   // new BOOKING slot -> cold build
-    }
-  }
+  // New booking slots are now BUILT IN above (not bailed on), so the fast path always wins —
+  // no more "return false -> full cold rebuild" on a fresh booking. (An empty offer slot the
+  // snapshot still lacks is simply not shown until the next rebuild, as before.)
   return true;
 }
 
