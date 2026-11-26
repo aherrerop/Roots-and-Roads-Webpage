@@ -301,6 +301,7 @@ function doGet(e) {
       case 'refreshstaging': out = refreshStagingToLive_(p); break;   // STAGING-ONLY one-shot (ENV-guarded)
       case 'buildreadmodel': out = buildReadModelFile_(); break;       // Stage 1: write the private read-model file
       case 'readmodelcheck': out = readModelCheck_(); break;           // Stage 1: verify the file (no PII)
+      case 'rmset': out = rmSet_(p); break;                            // Stage 2: toggle READMODEL flags (staging only)
       default:       out = { ok: false, error: 'Unknown action: ' + String(p.action || '(none)') };
     }
   } catch (err) {
@@ -944,7 +945,13 @@ function apiTours_(p) {
   // lets a check-in refresh just this read next load, leaving the schedule/guides/
   // weekly caches warm. If the feed tab is missing (first rollout or a broken feed),
   // fall back to scanning the language tabs instead.
-  const feedRead = _t('book', function () {
+  // Stage 2 (file read-model): when READMODEL_READ=ON and the file is CURRENT (same version), serve
+  // the whole read-model from the private Drive file — no feed Sheet read, no assemble. Any problem
+  // (flag off, missing/unreadable, or a mutation since the build) leaves RM null and the normal
+  // Sheet path below runs unchanged, so a change is never missed. (Rebuild-on-mutation = Stage 3.)
+  const RM = _t('rmfile', function () { return readModelFromFile_(); });
+
+  const feedRead = RM ? { byKey: RM.feed, hasFeed: true } : _t('book', function () {
     return cachedRead_('bk:' + feedCacheVersion_(), PORTAL.CACHE_TTL, function () {
       const f = readPortalFeed_();
       return f ? { byKey: f, hasFeed: true } : { byKey: readBookingsIndex_(), hasFeed: false };
@@ -955,7 +962,14 @@ function apiTours_(p) {
 
   // Build the shift list (which tours exist + who is assigned to each).
   let schedule;
-  if (hasFeed) {
+  if (RM) {
+    // The file already holds the full-horizon assembled schedule (built from the SAME feed in RM),
+    // so just slice it to this load's window — no assemble, no Sheet read. Consistent by construction.
+    const maxKey = addDaysKey_(today, offerHorizonDays);
+    schedule = _t('rm.slice', function () {
+      return RM.schedule.filter(function (x) { return x.dateKey >= today && x.dateKey <= maxKey && !shiftIsOver_(x.dateKey, x.minutes); });
+    });
+  } else if (hasFeed) {
     // Normal path: assignments come from the feed's Guide column, so a poll never
     // reads the schedule grids. The assembled STRUCTURE is cached because it is pure
     // CPU over already-read data that would otherwise re-run on every poll. It is NOT
@@ -4062,6 +4076,36 @@ function rebuildNearFuturePortalFeed_() {
 // The file is PRIVATE (only this account reads it), so it can hold guest names. ONE writer (the
 // rebuild), so there is nothing to clobber — the Sheets stay the source of truth.
 var READMODEL_FNAME = 'portal-readmodel.json';
+
+// Stage 2 — read the whole model back from the private file. Returns the parsed model, or null
+// when: the flag is off, the file is missing/unreadable, OR its version is older than the current
+// global cacheVersion (a mutation happened since the build → DON'T serve a stale assignment; fall
+// back to the Sheet path so the change is never missed). Fail-open: any problem returns null.
+function readModelFromFile_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (String(props.getProperty('READMODEL_READ') || '').toUpperCase() !== 'ON') return null;
+    const id = props.getProperty('READMODEL_FILE_ID');
+    if (!id) return null;
+    const m = JSON.parse(DriveApp.getFileById(id).getBlob().getDataAsString());
+    if (!m || !Array.isArray(m.schedule) || !m.feed) return null;
+    if (String(m.ver) !== String(cacheVersion_())) return null;   // stale → let the Sheet path serve the fresh data
+    return m;
+  } catch (e) { return null; }
+}
+
+// action=rmset&file=on&read=on&build=1 — STAGING-ONLY (ENV-guarded): flip the READMODEL flags and
+// optionally rebuild the file, so I can turn the file read path on/off for A/B testing.
+function rmSet_(p) {
+  const props = PropertiesService.getScriptProperties();
+  if (String(props.getProperty('ENV') || '') !== 'staging') return { ok: false, error: 'staging only' };
+  if (p && p.file) props.setProperty('READMODEL_FILE', String(p.file).toUpperCase() === 'ON' ? 'ON' : 'OFF');
+  if (p && p.read) props.setProperty('READMODEL_READ', String(p.read).toUpperCase() === 'ON' ? 'ON' : 'OFF');
+  let built = null;
+  if (p && String(p.build || '') === '1') { try { built = buildReadModelFile_(); } catch (e) { built = { ok: false, error: String(e) }; } }
+  return { ok: true, READMODEL_FILE: props.getProperty('READMODEL_FILE'), READMODEL_READ: props.getProperty('READMODEL_READ'), built: built };
+}
+
 function buildReadModelFile_(schedule, feed) {
   if (!feed) feed = readPortalFeed_();
   if (!feed) return { ok: false, error: 'no Portal Feed' };
