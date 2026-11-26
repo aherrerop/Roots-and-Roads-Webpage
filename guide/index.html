@@ -318,7 +318,7 @@ const BACKUP_PORTAL_URL = "https://script.google.com/macros/s/AKfycbxzl4w3VSVj4T
 /* Bump this string on every portal deploy. It is shown at the bottom of the
    page AND used to auto-reload the phone when a newer build is live, so a fix
    can never be stuck behind a stale cached page again. */
-const PORTAL_VERSION = "2026-11-26-two-account";
+const PORTAL_VERSION = "2026-11-26-note-retry-delete-hold";
 
 /* Fetch our own page fresh (bypassing cache) and, if a newer version is
    deployed, reload once so the phone is always on the latest build. */
@@ -838,7 +838,13 @@ function loadPendingClose(){ try{ const p=JSON.parse(localStorage.getItem("rr_pe
   Object.keys(p).forEach(k=>{ if(!p[k]||p[k].until<n) delete p[k]; }); return p; }catch(e){ return {}; } }
 function savePendingClose(){ try{ localStorage.setItem("rr_pendclose", JSON.stringify(PENDING_CLOSE)); }catch(e){} }
 let PENDING_CLOSE = loadPendingClose();
-function setPendingClose(id){ if(!id) return; PENDING_CLOSE[id] = { until: Date.now()+PENDING_TTL }; savePendingClose(); }
+// A deleted card must STAY gone. The server keeps it closed, but under load a poll can
+// fail and the client falls back to a stale cached list that still has the card — so the
+// hold has to outlast a transient overload, not just the 90s settle window. 20 min is
+// plenty for the server's fresh reads to take over; a card the server re-surfaces WITH a
+// booking still clears the hold immediately (never hide a booking).
+const CLOSE_HOLD_TTL = 20*60*1000;
+function setPendingClose(id){ if(!id) return; PENDING_CLOSE[id] = { until: Date.now()+CLOSE_HOLD_TTL }; savePendingClose(); }
 function clearPendingClose(id){ if(!id) return; delete PENDING_CLOSE[id]; savePendingClose(); }
 /* Overlay pending assignments onto a tours payload, in place. Holds the value
    you just set for the whole settle window, then lets the server value through. */
@@ -1468,15 +1474,34 @@ function bindTours(tours){
       const ref=b.dataset.bns, bookingId=b.dataset.bid, lang=b.dataset.blang, panel=b.closest(".bnotepanel");
       const ta=panel.querySelector(".bnoteta"), msg=panel.querySelector(".notemsg");
       const note=ta?ta.value:""; b.disabled=true; if(msg) msg.textContent="Saving…"; LAST_EDIT=Date.now();
+      // A note must NEVER be silently lost: a "Server busy" (lock timeout under load) is
+      // RETRIED a few times, and the typed text is kept in the box no matter what. MUTATING
+      // holds the poll so a background re-render can't wipe the textarea mid-save.
+      MUTATING++;
+      let r=null, lastErr="";
       try{
-        const r=await api("setNote",{token:store.token, bookingId:bookingId, language:lang, note:note});
-        if(!r.ok){ if(msg) msg.textContent=r.error||"Error"; b.disabled=false; return; }
+        for(let attempt=0; attempt<4; attempt++){
+          LAST_EDIT=Date.now();
+          try{ r=await api("setNote",{token:store.token, bookingId:bookingId, language:lang, note:note}); }
+          catch(err){ r=null; lastErr=(err&&err.message)||"Network problem"; }
+          if(r && r.ok) break;
+          lastErr=(r&&r.error)||lastErr||"Error";
+          if(!/busy/i.test(lastErr)) break;                 // only the transient "Server busy" is worth retrying
+          if(msg) msg.textContent="Server busy — retrying…";
+          await new Promise(res=>setTimeout(res, 1500));
+        }
+      } finally { MUTATING--; }
+      if(r && r.ok){
         if(msg) msg.textContent="Saved ✓";
         // Update the cache so a background refresh doesn't clobber the just-typed note.
         const parts=ref.split("~"), t=TOURS_CACHE.find(x=>x.id===parts[0]);
         if(t&&t.bookings[+parts[1]]) t.bookings[+parts[1]].manualNote=r.note;
         setTimeout(loadTours,700);
-      }catch(err){ if(msg) msg.textContent="Network problem"; b.disabled=false; }
+      } else {
+        // Keep the text so nothing is lost; the user can just tap Save again.
+        if(msg) msg.textContent=/busy/i.test(lastErr)?"Still busy — tap Save again":(lastErr||"Couldn't save");
+        b.disabled=false;
+      }
     };
   });
   // Management: close a schedule — no confirmation, it just disappears (and
