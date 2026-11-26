@@ -2327,7 +2327,7 @@ function apiHealth_() {
     ok: true,
     time: Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'),
     tz: 'Europe/Madrid',
-    deployment: 'portal-v4'
+    deployment: 'portal-v4-planA'
   };
   try {
     const control = control_();
