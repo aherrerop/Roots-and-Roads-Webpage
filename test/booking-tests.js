@@ -465,6 +465,17 @@ const ftModPair = parseFreetourMessage_(makeFakeMsg_('Modification to Reservatio
   { from:'Freetour.com <noreply@freetour.com>', to:'rootsandroadstours@gmail.com' }), 'modify');
 check('FreeTour modification: "New Date" wins over "Previous Date"',
   ftModPair && dateKey_(ftModPair.date)==='2026-10-09', ftModPair && ftModPair.date && dateKey_(ftModPair.date));
+// REAL incident (2026-11-27, Francesco Neri): Previous 10:30 AM, New 3:30 PM — DIFFERENT times.
+// The time parser grabbed the first (PREVIOUS) time, so the reschedule moved the booking to the
+// right DATE but the OLD TIME (10:30) and vanished from the 3:30 slot. New time must win.
+const ftModTime = parseFreetourMessage_(makeFakeMsg_('Modification to Reservation from Freetour.com - Booking ID: 112713-20261127084354-973',
+  ['Edited Tour Reservation','Previous Date of the Tour: 2026-11-29 10:30 AM','New Date of the Tour: 2026-11-27 3:30 PM',
+   'Language: Italian','Guests: 2 persone','Children (≤15 y.o.): 3 bambini','Booking Name: francesco neri',
+   'Booking Reference Number: 112713-20261127084354-973'].join('\n'),
+  { from:'Freetour.com <noreply@freetour.com>', to:'rootsandroadstours@gmail.com' }), 'modify');
+check('FreeTour modification: the NEW time wins (3:30 PM), not the previous 10:30 AM',
+  ftModTime && dateKey_(ftModTime.date)==='2026-11-27' && ftModTime.time===normalizeTime_('3:30 PM') && ftModTime.time!==normalizeTime_('10:30 AM'),
+  ftModTime && {d:ftModTime.date&&dateKey_(ftModTime.date), t:ftModTime.time});
 
 // ITALIAN confirmation labels the name "Nome prenotazione:" (short), not the long
 // "Nome della prenotazione:" the old regex expected — so the name never parsed and

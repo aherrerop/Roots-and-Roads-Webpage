@@ -5486,7 +5486,13 @@ function parseFreetourMessage_(msg, mode) {
     /Fecha(?:\s+(?:del?\s+tour|de\s+la\s+reserva))?:\s*([^\n\r]+)/i
   ]);
 
+  // A MODIFICATION email lists "Previous Date of the Tour: … 10:30 AM" BEFORE
+  // "New Date of the Tour: … 3:30 PM". The plain first-time match grabbed the OLD
+  // (previous) time, so a reschedule moved the booking to the right DATE but kept the
+  // OLD TIME. Prefer the time on the "New Date of the Tour" line FIRST (mirrors the
+  // date rule above), so a time-change reschedule actually applies the new time.
   const timeText = extractFirst_(text, [
+    /New Date of the Tour\s*:?\s*\d{4}-\d{2}-\d{2}\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/i,
     /(\d{1,2}:\d{2}\s*(?:AM|PM))/i,
     /(?:Time|Hora|Start time)\s*:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i
   ]);
