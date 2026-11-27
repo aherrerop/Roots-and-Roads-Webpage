@@ -2934,6 +2934,15 @@ function reconcileModifications_() {
         if (isBookingCancelledByEmail_(expected)) return;   // meant to be gone
         if (tourDayIsOver_(expected)) return;               // past — the portal won't show it anyway
 
+        // Never flag a booking that was later CANCELLED (a separate cancellation email
+        // legitimately removed it) as "missing" — that would be a false alarm. The
+        // cancellation cache is warm here: the audit runs cancellations before this.
+        const expId = normalizeId_(expected.bookingId);
+        const cancelled = getCancellationCache_().some(function (c) {
+          return sourcesMatchForId_(c.source, expected.source) && normalizeId_(c.bookingId) === expId;
+        });
+        if (cancelled) return;
+
         const active = findActiveBookingById_(expected.source, expected.bookingId);
         const detail = bookingMismatchDetail_(expected, active);
         if (detail) {
