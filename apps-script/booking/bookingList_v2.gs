@@ -5511,7 +5511,11 @@ function parseFreetourMessage_(msg, mode) {
   ]);
 
   // Tour language: the single word after a Language label (Deutsch, Español, …).
+  // A MODIFICATION may change the language too: "Previous Language: French New Language:
+  // English". The plain label grabbed the FIRST one ("Previous Language: French"), so a
+  // language-change reschedule stayed on the OLD tab. Prefer "New Language" first.
   const languageText = extractFirst_(text, [
+    /New Language\s*:?\s*([A-Za-zÀ-ÿ]+)/i,
     /(?:Sprache|Idioma|Language|Langue|Lingua)\s*:?\s*([A-Za-zÀ-ÿ]+)/i
   ]);
 

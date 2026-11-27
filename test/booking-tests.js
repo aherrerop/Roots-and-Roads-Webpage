@@ -486,6 +486,16 @@ const ftModDe = parseFreetourMessage_(makeFakeMsg_('Modification to Reservation 
 check('FreeTour modification (localised labels): NEW date+time win regardless of label language',
   ftModDe && dateKey_(ftModDe.date)==='2026-10-09' && ftModDe.time===normalizeTime_('4:30 PM'),
   ftModDe && {d:ftModDe.date&&dateKey_(ftModDe.date), t:ftModDe.time});
+// LANGUAGE-change modification: "Previous Language: French / New Language: English" must take the
+// NEW language, or the booking lands on the WRONG tab (real: Karim Belloul, 112713-…-950).
+const ftModLang = parseFreetourMessage_(makeFakeMsg_('Modification to Reservation from Freetour.com - Booking ID: 112713-20261111142303-950',
+  ['Edited Tour Reservation','Previous Date of the Tour: 2027-01-17 10:30 AM','New Date of the Tour: 2027-01-18 10:30 AM',
+   'Previous Language: French','New Language: English','Guests: 1 person','Booking Name: Karim Belloul',
+   'Booking Reference Number: 112713-20261111142303-950'].join('\n'),
+  { from:'Freetour.com <noreply@freetour.com>', to:'rootsandroadstours@gmail.com' }), 'modify');
+check('FreeTour modification: NEW language wins (English), not the previous (French)',
+  ftModLang && ftModLang.language==='English' && dateKey_(ftModLang.date)==='2027-01-18',
+  ftModLang && {l:ftModLang.language, d:ftModLang.date&&dateKey_(ftModLang.date)});
 
 // ITALIAN confirmation labels the name "Nome prenotazione:" (short), not the long
 // "Nome della prenotazione:" the old regex expected — so the name never parsed and
