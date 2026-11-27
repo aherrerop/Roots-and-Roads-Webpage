@@ -497,6 +497,30 @@ check('FreeTour modification: NEW language wins (English), not the previous (Fre
   ftModLang && ftModLang.language==='English' && dateKey_(ftModLang.date)==='2027-01-18',
   ftModLang && {l:ftModLang.language, d:ftModLang.date&&dateKey_(ftModLang.date)});
 
+// DETECTION METHOD 1 (apply-time tripwire): modificationKeptPreviousSlot_ must TRIP when the
+// booking we are about to write matches the email's PREVIOUS slot (2026-11-29 10:30) while a
+// different NEW slot exists — the Francesco bug. It must NOT trip for the correct new slot.
+const ftModMsgForGuard = makeFakeMsg_('Modification to Reservation from Freetour.com - Booking ID: 112713-20261127084354-973',
+  ['Edited Tour Reservation','Previous Date of the Tour: 2026-11-29 10:30 AM','New Date of the Tour: 2026-11-27 3:30 PM',
+   'Language: Italian','Guests: 2 persone','Booking Name: francesco neri',
+   'Booking Reference Number: 112713-20261127084354-973'].join('\n'),
+  { from:'Freetour.com <noreply@freetour.com>', to:'rootsandroadstours@gmail.com' });
+const bkPrevSlot = normalizeBooking_({date:'2026-11-29', time:'10:30 AM', language:'Italian', source:RNR.SOURCE.FREETOUR, name:'francesco neri', bookingId:'112713-20261127084354-973', guests:2});
+const bkNewSlot  = normalizeBooking_({date:'2026-11-27', time:'3:30 PM',  language:'Italian', source:RNR.SOURCE.FREETOUR, name:'francesco neri', bookingId:'112713-20261127084354-973', guests:2});
+check('Method 1 tripwire: TRIPS when a reschedule kept the PREVIOUS slot',
+  modificationKeptPreviousSlot_(bkPrevSlot, ftModMsgForGuard, RNR.SOURCE.FREETOUR)===true, null);
+check('Method 1 tripwire: SILENT when the booking took the correct NEW slot',
+  modificationKeptPreviousSlot_(bkNewSlot, ftModMsgForGuard, RNR.SOURCE.FREETOUR)===false, null);
+
+// DETECTION METHOD 2 (reconcile): bookingMismatchDetail_ flags a wrong live row, is silent on a
+// correct one, and reports a missing upcoming booking.
+check('Method 2 reconcile: flags a wrong TIME on the live row',
+  bookingMismatchDetail_(bkNewSlot, bkPrevSlot).indexOf('time')!==-1, null);
+check('Method 2 reconcile: silent when the live row matches the email',
+  bookingMismatchDetail_(bkNewSlot, bkNewSlot)==='', null);
+check('Method 2 reconcile: reports a MISSING upcoming booking',
+  bookingMismatchDetail_(bkNewSlot, null).indexOf('MISSING')===0, null);
+
 // ITALIAN confirmation labels the name "Nome prenotazione:" (short), not the long
 // "Nome della prenotazione:" the old regex expected — so the name never parsed and
 // the whole booking was dropped as invalid (name is required). Real stuck booking.

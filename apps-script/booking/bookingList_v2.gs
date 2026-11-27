@@ -773,6 +773,13 @@ function runBookingCore_(skipProcessed) {
     //     quota (quota exhaustion stalls ALL processing).
     runPhase_('capacityAlertCleanup', cleanupExpiredCapacityAlerts_, !RNR_SKIP_PROCESSED_);
 
+    // 7c. MODIFICATION SELF-CHECK (audit-only, METHOD 2): re-read recent modification
+    //     emails and confirm each booking's live row matches what the email says it
+    //     should be. Alerts on any mismatch (wrong date/time/language/guests/children,
+    //     or a missing upcoming booking). Runs AFTER modifications + dedupe/sort so it
+    //     judges the settled sheet. Gmail-heavy (reads whole modify labels) → audit only.
+    runPhase_('reconcileModifications', reconcileModifications_, !RNR_SKIP_PROCESSED_);
+
   } catch (err) {
     // Errors are logged, never rethrown, so Google does not email failure alerts.
     logError_('runBookingSystem error', err, '');
@@ -2734,8 +2741,21 @@ function processModificationThread_(thread, source) {
       const completedBooking = completeModifiedBookingFromExisting_(parsed.newBooking);
 
       if (isValidBooking_(completedBooking)) {
+        // DETECTION METHOD 1 (apply-time tripwire): a reschedule email lists the
+        // OLD slot first and the NEW slot last. If what we are about to write
+        // matches the PREVIOUS slot (and a different NEW slot exists), the parser
+        // grabbed the wrong value — the exact Francesco/Karim bug. Alert, and
+        // DO NOT apply or mark Processed, so the booking stays visible and retried.
+        if (modificationKeptPreviousSlot_(completedBooking, msg, source)) {
+          alertModificationSuspect_('kept the PREVIOUS date/time instead of the new one',
+            completedBooking, source, msg);
+          return false;   // leave the whole thread unprocessed — never finalise a wrong apply
+        }
         if (!isBookingCancelledByEmail_(completedBooking)) {
-          if (!isCompleted_(completedBooking)) upsertActiveBooking_(completedBooking, true, true);   // modification: lenient match
+          // Keep a SAME-DAY reschedule even if its start time already passed — today's tours show
+          // on the portal all day (tourDayIsOver_ = evening cutoff), so a tour moved to earlier
+          // today (or whose email arrives after start) must still land, not be dropped as "done".
+          if (!tourDayIsOver_(completedBooking)) upsertActiveBooking_(completedBooking, true, true);   // modification: lenient match
           moveMatchingConfirmationOutOfInbox_(completedBooking);
         } else {
           removeActiveBookingBySourceAndId_(completedBooking.source, completedBooking.bookingId);
@@ -2808,12 +2828,206 @@ function completeModifiedBookingFromExisting_(booking) {
     language: b.language || existing.language,
     source: b.source || existing.source,
     income: newIncome,
+    children: (b.children != null ? Number(b.children) : Number(existing.children || 0)),   // was dropped → a reschedule lost its children
+    notes: b.notes || existing.notes || '',
     bookingId: b.bookingId || existing.bookingId,
     hasExplicitGuests: true,
     hasExplicitDate: true,
     hasExplicitTime: true,
     hasExplicitIncome: true
   });
+}
+
+
+/******************************************************
+ * 9b. MODIFICATION SELF-CHECK (two independent detections)
+ *
+ * A modification can be marked Processed yet land the WRONG value (a reschedule
+ * that kept the previous time, a language that stayed the old one). "Processed"
+ * must be trustworthy, so two independent checks watch for exactly that:
+ *   METHOD 1 (apply-time tripwire): at the moment of applying, refuse to write a
+ *            booking that matches the email's PREVIOUS slot instead of the new.
+ *   METHOD 2 (reconcile sweep): once a day during the audit, re-read every recent
+ *            modification email, re-derive what the booking SHOULD be, and compare
+ *            it to the live row. Any mismatch is emailed to management + logged.
+ * Either one alone would have caught the Francesco Neri reschedule.
+ ******************************************************/
+
+
+// Pull every "ISO-date + clock" pair out of a modification email body, in order.
+// A reschedule lists the PREVIOUS tour first and the NEW tour last; a detail-only
+// change may carry just one. Language-independent — it reads the date+time pattern
+// itself, never a localised "Previous/New" label.
+function modificationDateTimePairs_(text) {
+  const re = /(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?)/ig;
+  const out = [];
+  let m;
+  while ((m = re.exec(String(text || ''))) !== null) {
+    out.push({ date: cleanText_(m[1]), time: cleanText_(m[2]) });
+  }
+  return out;
+}
+
+// Canonical compare keys so an ISO email value and a normalised sheet value match.
+function sameDateKey_(a, b) { return dateKey_(normalizeDate_(a)) === dateKey_(normalizeDate_(b)); }
+function sameTimeKey_(a, b) {
+  const x = normalizeTime_(a), y = normalizeTime_(b);
+  return Boolean(x) && x === y;
+}
+
+// METHOD 1 core: did we land on the email's PREVIOUS slot by mistake?
+// True only when the email clearly lists two DIFFERENT slots (a real reschedule),
+// the booking we built matches the FIRST (previous) one, and does NOT match the
+// LAST (new) one. Scoped to Free Tour, whose single "new state" email is where
+// this bug lives (Guruwalk/GYG/Viator carry an explicit old+new structure).
+function modificationKeptPreviousSlot_(booking, msg, source) {
+  try {
+    if (source !== RNR.SOURCE.FREETOUR) return false;
+    let text = '';
+    try { text = (msg && msg.getPlainBody && msg.getPlainBody()) || ''; } catch (e) { return false; }
+    const pairs = modificationDateTimePairs_(text);
+    if (pairs.length < 2) return false;
+
+    const prev = pairs[0];
+    const next = pairs[pairs.length - 1];
+    const prevEqualsNext = sameDateKey_(prev.date, next.date) && sameTimeKey_(prev.time, next.time);
+    if (prevEqualsNext) return false;   // not a date/time reschedule — nothing to judge here
+
+    const landedPrev = sameDateKey_(booking.date, prev.date) && sameTimeKey_(booking.time, prev.time);
+    const landedNew  = sameDateKey_(booking.date, next.date) && sameTimeKey_(booking.time, next.time);
+    return landedPrev && !landedNew;
+  } catch (e) {
+    return false;   // a detector must never block the pipeline by throwing
+  }
+}
+
+
+// METHOD 2: once a day, re-read recent FreeTour/Guruwalk modification emails,
+// re-derive the booking they SHOULD have produced, and compare to the live row.
+// Alerts (email + Errors tab) on any mismatch: wrong date/time/language/guests/
+// children, or a booking that should exist upcoming but is missing. Fire-once per
+// problem signature so a standing issue does not email every audit; it re-arms
+// when the problem set changes or clears.
+function reconcileModifications_() {
+  const sources = [
+    { label: RNR.LABELS.FREETOUR_MODIFY, source: RNR.SOURCE.FREETOUR },
+    { label: RNR.LABELS.GURUWALK_MODIFY, source: RNR.SOURCE.GURUWALK }
+  ];
+
+  const problems = [];
+
+  sources.forEach(function (cfg) {
+    let threads = [];
+    try { threads = getThreadsForce_(cfg.label) || []; } catch (e) { threads = []; }
+
+    threads.forEach(function (thread) {
+      try {
+        const msgs = thread.getMessages();
+        if (!msgs || !msgs.length) return;
+        // The LAST message is the final intended state of the booking.
+        const msg = msgs[msgs.length - 1];
+        const parsed = parseModificationMessage_(msg, cfg.source);
+        if (!parsed.newBooking) return;
+
+        const expected = completeModifiedBookingFromExisting_(parsed.newBooking);
+        if (!isValidBooking_(expected)) return;
+        if (isBookingCancelledByEmail_(expected)) return;   // meant to be gone
+        if (tourDayIsOver_(expected)) return;               // past — the portal won't show it anyway
+
+        const active = findActiveBookingById_(expected.source, expected.bookingId);
+        const detail = bookingMismatchDetail_(expected, active);
+        if (detail) {
+          problems.push({
+            source: cfg.source,
+            id: expected.bookingId,
+            subject: (thread.getFirstMessageSubject && thread.getFirstMessageSubject()) || '',
+            detail: detail
+          });
+        }
+      } catch (e) { /* one bad thread never stops the sweep */ }
+    });
+  });
+
+  handleReconcileProblems_(problems);
+  return problems;
+}
+
+// Compare the booking an email implies with the live row. Returns a human string
+// describing the first meaningful mismatch, or '' when they agree. A missing
+// upcoming booking is the worst case and is reported explicitly.
+function bookingMismatchDetail_(expected, active) {
+  if (!active) return 'MISSING from the list (should be ' + bookingBrief_(expected) + ')';
+
+  const diffs = [];
+  if (!sameDateKey_(expected.date, active.date)) diffs.push('date ' + active.date + ' ≠ ' + expected.date);
+  if (!sameTimeKey_(expected.time, active.time)) diffs.push('time ' + active.time + ' ≠ ' + expected.time);
+  if (normalizeLanguage_(expected.language) !== normalizeLanguage_(active.language))
+    diffs.push('language ' + active.language + ' ≠ ' + expected.language);
+  if (Number(expected.guests || 0) !== Number(active.guests || 0))
+    diffs.push('adults ' + active.guests + ' ≠ ' + expected.guests);
+  if (Number(expected.children || 0) !== Number(active.children || 0))
+    diffs.push('children ' + (active.children || 0) + ' ≠ ' + (expected.children || 0));
+
+  return diffs.length ? diffs.join(', ') : '';
+}
+
+function bookingBrief_(b) {
+  return [b.name, b.date, b.time, b.language,
+          (b.guests || 0) + 'p' + (b.children ? '+' + b.children + 'ch' : '')].filter(Boolean).join(' / ');
+}
+
+// Email management + log on reconcile mismatches, fire-once per problem signature.
+function handleReconcileProblems_(problems) {
+  const PROP = 'RNR_MOD_RECONCILE_SIG';
+  let sig = '';
+  try {
+    sig = (problems || []).map(function (p) { return p.source + ':' + p.id + ':' + p.detail; }).sort().join('|');
+  } catch (e) { sig = String((problems || []).length); }
+
+  let prevSig = '';
+  try { prevSig = PropertiesService.getScriptProperties().getProperty(PROP) || ''; } catch (e) {}
+  if (sig === prevSig) return;   // unchanged since last alert (incl. both empty) — stay quiet
+  try { PropertiesService.getScriptProperties().setProperty(PROP, sig); } catch (e) {}
+
+  if (!problems || !problems.length) return;   // problem set cleared — re-armed, no email
+
+  const lines = problems.map(function (p) {
+    return '• [' + p.source + ' ' + p.id + '] ' + p.detail + '  (email: ' + p.subject + ')';
+  });
+  const body =
+    problems.length + ' booking(s) do NOT match their latest modification email.\n\n' +
+    lines.join('\n') +
+    '\n\nThese were flagged by the daily modification reconcile. Check the live sheet / portal.';
+
+  try {
+    MailApp.sendEmail({
+      to: RNR.INTERNAL_ALERT_TO,
+      subject: '⚠ Booking modification mismatch (' + problems.length + ')',
+      body: body
+    });
+  } catch (e) { /* mail hiccup must never break the audit */ }
+
+  logError_('Modification reconcile mismatch (' + problems.length + ')', body, 'reconcileModifications_');
+}
+
+// Immediate alert from METHOD 1 when a wrong apply is blocked at the source.
+function alertModificationSuspect_(reason, booking, source, msg) {
+  const subject = (msg && msg.getSubject && msg.getSubject()) || '';
+  const body =
+    'A ' + source + ' modification was BLOCKED before it could save wrong data.\n\n' +
+    'Reason: ' + reason + '\n' +
+    'Booking: ' + bookingBrief_(booking) + ' [' + booking.bookingId + ']\n' +
+    'Email subject: ' + subject + '\n\n' +
+    'The thread was left UNPROCESSED so it is retried and stays visible. ' +
+    'If this is correct, fix the parser; the booking will not appear until it applies cleanly.';
+  try {
+    MailApp.sendEmail({
+      to: RNR.INTERNAL_ALERT_TO,
+      subject: '⚠ Modification blocked (wrong value) — ' + source,
+      body: body
+    });
+  } catch (e) { /* best-effort */ }
+  logError_('Modification blocked: ' + reason, body, 'alertModificationSuspect_');
 }
 
 
