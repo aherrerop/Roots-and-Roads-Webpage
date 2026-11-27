@@ -5471,9 +5471,22 @@ function parseFreetourMessage_(msg, mode) {
     /(?:Guests?|Participants?|Pax|Asistentes?|Plazas?)\s*:?\s*(\d+)/i
   ]);
 
+  // MODIFICATION, ANY LANGUAGE: FreeTour lists "Previous … <ISO> <time>" then
+  // "New … <ISO> <time>". The NEW date AND time are the LAST "ISO-date h:mm AM/PM"
+  // pair in the email, so read BOTH from that pair. This does NOT rely on the English
+  // "New Date of the Tour" label (which can be localised), so a reschedule applies the
+  // new date + new time in every guest language — not the old time of the previous slot.
+  let modNewDate = '', modNewTime = '';
+  if (isModify) {
+    const pairRe = /(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/ig;
+    let mm, last = null;
+    while ((mm = pairRe.exec(text)) !== null) last = mm;
+    if (last) { modNewDate = last[1]; modNewTime = last[2]; }
+  }
+
   // Date + time: Freetour renders them in English regardless of the email language
   // ("3:30 PM, Tuesday, 22 September 2026"), so match the VALUES, not the label.
-  const dateText = extractFirst_(text, [
+  const dateText = modNewDate || extractFirst_(text, [
     new RegExp('(\\d{1,2}\\s+(?:' + FT_MONTHS + ')\\s+\\d{4})', 'i'),
     // Freetour CONFIRMATION emails render the date as "9 October 2026" (above), but
     // MODIFICATION emails render it ISO — "Date of the Tour: 2026-10-09", and the
@@ -5491,7 +5504,7 @@ function parseFreetourMessage_(msg, mode) {
   // (previous) time, so a reschedule moved the booking to the right DATE but kept the
   // OLD TIME. Prefer the time on the "New Date of the Tour" line FIRST (mirrors the
   // date rule above), so a time-change reschedule actually applies the new time.
-  const timeText = extractFirst_(text, [
+  const timeText = modNewTime || extractFirst_(text, [
     /New Date of the Tour\s*:?\s*\d{4}-\d{2}-\d{2}\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/i,
     /(\d{1,2}:\d{2}\s*(?:AM|PM))/i,
     /(?:Time|Hora|Start time)\s*:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i

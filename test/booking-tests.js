@@ -476,6 +476,16 @@ const ftModTime = parseFreetourMessage_(makeFakeMsg_('Modification to Reservatio
 check('FreeTour modification: the NEW time wins (3:30 PM), not the previous 10:30 AM',
   ftModTime && dateKey_(ftModTime.date)==='2026-11-27' && ftModTime.time===normalizeTime_('3:30 PM') && ftModTime.time!==normalizeTime_('10:30 AM'),
   ftModTime && {d:ftModTime.date&&dateKey_(ftModTime.date), t:ftModTime.time});
+// ALL LANGUAGES: even with LOCALISED body labels (not the English "New Date of the Tour"),
+// the NEW date+time are the LAST "ISO-date time" pair, so a reschedule in any language takes
+// the new slot — not the old date/time of the previous one.
+const ftModDe = parseFreetourMessage_(makeFakeMsg_('Modification to Reservation from Freetour.com - Booking ID: 112713-20261007065104-999',
+  ['Bearbeitete Tour-Reservierung','Vorheriges Datum der Tour: 2026-10-08 10:30 AM','Neues Datum der Tour: 2026-10-09 4:30 PM',
+   'Sprache: Deutsch','Erwachsene: 2 Personen','Buchungsname: Max Muster','Buchungsnummer: 112713-20261007065104-999'].join('\n'),
+  { from:'Freetour.com <noreply@freetour.com>', to:'rootsandroadstours@gmail.com' }), 'modify');
+check('FreeTour modification (localised labels): NEW date+time win regardless of label language',
+  ftModDe && dateKey_(ftModDe.date)==='2026-10-09' && ftModDe.time===normalizeTime_('4:30 PM'),
+  ftModDe && {d:ftModDe.date&&dateKey_(ftModDe.date), t:ftModDe.time});
 
 // ITALIAN confirmation labels the name "Nome prenotazione:" (short), not the long
 // "Nome della prenotazione:" the old regex expected — so the name never parsed and
